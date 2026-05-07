@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, NoReturn
 
 import config
 from modules.detector import CreatorStats
+
+_HASHTAG_RE = re.compile(r"#(\w+)")
 
 _LOGGER = logging.getLogger("aitertainment")
 
@@ -162,6 +165,28 @@ def _extract_audio_id(item: dict[str, Any]) -> str | None:
     return None
 
 
+def _extract_caption(item: dict[str, Any]) -> str:
+    """Caption brute du reel, en repli sur les variantes Apify connues."""
+    for key in ("caption", "captionText", "text", "edge_media_to_caption"):
+        v = item.get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+    return ""
+
+
+def _extract_hashtags(item: dict[str, Any], caption: str) -> list[str]:
+    """Hashtags Apify si dispo, sinon fallback sur regex ``#tag`` dans caption."""
+    raw = item.get("hashtags")
+    if isinstance(raw, list):
+        out = [str(h).lstrip("#").strip() for h in raw if h]
+        out = [h for h in out if h]
+        if out:
+            return out
+    if caption:
+        return _HASHTAG_RE.findall(caption)
+    return []
+
+
 def _normalize_reel(item: dict[str, Any]) -> dict[str, Any]:
     video_id = (
         item.get("id")
@@ -186,6 +211,7 @@ def _normalize_reel(item: dict[str, Any]) -> dict[str, Any]:
     )
     posted = item.get("timestamp") or item.get("takenAt") or item.get("postedAt")
     url = item.get("url") or item.get("permalink") or item.get("videoUrl") or ""
+    caption = _extract_caption(item)
     return {
         "video_id": str(video_id),
         "views": _coerce_int(views),
@@ -194,6 +220,8 @@ def _normalize_reel(item: dict[str, Any]) -> dict[str, Any]:
         "posted_at": _parse_dt(posted),
         "url": str(url),
         "audio_id": _extract_audio_id(item),
+        "caption": caption,
+        "hashtags": _extract_hashtags(item, caption),
     }
 
 
@@ -319,6 +347,10 @@ def _mock_creator_reels(username: str, n: int) -> list[dict[str, Any]]:
     t0 = datetime.now(timezone.utc)
     out: list[dict[str, Any]] = []
     for i in range(n):
+        caption = (
+            f"[mock] caption #{i + 1} pour @{username} "
+            f"#streetwear #fitcheck #archive"
+        )
         out.append(
             {
                 "video_id": f"mock_{username}_{i}",
@@ -328,6 +360,8 @@ def _mock_creator_reels(username: str, n: int) -> list[dict[str, Any]]:
                 "posted_at": t0 - timedelta(hours=2 + 24 * i),
                 "url": f"https://www.instagram.com/reel/mock_{username}_{i}/",
                 "audio_id": f"mock_snd_{i % 3}",
+                "caption": caption,
+                "hashtags": ["streetwear", "fitcheck", "archive"],
             }
         )
     return out

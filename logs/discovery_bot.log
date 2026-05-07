@@ -1,0 +1,88 @@
+2026-05-07 18:48:34,413 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-07 18:48:34,676 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-07 18:48:34,684 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-07 18:48:34,692 [INFO] set t_type @promising_creator -> T4
+2026-05-07 18:48:34,699 [INFO] set t_type @promising_creator -> T2
+2026-05-07 18:48:34,701 [INFO] set t_type @promising_creator -> T9
+2026-05-07 18:48:34,707 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-07 18:48:34,712 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-07 18:48:34,713 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-07 18:48:34,714 [INFO] [mock] notify_candidate @promising_creator
+2026-05-07 18:48:34,715 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-07 18:48:39,442 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-07 18:48:39,445 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-07 18:48:39,451 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-07 18:48:39,457 [INFO] set t_type @promising_creator -> T4
+2026-05-07 18:48:39,464 [INFO] set t_type @promising_creator -> T2
+2026-05-07 18:48:39,468 [INFO] set t_type @promising_creator -> T9
+2026-05-07 18:48:39,473 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-07 18:48:39,476 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-07 18:48:39,477 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-07 18:48:39,478 [INFO] [mock] notify_candidate @promising_creator
+2026-05-07 18:48:39,479 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-07 23:18:15,556 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-07 23:18:15,558 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-07 23:18:15,563 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-07 23:18:15,569 [INFO] set t_type @promising_creator -> T4
+2026-05-07 23:18:15,576 [INFO] set t_type @promising_creator -> T2
+2026-05-07 23:18:15,578 [INFO] set t_type @promising_creator -> T9
+2026-05-07 23:18:15,583 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-07 23:18:15,586 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-07 23:18:15,587 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-07 23:18:15,587 [INFO] [mock] notify_candidate @promising_creator
+2026-05-07 23:18:15,588 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-07 23:22:06,514 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-07 23:22:06,518 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-07 23:22:06,524 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-07 23:22:06,530 [INFO] set t_type @promising_creator -> T4
+2026-05-07 23:22:06,538 [INFO] set t_type @promising_creator -> T2
+2026-05-07 23:22:06,540 [INFO] set t_type @promising_creator -> T9
+2026-05-07 23:22:06,545 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-07 23:22:06,547 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-07 23:22:06,548 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-07 23:22:06,549 [INFO] [mock] notify_candidate @promising_creator
+2026-05-07 23:22:06,550 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-07 23:34:04,190 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-07 23:34:04,193 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-07 23:34:04,199 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-07 23:34:04,205 [INFO] set t_type @promising_creator -> T4
+2026-05-07 23:34:04,211 [INFO] set t_type @promising_creator -> T2
+2026-05-07 23:34:04,214 [INFO] set t_type @promising_creator -> T9
+2026-05-07 23:34:04,219 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-07 23:34:04,221 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-07 23:34:04,222 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-07 23:34:04,222 [INFO] [mock] notify_candidate @promising_creator
+2026-05-07 23:34:04,223 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-07 23:48:39,447 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-07 23:48:39,450 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-07 23:48:39,454 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-07 23:48:39,460 [INFO] set t_type @promising_creator -> T4
+2026-05-07 23:48:39,467 [INFO] set t_type @promising_creator -> T2
+2026-05-07 23:48:39,470 [INFO] set t_type @promising_creator -> T9
+2026-05-07 23:48:39,475 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-07 23:48:39,478 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-07 23:48:39,479 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-07 23:48:39,479 [INFO] [mock] notify_candidate @promising_creator
+2026-05-07 23:48:39,480 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-08 00:05:03,321 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-08 00:05:03,324 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-08 00:05:03,329 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-08 00:05:03,336 [INFO] set t_type @promising_creator -> T4
+2026-05-08 00:05:03,342 [INFO] set t_type @promising_creator -> T2
+2026-05-08 00:05:03,344 [INFO] set t_type @promising_creator -> T9
+2026-05-08 00:05:03,350 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-08 00:05:03,353 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-08 00:05:03,354 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-08 00:05:03,355 [INFO] [mock] notify_candidate @promising_creator
+2026-05-08 00:05:03,355 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-08 00:39:58,151 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-08 00:39:58,154 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-08 00:39:58,159 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-08 00:39:58,164 [INFO] set t_type @promising_creator -> T4
+2026-05-08 00:39:58,171 [INFO] set t_type @promising_creator -> T2
+2026-05-08 00:39:58,174 [INFO] set t_type @promising_creator -> T9
+2026-05-08 00:39:58,178 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-08 00:39:58,181 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-08 00:39:58,182 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-08 00:39:58,182 [INFO] [mock] notify_candidate @promising_creator
+2026-05-08 00:39:58,183 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.

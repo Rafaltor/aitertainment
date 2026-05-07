@@ -1,0 +1,10 @@
+{
+  "domains": [
+    {
+      "name": "humour",
+      "seeds": ["alexandreskrt"],
+      "keywords": ["drôle", "mdr", "😂", "💀"],
+      "t_types_target": ["T2", "T2b", "T3b", "T5"]
+    }
+  ]
+}
