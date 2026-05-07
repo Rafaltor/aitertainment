@@ -31,3 +31,9 @@
 2026-05-06 23:56:21,978 [INFO] Classification mock_t2: T2 conf=0.91
 2026-05-06 23:56:21,979 [INFO] Suggestions generees pour mock_t2
 2026-05-06 23:56:22,605 [INFO] Alerte Telegram OK pour mock_t2
+2026-05-07 14:22:02,968 [INFO] run_once MOCK scenario=T2_serie
+2026-05-07 14:22:02,970 [INFO] Pipeline stats instagram @atelier_street_mock
+2026-05-07 14:22:02,971 [INFO] Signal mock_t2 score=0.801 alert=ALERT
+2026-05-07 14:22:02,973 [INFO] Classification mock_t2: T2 conf=0.91
+2026-05-07 14:22:02,973 [INFO] Suggestions generees pour mock_t2
+2026-05-07 14:22:03,847 [INFO] Alerte Telegram OK pour mock_t2
