@@ -68,6 +68,12 @@ from instagrapi.exceptions import (
 )
 
 import config
+from database import (
+    DatabaseIOError,
+    load_db,
+    save_db,
+    upsert_profile,
+)
 from instagram_client import (
     InstagramAuthError,
     WatcherStopRequested,
@@ -102,38 +108,50 @@ COMMENTS_MEDIA_SAMPLE = 3              # nombre de médias dont on scrape les co
 COMMENTS_PER_MEDIA = 15
 REEL_PRODUCT_TYPE = "clips"
 
-# Plafonds / pondérations SCORE_PROFIL (voir docstring de score_profile)
+# Pondérations & valeurs de **référence** SCORE_PROFIL
 # ----------------------------------------------------------------------------
+#
+# La normalisation de chaque signal continu est **logarithmique** :
+#
+#     contribution = log10(value*scale + 1) / log10(ref*scale + 1) * weight
+#
+# où ``ref`` est la valeur cible où la métrique doit délivrer 100 % du poids.
+# **Pas de plafond** : un signal au-delà de ``ref`` continue à scorer (avec
+# rendement décroissant), un signal proche de zéro scoré faiblement, un
+# signal exactement à ``ref`` scoré exactement le poids.
+#
+# Exception : ``posting_rhythm`` est plafonné à ``ref`` (1 média/jour) — on
+# ne veut pas récompenser le spam.
 
-# Plafonds de normalisation
-SCORE_REEL_RATIO_CAP = 30.0      # views/followers — médiane Reels (stabilité)
-SCORE_REEL_RATIO_P90_CAP = 50.0  # views/followers — P90 Reels (potentiel viral)
-SCORE_ENGAGEMENT_CAP = 0.15      # (likes+comments)/followers — commun aux deux types
-SCORE_POST_RATIO_CAP = 0.15      # likes/followers (Posts)
+# Valeurs de référence (cible de qualité = 100 % du poids)
+SCORE_REEL_RATIO_REF = 10.0       # views/followers — créateur viral établi
+SCORE_REEL_RATIO_P90_REF = 50.0   # views/followers — viralité épisodique forte
+SCORE_REEL_ENGAGEMENT_REF = 0.10  # 10 % (likes+comments)/followers — excellent
+SCORE_POST_RATIO_REF = 0.15       # 15 % likes/followers — excellent post
+SCORE_POST_ENGAGEMENT_REF = 0.15  # 15 % (likes+comments)/followers — excellent
+SCORE_RHYTHM_REF = 1.0            # 1 média/jour — optimum (plafonné)
 
 # Pondérations Reels (Σ = 925)
-# Le signal "ratio views/followers" est éclaté entre la médiane (stabilité,
-# 250 pts, plafond 30×) et le P90 (potentiel viral, 100 pts, plafond 50×).
-# Total inchangé sur ce signal = 350 pts.
-SCORE_REEL_RATIO_W = 250
-SCORE_REEL_RATIO_P90_W = 100
+SCORE_REEL_RATIO_W = 250          # médiane (stabilité)
+SCORE_REEL_RATIO_P90_W = 100      # P90 (potentiel viral)
 SCORE_REEL_ENGAGEMENT_W = 200
 SCORE_REEL_TREND_W = 150
 SCORE_REEL_T_TYPE_W = 200
-# Le rythme de publication ("posting_rhythm") est un signal d'activité, pas de
-# qualité — on ne veut pas qu'il pèse autant que ratio/engagement/trend.
-SCORE_REEL_FREQ_W = 25
+SCORE_REEL_FREQ_W = 25            # ne pas sur-pondérer le rythme
 
-# Pondérations Posts (Σ = 725 ; reliquat de 200 historiquement attribué au
-# signal "post_comment_ratio" — supprimé. On garde les autres poids tels quels
-# pour ne rien rebalancer implicitement.)
+# Pondérations Posts (Σ = 725)
 SCORE_POST_RATIO_W = 300
 SCORE_POST_ENGAGEMENT_W = 250
 SCORE_POST_T_TYPE_W = 150
 SCORE_POST_FREQ_W = 25
 
-# --- Aliases rétro-compat (anciens noms locaux) ---
-SCORE_RATIO_CAP = SCORE_REEL_RATIO_CAP
+# --- Aliases rétro-compat (les anciens ``*_CAP`` désignent désormais des
+# **références** log, pas des plafonds linéaires — la sémantique a changé) ---
+SCORE_REEL_RATIO_CAP = SCORE_REEL_RATIO_REF
+SCORE_REEL_RATIO_P90_CAP = SCORE_REEL_RATIO_P90_REF
+SCORE_ENGAGEMENT_CAP = SCORE_REEL_ENGAGEMENT_REF
+SCORE_POST_RATIO_CAP = SCORE_POST_RATIO_REF
+SCORE_RATIO_CAP = SCORE_REEL_RATIO_REF
 SCORE_RATIO_W = SCORE_REEL_RATIO_W
 SCORE_ENGAGEMENT_W = SCORE_REEL_ENGAGEMENT_W
 SCORE_TREND_W = SCORE_REEL_TREND_W
@@ -141,6 +159,11 @@ SCORE_T_TYPE_W = SCORE_REEL_T_TYPE_W
 SCORE_FREQ_W = SCORE_REEL_FREQ_W
 
 CANDIDATE_SCORE_THRESHOLD = 500.0
+
+# Seuil distinct (plus bas) sous lequel on **n'envoie pas** de notif Telegram
+# depuis ``score_and_persist`` (CLI ``--score``). Tout score est de toute façon
+# upserté dans ``database.json`` — la notif est juste un signal humain.
+DISCOVERY_NOTIFY_THRESHOLD = 300.0
 
 # Profils explorés par seed (suffisant pour découvrir 50 candidats sans
 # attaquer le rate limit instagrapi sur user_following).
@@ -815,11 +838,45 @@ def _t_type_match_score(
     return float(sum(p for t, p in distribution.items() if t in target_set))
 
 
-def _frequency_score(freq_per_day: float) -> float:
-    """1.0 à 1 post/jour, dégrade linéairement vers 0 à 0 ou ≥ 2 posts/jour."""
-    if freq_per_day <= 0.0:
+def _log_norm(value: float | None, *, ref: float, scale: float = 1.0) -> float:
+    """Normalisation **logarithmique** : ``log10(value*scale + 1) / log10(ref*scale + 1)``.
+
+    Propriétés voulues :
+
+    - ``value <= 0`` ou ``None`` → ``0.0`` (pas de ``ZeroDivisionError`` ni
+      de ``ValueError`` sur ``log10(0)``).
+    - ``value == ref`` → exactement ``1.0`` (le poids plein du signal).
+    - **Pas de plafond** : ``value > ref`` produit ``> 1.0`` mais avec
+      rendement décroissant (compression log).
+    - ``ref <= 0`` → ``0.0`` (sécurité défensive — ne devrait pas arriver).
+
+    ``scale`` permet de travailler sur des entiers lisibles pour les ratios
+    en pourcentage (ex : engagement 0.068 × 100 = 6.8) — la formule reste
+    invariante par changement d'échelle.
+    """
+    if value is None or value <= 0:
         return 0.0
-    return max(0.0, 1.0 - abs(freq_per_day - 1.0))
+    if ref is None or ref <= 0:
+        return 0.0
+    den = math.log10(ref * scale + 1.0)
+    if den <= 0:
+        return 0.0
+    return math.log10(value * scale + 1.0) / den
+
+
+def _frequency_score(freq_per_day: float) -> float:
+    """Normalisation log du rythme de publication, **plafonnée** à
+    ``SCORE_RHYTHM_REF`` (= 1 média/jour).
+
+    Au-delà de la référence, on **n'augmente plus** : on ne veut pas
+    récompenser le spam de contenu (un compte qui poste 5 Reels/jour n'est
+    pas « 5 fois meilleur » qu'un compte qui en poste 1/jour — c'est juste
+    un signe de spam ou de gestion par agence).
+    """
+    if freq_per_day is None or freq_per_day <= 0:
+        return 0.0
+    capped = min(float(freq_per_day), SCORE_RHYTHM_REF)
+    return _log_norm(capped, ref=SCORE_RHYTHM_REF, scale=10.0)
 
 
 def _compute_reel_score(
@@ -832,15 +889,16 @@ def _compute_reel_score(
     publish_frequency: float,
     domain: dict[str, Any],
 ) -> float:
-    """SCORE_REELS ∈ [0, 925]. Voir docstring ``score_profile``."""
-    ratio_median_norm = (
-        min(reel_ratio_median, SCORE_REEL_RATIO_CAP) / SCORE_REEL_RATIO_CAP
-    )
-    ratio_p90_norm = (
-        min(reel_ratio_p90, SCORE_REEL_RATIO_P90_CAP) / SCORE_REEL_RATIO_P90_CAP
-    )
-    eng_norm = (
-        min(reel_engagement_median, SCORE_ENGAGEMENT_CAP) / SCORE_ENGAGEMENT_CAP
+    """SCORE_REELS — somme pondérée logarithmique. Voir docstring ``score_profile``.
+
+    Σ poids = 925, mais le score peut **dépasser** ce plafond pour les profils
+    exceptionnels (ratios très au-dessus de la référence) car les signaux
+    log ne sont plus écrêtés.
+    """
+    ratio_median_norm = _log_norm(reel_ratio_median, ref=SCORE_REEL_RATIO_REF)
+    ratio_p90_norm = _log_norm(reel_ratio_p90, ref=SCORE_REEL_RATIO_P90_REF)
+    eng_norm = _log_norm(
+        reel_engagement_median, ref=SCORE_REEL_ENGAGEMENT_REF, scale=100.0
     )
     trend_norm = {"rising": 1.0, "stable": 0.5, "declining": 0.0}.get(
         reel_trend, 0.5
@@ -867,12 +925,16 @@ def _compute_post_score(
     publish_frequency: float,
     domain: dict[str, Any],
 ) -> float:
-    """SCORE_POSTS ∈ [0, 800]. Voir docstring ``score_profile``."""
-    ratio_norm = (
-        min(post_ratio_median, SCORE_POST_RATIO_CAP) / SCORE_POST_RATIO_CAP
+    """SCORE_POSTS — somme pondérée logarithmique. Voir docstring ``score_profile``.
+
+    Σ poids = 725, idem que SCORE_REELS le score peut excéder ce plafond pour
+    les ratios > référence.
+    """
+    ratio_norm = _log_norm(
+        post_ratio_median, ref=SCORE_POST_RATIO_REF, scale=100.0
     )
-    eng_norm = (
-        min(post_engagement_median, SCORE_ENGAGEMENT_CAP) / SCORE_ENGAGEMENT_CAP
+    eng_norm = _log_norm(
+        post_engagement_median, ref=SCORE_POST_ENGAGEMENT_REF, scale=100.0
     )
     t_match = _t_type_match_score(
         t_type_distribution, domain.get("t_types_target") or []
@@ -888,6 +950,133 @@ def _compute_post_score(
 
 # Alias rétro-compat
 _compute_score = _compute_reel_score
+
+
+def explain_score(score_result: dict[str, Any]) -> str:
+    """Décompose un ``score_result`` en contributions log10 lisibles.
+
+    Format multi-lignes utilisable dans logs / CLI / debug. Pour ``t_match``
+    on **déduit** la contribution observée (``score_reels`` − somme des
+    autres contributions) parce que la distribution seule ne suffit pas à
+    recalculer le score sans connaître les ``t_types_target`` du domaine.
+    """
+    sr = score_result or {}
+
+    def _f(key: str, default: float = 0.0) -> float:
+        try:
+            v = sr.get(key)
+            return float(v) if v is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    rrm = _f("reel_ratio_median")
+    rp90 = _f("reel_ratio_p90")
+    rem = _f("reel_engagement_median")
+    rt = str(sr.get("reel_trend") or "")
+    prm = _f("post_ratio_median")
+    pem = _f("post_engagement_median")
+    rhy = _f("posting_rhythm")
+    score_reels = _f("score_reels")
+    score_posts = _f("score_posts")
+    reel_w = _f("reel_weight")
+    post_w = _f("post_weight")
+    score_final = _f("score")
+
+    rrm_pts = _log_norm(rrm, ref=SCORE_REEL_RATIO_REF) * SCORE_REEL_RATIO_W
+    rp90_pts = _log_norm(rp90, ref=SCORE_REEL_RATIO_P90_REF) * SCORE_REEL_RATIO_P90_W
+    rem_pts = (
+        _log_norm(rem, ref=SCORE_REEL_ENGAGEMENT_REF, scale=100.0)
+        * SCORE_REEL_ENGAGEMENT_W
+    )
+    rt_pts = (
+        {"rising": 1.0, "stable": 0.5, "declining": 0.0}.get(rt, 0.0)
+        * SCORE_REEL_TREND_W
+    )
+    rhy_reel_pts = _frequency_score(rhy) * SCORE_REEL_FREQ_W
+    rhy_post_pts = _frequency_score(rhy) * SCORE_POST_FREQ_W
+    prm_pts = (
+        _log_norm(prm, ref=SCORE_POST_RATIO_REF, scale=100.0) * SCORE_POST_RATIO_W
+    )
+    pem_pts = (
+        _log_norm(pem, ref=SCORE_POST_ENGAGEMENT_REF, scale=100.0)
+        * SCORE_POST_ENGAGEMENT_W
+    )
+
+    reel_t_match_pts = max(
+        0.0,
+        score_reels - (rrm_pts + rp90_pts + rem_pts + rt_pts + rhy_reel_pts),
+    )
+    post_t_match_pts = max(
+        0.0, score_posts - (prm_pts + pem_pts + rhy_post_pts)
+    )
+
+    reel_total_w = (
+        SCORE_REEL_RATIO_W
+        + SCORE_REEL_RATIO_P90_W
+        + SCORE_REEL_ENGAGEMENT_W
+        + SCORE_REEL_TREND_W
+        + SCORE_REEL_T_TYPE_W
+        + SCORE_REEL_FREQ_W
+    )
+    post_total_w = (
+        SCORE_POST_RATIO_W
+        + SCORE_POST_ENGAGEMENT_W
+        + SCORE_POST_T_TYPE_W
+        + SCORE_POST_FREQ_W
+    )
+    bar = "─" * 46
+
+    lines: list[str] = []
+    lines.append(
+        f"📊 Score @{sr.get('username') or '?'} (domaine={sr.get('domain') or '?'})"
+    )
+    lines.append("")
+    lines.append("─── Reels " + bar[:36])
+    lines.append(
+        f"reel_ratio_median : {rrm:>6.2f}x  → {rrm_pts:>6.0f}pts / {SCORE_REEL_RATIO_W}"
+    )
+    lines.append(
+        f"reel_ratio_p90    : {rp90:>6.2f}x  → {rp90_pts:>6.0f}pts / {SCORE_REEL_RATIO_P90_W}"
+    )
+    lines.append(
+        f"reel_engagement   : {rem * 100:>5.1f}%   → {rem_pts:>6.0f}pts / {SCORE_REEL_ENGAGEMENT_W}"
+    )
+    lines.append(
+        f"reel_trend        : {(rt or 'n/a'):<9}→ {rt_pts:>6.0f}pts / {SCORE_REEL_TREND_W}"
+    )
+    lines.append(
+        f"reel_t_type       : (déduit) → {reel_t_match_pts:>6.0f}pts / {SCORE_REEL_T_TYPE_W}"
+    )
+    lines.append(
+        f"posting_rhythm    : {rhy:>6.2f}   → {rhy_reel_pts:>6.0f}pts / {SCORE_REEL_FREQ_W}"
+    )
+    lines.append(bar)
+    lines.append(
+        f"score_reels                      → {score_reels:>6.0f}pts / {reel_total_w}  (w={reel_w:.2f})"
+    )
+    lines.append("")
+    lines.append("─── Posts " + bar[:36])
+    lines.append(
+        f"post_ratio_median : {prm * 100:>5.1f}%   → {prm_pts:>6.0f}pts / {SCORE_POST_RATIO_W}"
+    )
+    lines.append(
+        f"post_engagement   : {pem * 100:>5.1f}%   → {pem_pts:>6.0f}pts / {SCORE_POST_ENGAGEMENT_W}"
+    )
+    lines.append(
+        f"post_t_type       : (déduit) → {post_t_match_pts:>6.0f}pts / {SCORE_POST_T_TYPE_W}"
+    )
+    lines.append(
+        f"posting_rhythm    : {rhy:>6.2f}   → {rhy_post_pts:>6.0f}pts / {SCORE_POST_FREQ_W}"
+    )
+    lines.append(bar)
+    lines.append(
+        f"score_posts                      → {score_posts:>6.0f}pts / {post_total_w}  (w={post_w:.2f})"
+    )
+    lines.append("")
+    lines.append(
+        f"score_final = {reel_w:.2f}×{score_reels:.0f} + {post_w:.2f}×{score_posts:.0f} = {score_final:.0f}"
+    )
+    return "\n".join(lines)
 
 
 def score_profile(
@@ -958,19 +1147,26 @@ def score_profile(
        sur ce qui a *réellement* été scoré : ``reel_weight = reels_count /
        (reels_count + posts_count)`` après cap des posts.
 
-       **SCORE_REELS** ∈ [0, 925] :
-        - ``reel_ratio_median`` × 250 (plafond 30×) — stabilité
-        - ``reel_ratio_p90`` × 100 (plafond 50×) — potentiel viral
-        - ``reel_engagement_median`` × 200 (plafond 0.15)
+       **Normalisation log10** : chaque signal continu (ratio, engagement,
+       rhythm) utilise ``log10(x*scale + 1) / log10(ref*scale + 1)`` — pas de
+       plafond linéaire arbitraire ; au-delà de la référence le signal
+       continue à scorer mais avec rendement décroissant. Les Σ poids ci-
+       dessous sont donc des **valeurs nominales atteintes à la référence** ;
+       les profils exceptionnels peuvent les dépasser.
+
+       **SCORE_REELS** (poids nominal 925) :
+        - ``reel_ratio_median`` × 250 (ref 10×) — stabilité
+        - ``reel_ratio_p90``    × 100 (ref 50×) — potentiel viral
+        - ``reel_engagement_median`` × 200 (ref 10 %)
         - ``reel_trend`` × 150 (rising=1.0 / stable=0.5 / declining=0.0)
         - ``t_type_match`` × 200
-        - ``posting_rhythm`` × 25
+        - ``posting_rhythm`` × 25 (ref 1/jour, **plafonné** anti-spam)
 
-       **SCORE_POSTS** ∈ [0, 725] :
-        - ``post_ratio_median`` × 300 (plafond 0.15)
-        - ``post_engagement_median`` × 250 (plafond 0.15)
+       **SCORE_POSTS** (poids nominal 725) :
+        - ``post_ratio_median`` × 300 (ref 15 %)
+        - ``post_engagement_median`` × 250 (ref 15 %)
         - ``t_type_match`` × 150
-        - ``posting_rhythm`` × 25
+        - ``posting_rhythm`` × 25 (ref 1/jour, **plafonné** anti-spam)
 
     Returns
     -------
@@ -1663,10 +1859,12 @@ def explore_network(
     blacklist: dict[str, Any] | None = None,
     watchlist: list[dict[str, Any]] | None = None,
     candidates: dict[str, Any] | None = None,
+    db: dict[str, Any] | None = None,
     client: Any | None = None,
     session: DiscoverySession | None = None,
     blacklist_path: Path | None = None,
     candidates_path: Path | None = None,
+    db_path: Path | None = None,
     seeds_override: list[str] | None = None,
 ) -> None:
     """Explore le réseau depuis les seeds d'un domaine et alimente la file
@@ -1709,6 +1907,12 @@ def explore_network(
         except DiscoveryIOError as e:
             log.warning("candidates illisibles (%s) — repart vide.", e)
             candidates = {"candidates": []}
+    if db is None:
+        try:
+            db = load_db(path=db_path)
+        except DatabaseIOError as e:
+            log.warning("database illisible (%s) — repart vide.", e)
+            db = {"profiles": {}}
 
     seeds_input = seeds_override if seeds_override is not None else (
         domain.get("seeds") or []
@@ -1796,6 +2000,20 @@ def explore_network(
                 result is not None
                 and float(result.get("score") or 0.0) > CANDIDATE_SCORE_THRESHOLD
             )
+
+            # Persistance database : **tout** scoring réussi est upserté
+            # (contrairement à la blacklist / candidates qui sont conditionnels).
+            if result is not None:
+                try:
+                    upsert_profile(db, result, added_via="discovery")
+                    if not session.mock:
+                        save_db(db, path=db_path)
+                except DatabaseIOError as e:
+                    log.warning(
+                        "upsert_profile @%s a échoué (%s) — on continue.",
+                        uname,
+                        e,
+                    )
 
             if score_passes:
                 _record_candidate(
@@ -1893,6 +2111,7 @@ def run_discovery(
     seeds_path: Path | None = None,
     blacklist_path: Path | None = None,
     candidates_path: Path | None = None,
+    db_path: Path | None = None,
     sleep_fn=time.sleep,
 ) -> DiscoverySession:
     """Boucle principale Discovery.
@@ -1950,6 +2169,11 @@ def run_discovery(
     blacklist = load_blacklist(path=blacklist_path)
     candidates = load_candidates(path=candidates_path)
     try:
+        db = load_db(path=db_path)
+    except DatabaseIOError as e:
+        log.warning("database illisible (%s) — repart vide.", e)
+        db = {"profiles": {}}
+    try:
         from watcher import load_watchlist  # import tardif (évite cycle)
         watchlist = load_watchlist()
     except Exception as e:
@@ -1974,10 +2198,12 @@ def run_discovery(
                     blacklist=blacklist,
                     watchlist=watchlist,
                     candidates=candidates,
+                    db=db,
                     client=client,
                     session=session,
                     blacklist_path=blacklist_path,
                     candidates_path=candidates_path,
+                    db_path=db_path,
                     seeds_override=seeds_override,
                 )
             except DiscoverySessionLost as e:
@@ -2017,6 +2243,164 @@ def run_discovery(
     return session
 
 
+def score_and_persist(
+    username: str,
+    *,
+    domain: dict[str, Any] | None = None,
+    added_via: str = "manual",
+    notify_threshold: float = DISCOVERY_NOTIFY_THRESHOLD,
+    blacklist: dict[str, Any] | None = None,
+    client: Any | None = None,
+    seeds_path: Path | None = None,
+    db_path: Path | None = None,
+    candidates_path: Path | None = None,
+    mock: bool = False,
+    notify_fn: Any | None = None,
+) -> dict[str, Any] | None:
+    """Score un profil unique, **upserte systématiquement** dans
+    ``database.json`` (toutes les exécutions sont historisées) et envoie une
+    notif Telegram (Bot #2 Discovery) au-dessus de ``notify_threshold``.
+
+    Pipeline :
+
+    1. Si ``domain`` est ``None`` → premier domaine de ``seeds.json``.
+    2. ``score_profile(username, domain)``. Si ``None`` (privé / hors fourchette /
+       pas assez d'historique), on retourne ``None`` sans rien écrire.
+    3. ``upsert_profile(db, score_result, added_via)`` puis ``save_db``.
+    4. Si ``score > notify_threshold`` :
+        - ``_record_candidate`` (le bot a besoin du candidat dans
+          ``candidates.json`` pour résoudre les boutons inline plus tard) ;
+        - ``notify_fn(result)`` si fourni, sinon
+          ``telegram_discovery_bot.notify_candidate(result, mock=mock)``.
+
+    Returns
+    -------
+    dict | None
+        ``None`` si le profil est filtré, sinon ::
+
+            {
+              "score_result": <résultat score_profile>,
+              "profile":      <entrée database.json après upsert>,
+              "tier":         "A" | "B" | "C",
+              "notified":     bool,
+            }
+    """
+    log = setup_discovery_logger()
+    username = (username or "").lstrip("@").strip().lower()
+    if not username:
+        log.warning("score_and_persist : username vide.")
+        return None
+
+    if domain is None:
+        seeds = load_seeds(path=seeds_path)
+        domains = list(seeds.get("domains") or [])
+        if not domains:
+            log.warning("score_and_persist : aucun domaine dans seeds.json.")
+            return None
+        domain = domains[0]
+        log.info(
+            "score_and_persist @%s : domaine par défaut '%s'.",
+            username,
+            domain.get("name"),
+        )
+
+    if blacklist is None and not mock:
+        try:
+            blacklist = load_blacklist()
+        except DiscoveryIOError:
+            blacklist = {"profiles": []}
+
+    if mock:
+        result = _mock_score_profile(username, domain)
+    else:
+        if client is None:
+            try:
+                client = get_client()
+            except InstagramAuthError as e:
+                log.error(
+                    "score_and_persist @%s : client Instagram KO (%s).", username, e
+                )
+                return None
+        try:
+            result = score_profile(
+                username, domain, blacklist=blacklist, client=client
+            )
+        except DiscoverySessionLost as e:
+            log.error("score_and_persist @%s : session perdue (%s).", username, e)
+            return None
+
+    if result is None:
+        log.info("score_and_persist @%s : filtré (None).", username)
+        return None
+
+    try:
+        db = load_db(path=db_path)
+    except DatabaseIOError as e:
+        log.warning("database illisible (%s) — repart vide.", e)
+        db = {"profiles": {}}
+
+    profile = upsert_profile(db, result, added_via=added_via)
+    if not mock:
+        try:
+            save_db(db, path=db_path)
+        except DatabaseIOError as e:
+            log.warning("save_db a échoué (%s) — on continue en mémoire.", e)
+
+    notified = False
+    score = float(result.get("score") or 0.0)
+    if score > float(notify_threshold):
+        # Le bot Telegram (callbacks ✅ ❌ ✏️) lit ``candidates.json`` au moment
+        # du clic — on y inscrit donc systématiquement le résultat avant la notif.
+        try:
+            cands = load_candidates(path=candidates_path)
+        except DiscoveryIOError:
+            cands = {"candidates": []}
+        _record_candidate(cands, result, mock=mock, candidates_path=candidates_path)
+
+        if notify_fn is not None:
+            try:
+                notify_fn(result)
+                notified = True
+            except Exception as e:
+                log.warning("notify_fn a échoué (%s).", e)
+        else:
+            try:
+                from telegram_discovery_bot import (  # tardif : évite cycle
+                    notify_candidate as _bot_notify,
+                )
+                _bot_notify(result, mock=mock)
+                notified = not mock
+            except Exception as e:
+                log.warning("notify_candidate a échoué (%s).", e)
+
+    return {
+        "score_result": result,
+        "profile": profile,
+        "tier": profile.get("tier"),
+        "notified": notified,
+    }
+
+
+def _print_score_summary(summary: dict[str, Any] | None, username: str) -> None:
+    """Format CLI : ``Score : 448 | Tier : B | T-type : T2 | Notif : ✅``."""
+    u = username.lstrip("@").strip().lower()
+    if summary is None:
+        print(
+            f"@{u} : profil filtré (privé, hors fourchette, ou historique insuffisant)."
+        )
+        return
+    res = summary["score_result"]
+    score = float(res.get("score") or 0.0)
+    notif_icon = "✅" if summary.get("notified") else "—"
+    print(
+        f"@{res.get('username') or u} | "
+        f"Score : {score:.0f} | "
+        f"Tier : {summary.get('tier') or '?'} | "
+        f"T-type : {res.get('t_type_dominant') or '?'} | "
+        f"Notif : {notif_icon}"
+    )
+
+
 def _main_cli() -> None:
     parser = argparse.ArgumentParser(
         description="Discovery — exploration réseau Instagram (Layer 0)."
@@ -2030,11 +2414,26 @@ def _main_cli() -> None:
         help="Explorer depuis un seed unique (ex: @username).",
     )
     parser.add_argument(
+        "--score",
+        metavar="USERNAME",
+        help=(
+            "Score un profil unique (ex: @raikkonenaf). "
+            "Upserte database.json et notifie Telegram si score > "
+            f"{int(DISCOVERY_NOTIFY_THRESHOLD)}."
+        ),
+    )
+    parser.add_argument(
         "--mock",
         action="store_true",
         help="Mode test : pas d'Instagram, pas de Telegram, pas d'écritures disque.",
     )
     args = parser.parse_args()
+
+    if args.score:
+        summary = score_and_persist(args.score, mock=args.mock)
+        _print_score_summary(summary, args.score)
+        return
+
     run_discovery(
         only_domain=args.domain,
         only_seed=args.seed,
@@ -2050,6 +2449,7 @@ __all__ = [
     "ACTIVITY_BURST_S",
     "ACTIVITY_PAUSE_S",
     "CANDIDATE_SCORE_THRESHOLD",
+    "DISCOVERY_NOTIFY_THRESHOLD",
     "DEFAULT_BLACKLIST_PATH",
     "DEFAULT_CANDIDATES_PATH",
     "DEFAULT_DATA_DIR",
@@ -2072,6 +2472,7 @@ __all__ = [
     "NIGHT_END_HOUR",
     "NIGHT_START_HOUR",
     "debug_reel_views",
+    "explain_score",
     "explore_network",
     "load_blacklist",
     "load_candidates",
@@ -2079,6 +2480,7 @@ __all__ = [
     "run_discovery",
     "save_blacklist",
     "save_candidates",
+    "score_and_persist",
     "score_profile",
     "setup_discovery_logger",
 ]

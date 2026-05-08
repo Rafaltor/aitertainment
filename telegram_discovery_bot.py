@@ -24,6 +24,7 @@ Callbacks ``callback_data`` (chaîne ≤ 64 octets, contrainte Telegram) :
     - ``r:{username}``         — reject
     - ``m:{username}``         — open T-type menu
     - ``s:{T_TYPE}:{username}``— set t_type final (validate avec correction)
+    - ``ev:{username}``        — afficher l'évolution (historique de scores)
 
 Le candidat est récupéré dans ``data/candidates.json`` au moment du callback
 (indexé par username). Pas d'état serveur en mémoire — tout est sur disque,
@@ -332,6 +333,9 @@ def _build_candidate_keyboard(username: str) -> dict[str, Any]:
                 {"text": "✏️ Modifier T-type", "callback_data": f"m:{u}"},
                 {"text": "👁 Voir profil", "url": f"https://www.instagram.com/{u}/"},
             ],
+            [
+                {"text": "📈 Voir évolution", "callback_data": f"ev:{u}"},
+            ],
         ]
     }
 
@@ -451,6 +455,82 @@ def notify_candidate(
     return _telegram_post("sendMessage", payload, token=t)
 
 
+def _format_score_evolution_text(
+    username: str,
+    old_score: float,
+    new_score: float,
+    old_tier: str,
+    new_tier: str,
+) -> str:
+    """Texte court pour ``notify_score_evolution``.
+
+    Format : ``📈 @raikkonenaf : 448 → 745 (+66%) — Tier B→A``.
+
+    L'emoji suit le **sens** de la variation (pas son amplitude). Si
+    ``old_score`` est ≤ 0 ou ``None``, on affiche ``±0%`` plutôt que de
+    faire planter le formattage.
+    """
+    u = (username or "").lstrip("@").strip()
+    try:
+        old_f = float(old_score) if old_score is not None else 0.0
+    except (TypeError, ValueError):
+        old_f = 0.0
+    try:
+        new_f = float(new_score) if new_score is not None else 0.0
+    except (TypeError, ValueError):
+        new_f = 0.0
+
+    if old_f > 0:
+        pct = (new_f - old_f) / old_f * 100.0
+    else:
+        pct = 0.0
+
+    arrow = "📈" if new_f > old_f else "📉" if new_f < old_f else "➡️"
+    sign = "+" if pct >= 0 else ""
+    return (
+        f"{arrow} @{u} : {old_f:.0f} → {new_f:.0f} "
+        f"({sign}{pct:.0f}%) — Tier {old_tier or '?'}→{new_tier or '?'}"
+    )
+
+
+def notify_score_evolution(
+    username: str,
+    old_score: float,
+    new_score: float,
+    old_tier: str,
+    new_tier: str,
+    *,
+    token: str | None = None,
+    chat_id: str | None = None,
+    mock: bool = False,
+) -> dict[str, Any] | None:
+    """Pousse une notif d'**évolution de score** (rescore) — info pure, pas de boutons.
+
+    Distinct de ``notify_candidate`` (qui ouvre les actions de validation).
+    Utilisé par ``rescore_scheduler.run_rescore_cycle`` quand un profil rescoré
+    franchit ``±15 % / ±20 %``.
+    """
+    setup_bot_logger()
+    text = _format_score_evolution_text(
+        username, old_score, new_score, old_tier, new_tier
+    )
+    if mock:
+        _LOG.info("[mock] notify_score_evolution : %s", text)
+        return None
+    try:
+        t, c = _resolve_credentials(token=token, chat_id=chat_id)
+    except DiscoveryBotConfigError as e:
+        _LOG.warning("notify_score_evolution skip : %s", e)
+        return None
+
+    payload = {
+        "chat_id": c,
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+    return _telegram_post("sendMessage", payload, token=t)
+
+
 def _edit_message(
     chat_id: int | str,
     message_id: int,
@@ -560,6 +640,93 @@ def _validation_record(
     }
 
 
+def _trigger_dataset_collection(
+    username: str,
+    *,
+    db_path: Path | None,
+) -> None:
+    """Lance ``dataset_builder.collect_training_data`` après validation humaine.
+
+    Best-effort : si la collecte échoue (réseau, profil absent de la DB, etc.),
+    on logge un warning sans **jamais** propager. Si aucun Reel ≥ 7 jours n'est
+    éligible, on programme une collecte différée via
+    ``schedule_pending_collection`` (le scheduler de rescore rebalayera demain).
+    """
+    try:
+        from dataset_builder import (  # tardif : évite cycle / dépendance dure
+            collect_training_data,
+            schedule_pending_collection,
+        )
+        from database import load_db
+    except ImportError as e:
+        _LOG.warning("dataset_builder/database indispo (%s) — skip collecte.", e)
+        return
+
+    try:
+        db = load_db(path=db_path)
+    except Exception as e:
+        _LOG.warning("load_db a échoué (%s) — skip collecte.", e)
+        return
+
+    profile = db.get("profiles", {}).get(username) if isinstance(db, dict) else None
+    if not isinstance(profile, dict):
+        _LOG.info("collecte @%s skip : profil absent de database.json.", username)
+        return
+
+    try:
+        added = collect_training_data(username, profile)
+    except Exception as e:
+        _LOG.warning("collect_training_data @%s a levé (%s) — skip.", username, e)
+        added = []
+
+    if not added:
+        # Aucun Reel ≥ 7 jours (créateur très récent / actif) → on diffère.
+        try:
+            schedule_pending_collection(username)
+        except Exception as e:
+            _LOG.warning(
+                "schedule_pending_collection @%s a échoué (%s).", username, e
+            )
+
+
+def _persist_validation_in_db(
+    username: str,
+    t_type_final: str,
+    *,
+    db_path: Path | None,
+) -> None:
+    """Marque le profil ``validated=True`` + ``t_type_final`` dans ``database.json``.
+
+    Best-effort : si le profil n'existe pas (validation manuelle d'un profil
+    jamais scoré) ou si la DB est illisible, on logge juste un warning — on ne
+    veut **jamais** bloquer la chaîne ``add_to_watchlist + append_validation``.
+    """
+    try:
+        from database import (  # tardif : évite cycle d'import au chargement
+            DatabaseIOError,
+            load_db,
+            save_db,
+            validate_profile,
+        )
+    except ImportError as e:
+        _LOG.warning("database module indisponible (%s) — skip DB validation.", e)
+        return
+    try:
+        db = load_db(path=db_path)
+    except DatabaseIOError as e:
+        _LOG.warning("load_db a échoué (%s) — skip DB validation.", e)
+        return
+    try:
+        validate_profile(db, username, t_type_final)
+    except DatabaseIOError as e:
+        _LOG.info("validate_profile @%s skip (%s).", username, e)
+        return
+    try:
+        save_db(db, path=db_path)
+    except DatabaseIOError as e:
+        _LOG.warning("save_db a échoué (%s) après validation @%s.", e, username)
+
+
 def _handle_validate(
     username: str,
     *,
@@ -567,6 +734,7 @@ def _handle_validate(
     validations_path: Path | None,
     watchlist_path: Path | None,
     seeds_path: Path | None,
+    db_path: Path | None,
 ) -> str:
     cand = _find_candidate(username, candidates_path=candidates_path)
     if cand is None:
@@ -582,6 +750,8 @@ def _handle_validate(
         _validation_record(cand, action="validated", t_type_final=t_final),
         path=validations_path,
     )
+    _persist_validation_in_db(username, t_final, db_path=db_path)
+    _trigger_dataset_collection(username, db_path=db_path)
     if added:
         return f"✅ @{username} ajouté à la watchlist (T-type {t_final})"
     return f"☑️ @{username} déjà dans la watchlist"
@@ -611,6 +781,7 @@ def _handle_set_ttype(
     validations_path: Path | None,
     watchlist_path: Path | None,
     seeds_path: Path | None,
+    db_path: Path | None,
 ) -> str:
     cand = _find_candidate(username, candidates_path=candidates_path)
     if cand is None:
@@ -630,6 +801,8 @@ def _handle_set_ttype(
         _validation_record(cand, action=action, t_type_final=new_t_type),
         path=validations_path,
     )
+    _persist_validation_in_db(username, new_t_type, db_path=db_path)
+    _trigger_dataset_collection(username, db_path=db_path)
     if action == "corrected":
         suffix = f" (corrigé : {t_original} → {new_t_type})"
     else:
@@ -639,8 +812,102 @@ def _handle_set_ttype(
     return f"☑️ @{username} déjà dans la watchlist{suffix}"
 
 
+def _format_evolution(username: str, history: list[dict[str, Any]]) -> str:
+    """Texte multiligne (HTML simple) résumant ``scores_history``.
+
+    Format demandé ::
+
+        📈 Évolution @username
+        J0  08/05 → 448 (Tier B)
+        J+7 15/05 → 612 (Tier A) +37%
+        Tendance : ↑ rising
+    """
+    u = username.lstrip("@").strip().lower()
+    if not history:
+        return f"📈 Évolution @{u}\n(aucun historique)"
+    if len(history) == 1:
+        return f"📈 Évolution @{u}\nPas encore d'historique"
+
+    try:
+        from database import compute_tier  # tardif (évite cycle au chargement)
+    except ImportError:
+        def compute_tier(score: float) -> str:  # type: ignore[misc]
+            return "?"
+
+    parsed: list[tuple[datetime | None, dict[str, Any]]] = []
+    for h in history:
+        try:
+            d: datetime | None = datetime.fromisoformat(str(h.get("date") or ""))
+        except ValueError:
+            d = None
+        if d is not None and d.tzinfo is not None:
+            d = d.astimezone(timezone.utc).replace(tzinfo=None)
+        parsed.append((d, h))
+
+    base_dt = parsed[0][0]
+    lines = [f"📈 Évolution @{u}"]
+    prev_score: float | None = None
+    for i, (d, h) in enumerate(parsed):
+        try:
+            score = float(h.get("score") or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        tier = compute_tier(score)
+        date_str = d.strftime("%d/%m") if d else "??/??"
+        if i == 0 or base_dt is None or d is None:
+            label = "J0  "
+        else:
+            days = max(0, (d - base_dt).days)
+            label = f"J+{days}"
+        suffix = ""
+        if prev_score is not None and prev_score > 0 and i > 0:
+            pct = (score - prev_score) / prev_score * 100.0
+            sign = "+" if pct >= 0 else ""
+            suffix = f" {sign}{pct:.0f}%"
+        lines.append(f"{label} {date_str} → {score:.0f} (Tier {tier}){suffix}")
+        prev_score = score
+
+    try:
+        first_score = float(parsed[0][1].get("score") or 0.0)
+        last_score = float(parsed[-1][1].get("score") or 0.0)
+    except (TypeError, ValueError):
+        first_score, last_score = 0.0, 0.0
+    if first_score > 0:
+        ratio = (last_score - first_score) / first_score
+    else:
+        ratio = 0.0
+    if ratio > 0.10:
+        trend_label = "↑ rising"
+    elif ratio < -0.10:
+        trend_label = "↓ declining"
+    else:
+        trend_label = "→ stable"
+    lines.append(f"Tendance : {trend_label}")
+    return "\n".join(lines)
+
+
+def _handle_evolution(username: str, *, db_path: Path | None) -> str:
+    """Charge ``database.json`` et formate l'évolution du profil."""
+    try:
+        from database import DatabaseIOError, load_db  # tardif
+    except ImportError as e:
+        _LOG.warning("database module indisponible (%s).", e)
+        return f"📈 Évolution @{username}\n(database module indisponible)"
+    try:
+        db = load_db(path=db_path)
+    except DatabaseIOError as e:
+        _LOG.warning("load_db a échoué (%s).", e)
+        return f"📈 Évolution @{username}\n(database illisible)"
+    key = username.lstrip("@").strip().lower()
+    profile = (db.get("profiles") or {}).get(key)
+    if not profile:
+        return f"📈 Évolution @{key}\n(profil pas encore en base)"
+    history = profile.get("scores_history") or []
+    return _format_evolution(key, history)
+
+
 def _parse_callback_data(data: str) -> tuple[str, list[str]]:
-    """Parse ``v:user`` / ``r:user`` / ``m:user`` / ``s:T2:user``."""
+    """Parse ``v:user`` / ``r:user`` / ``m:user`` / ``s:T2:user`` / ``ev:user``."""
     parts = (data or "").split(":")
     if not parts:
         return "", []
@@ -656,6 +923,7 @@ def handle_callback(
     validations_path: Path | None = None,
     watchlist_path: Path | None = None,
     seeds_path: Path | None = None,
+    db_path: Path | None = None,
 ) -> str:
     """Traite un ``callback_query`` Telegram. Retourne le texte de réponse loggé.
 
@@ -692,6 +960,7 @@ def handle_callback(
             validations_path=validations_path,
             watchlist_path=watchlist_path,
             seeds_path=seeds_path,
+            db_path=db_path,
         )
         if bot_token and message_id:
             _edit_message(chat_id, message_id, text, token=bot_token, reply_markup=None)
@@ -745,12 +1014,33 @@ def handle_callback(
             validations_path=validations_path,
             watchlist_path=watchlist_path,
             seeds_path=seeds_path,
+            db_path=db_path,
         )
         if bot_token and message_id:
             _edit_message(chat_id, message_id, text, token=bot_token, reply_markup=None)
         if bot_token and cq_id:
             _ack_callback(cq_id, token=bot_token, text=f"T-type {new_t_type}")
         _LOG.info("set t_type @%s -> %s", username, new_t_type)
+        return text
+
+    if action == "ev" and args:
+        username = args[0]
+        text = _handle_evolution(username, db_path=db_path)
+        # Push un nouveau message (on ne touche pas au message du candidat
+        # pour préserver les boutons de validation).
+        if bot_token and chat_id:
+            _telegram_post(
+                "sendMessage",
+                {
+                    "chat_id": chat_id,
+                    "text": text,
+                    "disable_web_page_preview": True,
+                },
+                token=bot_token,
+            )
+        if bot_token and cq_id:
+            _ack_callback(cq_id, token=bot_token, text="Évolution")
+        _LOG.info("evolution @%s", username)
         return text
 
     _LOG.warning("Callback inconnu : data=%r", data)
@@ -795,6 +1085,7 @@ def run_bot(
     validations_path: Path | None = None,
     watchlist_path: Path | None = None,
     seeds_path: Path | None = None,
+    db_path: Path | None = None,
     sleep_fn=time.sleep,
 ) -> None:
     """Boucle de long-polling. Stoppe sur ``Ctrl-C``.
@@ -840,6 +1131,7 @@ def run_bot(
                         validations_path=validations_path,
                         watchlist_path=watchlist_path,
                         seeds_path=seeds_path,
+                        db_path=db_path,
                     )
             if updates:
                 _save_offset(offset, path=state_path)
@@ -899,6 +1191,7 @@ __all__ = [
     "handle_callback",
     "load_validations",
     "notify_candidate",
+    "notify_score_evolution",
     "run_bot",
     "save_validations",
     "setup_bot_logger",

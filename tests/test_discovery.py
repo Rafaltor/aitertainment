@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -686,9 +687,12 @@ class ScoreProfileTest(unittest.TestCase):
             reel_ratio_p90=0.0, **common_kwargs
         )
         self.assertGreater(score_with_p90, score_median_only)
-        # Contribution attendue du P90 : 27.08/50 * 100 ≈ 54.17
+        # Contribution log attendue du P90 : log10(27.08+1)/log10(51) * 100.
+        expected_p90_pts = (
+            math.log10(27.083333 + 1.0) / math.log10(51.0) * 100.0
+        )
         self.assertAlmostEqual(
-            score_with_p90 - score_median_only, 27.083333 / 50.0 * 100, places=3
+            score_with_p90 - score_median_only, expected_p90_pts, places=3
         )
 
     def test_pinned_medias_excluded_from_scoring(self) -> None:
@@ -999,6 +1003,134 @@ class ScoreProfileTest(unittest.TestCase):
         out = discovery._remove_pinned_reels(reels)
         self.assertEqual(len(out), 3)
         self.assertEqual(out, reels[2:])
+
+
+class LogScoringTest(unittest.TestCase):
+    """Scoring logarithmique : pas de plafond linéaire, pas de div0, compression."""
+
+    DOMAIN: dict[str, Any] = {"name": "humour", "t_types_target": ["T2"]}
+
+    @staticmethod
+    def _reel_score(ratio_med: float, **overrides: Any) -> float:
+        kwargs: dict[str, Any] = {
+            "reel_ratio_median": ratio_med,
+            "reel_ratio_p90": 0.0,
+            "reel_engagement_median": 0.0,
+            "reel_trend": "stable",
+            "t_type_distribution": {},
+            "publish_frequency": 0.0,
+            "domain": LogScoringTest.DOMAIN,
+        }
+        kwargs.update(overrides)
+        return discovery._compute_reel_score(**kwargs)
+
+    def test_log_norm_zero_does_not_raise_or_div_zero(self) -> None:
+        # Pas de log10(0) : value <= 0 → 0.0
+        self.assertEqual(discovery._log_norm(0.0, ref=10.0), 0.0)
+        self.assertEqual(discovery._log_norm(-5.0, ref=10.0), 0.0)
+        self.assertEqual(discovery._log_norm(None, ref=10.0), 0.0)
+        # ref invalide → 0.0 (pas de ZeroDivisionError)
+        self.assertEqual(discovery._log_norm(10.0, ref=0.0), 0.0)
+        self.assertEqual(discovery._log_norm(10.0, ref=-1.0), 0.0)
+
+    def test_log_norm_at_ref_equals_one(self) -> None:
+        self.assertAlmostEqual(discovery._log_norm(10.0, ref=10.0), 1.0, places=12)
+        self.assertAlmostEqual(discovery._log_norm(50.0, ref=50.0), 1.0, places=12)
+
+    def test_compute_reel_score_zero_ratio_does_not_crash(self) -> None:
+        score = self._reel_score(0.0)
+        # Avec stable + tout reste à 0, score = 75 (trend stable seul).
+        self.assertEqual(score, discovery.SCORE_REEL_TREND_W * 0.5)
+
+    def test_log_score_6x_clearly_above_1x(self) -> None:
+        score_1x = self._reel_score(1.0)
+        score_6x = self._reel_score(6.0)
+        self.assertGreater(score_6x, score_1x)
+        # Différenciation log vs linéaire :
+        # log(2)/log(11)*250 ≈ 72.3 ; log(7)/log(11)*250 ≈ 202.9 → +130 pts.
+        self.assertAlmostEqual(score_6x - score_1x, 130.6, places=0)
+
+    def test_log_score_30x_above_6x_but_with_compression(self) -> None:
+        """30x vaut > 6x mais **pas** 5× plus (compression logarithmique).
+
+        Linéaire (ancien) : 30/6 = 5× la contribution de 6x.
+        Log : log10(31)/log10(7) ≈ 1.491/0.845 ≈ 1.76× → loin de 5×.
+        """
+        contrib_6x = discovery._log_norm(6.0, ref=10.0) * 250
+        contrib_30x = discovery._log_norm(30.0, ref=10.0) * 250
+        self.assertGreater(contrib_30x, contrib_6x)
+        # Ratio entre contributions : entre 1.5× et 2.0× (jamais 5×).
+        ratio = contrib_30x / contrib_6x
+        self.assertGreater(ratio, 1.5)
+        self.assertLess(ratio, 2.0)
+
+    def test_log_score_unbounded_above_ref(self) -> None:
+        """Au-delà de la référence, le score continue à croître (pas de plafond)."""
+        contrib_at_ref = discovery._log_norm(10.0, ref=10.0) * 250  # = 250
+        contrib_above = discovery._log_norm(100.0, ref=10.0) * 250
+        self.assertGreater(contrib_above, contrib_at_ref)
+        # log10(101)/log10(11) ≈ 2.004/1.041 ≈ 1.926 → ~481 pts (>250 nominal).
+        self.assertAlmostEqual(contrib_above, 481.4, places=0)
+
+    def test_frequency_score_caps_at_one_per_day(self) -> None:
+        """Le rythme est plafonné à ref pour ne pas récompenser le spam."""
+        s_at_ref = discovery._frequency_score(1.0)
+        s_spam = discovery._frequency_score(5.0)
+        self.assertAlmostEqual(s_at_ref, 1.0, places=12)
+        self.assertEqual(s_at_ref, s_spam)
+
+    def test_frequency_score_log_growth_below_ref(self) -> None:
+        # rhythm = 0.5 → log10(6)/log10(11) ≈ 0.747
+        self.assertAlmostEqual(
+            discovery._frequency_score(0.5),
+            math.log10(6.0) / math.log10(11.0),
+            places=6,
+        )
+        self.assertEqual(discovery._frequency_score(0.0), 0.0)
+        self.assertEqual(discovery._frequency_score(-1.0), 0.0)
+
+
+class ExplainScoreTest(unittest.TestCase):
+    SAMPLE: dict[str, Any] = {
+        "username": "raikkonenaf",
+        "domain": "humour",
+        "reel_ratio_median": 6.57,
+        "reel_ratio_p90": 32.7,
+        "reel_engagement_median": 0.068,
+        "reel_trend": "stable",
+        "post_ratio_median": 0.05,
+        "post_engagement_median": 0.04,
+        "posting_rhythm": 1.59,
+        "score_reels": 600.0,
+        "score_posts": 350.0,
+        "reel_weight": 0.7,
+        "post_weight": 0.3,
+        "score": 525.0,
+    }
+
+    def test_explain_includes_username_and_breakdown(self) -> None:
+        text = discovery.explain_score(self.SAMPLE)
+        self.assertIn("@raikkonenaf", text)
+        self.assertIn("reel_ratio_median", text)
+        self.assertIn("reel_ratio_p90", text)
+        self.assertIn("reel_engagement", text)
+        self.assertIn("reel_trend", text)
+        self.assertIn("posting_rhythm", text)
+        self.assertIn("score_reels", text)
+        self.assertIn("score_posts", text)
+        self.assertIn("score_final", text)
+
+    def test_explain_handles_empty_input(self) -> None:
+        text = discovery.explain_score({})
+        self.assertIn("?", text)
+
+    def test_explain_pts_match_log_formula(self) -> None:
+        """La contribution P90 affichée doit suivre log10(32.7+1)/log10(51)*100."""
+        text = discovery.explain_score(self.SAMPLE)
+        expected_p90 = round(
+            math.log10(32.7 + 1.0) / math.log10(51.0) * 100
+        )
+        self.assertIn(f"{expected_p90}pts", text)
 
 
 def _row(views: int) -> dict[str, Any]:
@@ -1448,6 +1580,285 @@ class RunDiscoveryCliTest(unittest.TestCase):
                 candidates_path=cd_p,
             )
             self.assertGreater(session.profiles_today, 0)
+
+
+class ScoreAndPersistTest(unittest.TestCase):
+    """``score_and_persist`` : upsert DB systématique + notif au-dessus du seuil."""
+
+    DOMAIN = {
+        "name": "humour",
+        "niche": "humour",
+        "t_types_target": ["T2", "T3b"],
+    }
+
+    def setUp(self) -> None:
+        self._sleep_patch = patch.object(discovery, "polite_sleep", lambda *a, **k: None)
+        self._sleep_patch.start()
+        self.addCleanup(self._sleep_patch.stop)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+        self.db_path = base / "database.json"
+        self.cand_path = base / "candidates.json"
+        self.cand_path.write_text(
+            json.dumps({"candidates": []}), encoding="utf-8"
+        )
+
+    def _stub_score_result(self, score: float = 500.0) -> dict[str, Any]:
+        return {
+            "username": "raikkonenaf",
+            "domain": "humour",
+            "platform": "instagram",
+            "followers": 48_000,
+            "score": score,
+            "score_reels": score * 1.1,
+            "score_posts": score * 0.7,
+            "reel_weight": 0.7,
+            "post_weight": 0.3,
+            "reel_ratio_median": 6.57,
+            "reel_ratio_p90": 32.7,
+            "reel_engagement_median": 0.068,
+            "reel_trend": "stable",
+            "post_ratio_median": 0.05,
+            "post_engagement_median": 0.04,
+            "posting_rhythm": 1.59,
+            "t_type_dominant": "T2",
+            "t_type_distribution": {"T2": 0.7, "T3b": 0.3},
+            "biography": "bio",
+            "media_sampled": 12,
+            "reels_count": 8,
+            "posts_count": 4,
+            "reels_sampled": 8,
+            "scored_at": "2026-05-08T12:00:00",
+        }
+
+    def test_persists_to_db_and_notifies_above_threshold(self) -> None:
+        notify_calls: list[dict[str, Any]] = []
+        result = self._stub_score_result(score=500.0)  # > 300, upsert + notif
+
+        with patch.object(discovery, "score_profile", return_value=result):
+            summary = discovery.score_and_persist(
+                "@raikkonenaf",
+                domain=self.DOMAIN,
+                added_via="manual",
+                blacklist={"profiles": []},
+                client=MagicMock(),
+                db_path=self.db_path,
+                candidates_path=self.cand_path,
+                notify_fn=notify_calls.append,
+            )
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["tier"], "B")
+        self.assertTrue(summary["notified"])
+        self.assertEqual(len(notify_calls), 1)
+        self.assertEqual(notify_calls[0]["username"], "raikkonenaf")
+
+        db = json.loads(self.db_path.read_text(encoding="utf-8"))
+        self.assertIn("raikkonenaf", db["profiles"])
+        self.assertEqual(db["profiles"]["raikkonenaf"]["tier"], "B")
+        self.assertEqual(db["profiles"]["raikkonenaf"]["added_via"], "manual")
+
+        cands = json.loads(self.cand_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [c["username"] for c in cands["candidates"]], ["raikkonenaf"]
+        )
+
+    def test_below_threshold_persists_but_does_not_notify(self) -> None:
+        notify_calls: list[dict[str, Any]] = []
+        result = self._stub_score_result(score=250.0)  # < 300
+
+        with patch.object(discovery, "score_profile", return_value=result):
+            summary = discovery.score_and_persist(
+                "@raikkonenaf",
+                domain=self.DOMAIN,
+                blacklist={"profiles": []},
+                client=MagicMock(),
+                db_path=self.db_path,
+                candidates_path=self.cand_path,
+                notify_fn=notify_calls.append,
+            )
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertFalse(summary["notified"])
+        self.assertEqual(notify_calls, [])
+
+        # DB tout de même remplie (tier C → archivé).
+        db = json.loads(self.db_path.read_text(encoding="utf-8"))
+        self.assertIn("raikkonenaf", db["profiles"])
+        self.assertEqual(db["profiles"]["raikkonenaf"]["tier"], "C")
+
+        # Pas inscrit dans candidates.json.
+        cands = json.loads(self.cand_path.read_text(encoding="utf-8"))
+        self.assertEqual(cands["candidates"], [])
+
+    def test_filtered_profile_returns_none(self) -> None:
+        with patch.object(discovery, "score_profile", return_value=None):
+            summary = discovery.score_and_persist(
+                "@private_user",
+                domain=self.DOMAIN,
+                blacklist={"profiles": []},
+                client=MagicMock(),
+                db_path=self.db_path,
+            )
+        self.assertIsNone(summary)
+        # Pas de DB créée car aucun upsert ne se produit.
+        self.assertFalse(self.db_path.exists())
+
+    def test_default_domain_falls_back_to_first_in_seeds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            seeds_p = Path(tmp) / "seeds.json"
+            seeds_p.write_text(
+                json.dumps(
+                    {
+                        "domains": [
+                            {
+                                "name": "humour",
+                                "niche": "humour",
+                                "seeds": [],
+                                "t_types_target": ["T2"],
+                            },
+                            {
+                                "name": "streetwear",
+                                "niche": "streetwear",
+                                "seeds": [],
+                                "t_types_target": ["T3b"],
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            captured: list[dict[str, Any]] = []
+
+            def fake_score(username, domain, **kw):
+                captured.append(domain)
+                return self._stub_score_result(score=500.0)
+
+            with patch.object(discovery, "score_profile", side_effect=fake_score):
+                summary = discovery.score_and_persist(
+                    "@raikkonenaf",
+                    blacklist={"profiles": []},
+                    client=MagicMock(),
+                    seeds_path=seeds_p,
+                    db_path=self.db_path,
+                    candidates_path=self.cand_path,
+                    notify_fn=lambda r: None,
+                )
+            self.assertIsNotNone(summary)
+            self.assertEqual(captured[0]["name"], "humour")
+
+
+class ExploreNetworkUpsertsDatabaseTest(unittest.TestCase):
+    """`explore_network` doit upserter dans `database.json` à chaque scoring
+    réussi, **même** si le score est sous le seuil candidat (500)."""
+
+    DOMAIN = {
+        "name": "humour",
+        "niche": "humour",
+        "seeds": ["seed_one"],
+        "t_types_target": ["T2"],
+    }
+
+    def setUp(self) -> None:
+        self._sleep_patch = patch.object(discovery, "polite_sleep", lambda *a, **k: None)
+        self._sleep_patch.start()
+        self.addCleanup(self._sleep_patch.stop)
+
+    def _make_following_client(self, usernames: list[str]) -> MagicMock:
+        client = MagicMock()
+        client.user_id_from_username.return_value = "1"
+        client.user_following.return_value = {
+            str(i): SimpleNamespace(username=u) for i, u in enumerate(usernames)
+        }
+        return client
+
+    def test_low_score_still_upserted_in_db(self) -> None:
+        client = self._make_following_client(["a", "b"])
+        db: dict[str, Any] = {"profiles": {}}
+
+        def fake_score(username, domain, **kw):
+            return {
+                "username": username,
+                "domain": "humour",
+                "platform": "instagram",
+                "followers": 5_000,
+                "score": 250.0,  # < CANDIDATE_SCORE_THRESHOLD (500)
+                "score_reels": 250.0,
+                "score_posts": 0.0,
+                "reel_weight": 1.0,
+                "post_weight": 0.0,
+                "reel_ratio_median": 0.5,
+                "reel_ratio_p90": 1.0,
+                "reel_engagement_median": 0.02,
+                "reel_trend": "stable",
+                "post_ratio_median": None,
+                "post_engagement_median": None,
+                "posting_rhythm": 0.3,
+                "t_type_dominant": "T2",
+                "t_type_distribution": {"T2": 1.0},
+                "biography": "",
+                "media_sampled": 8,
+                "reels_count": 8,
+                "posts_count": 0,
+                "reels_sampled": 8,
+                "scored_at": "2026-05-08T12:00:00",
+            }
+
+        notif_mock = MagicMock()
+        with patch.object(discovery, "score_profile", side_effect=fake_score), \
+             patch.object(discovery, "_notify_candidate", notif_mock), \
+             patch.object(discovery, "save_blacklist"), \
+             patch.object(discovery, "save_db") as save_db_mock:
+            discovery.explore_network(
+                self.DOMAIN,
+                blacklist={"profiles": []},
+                watchlist=[],
+                candidates={"candidates": []},
+                db=db,
+                client=client,
+                session=discovery.DiscoverySession(mock=False),
+            )
+
+        # Les 2 profils sont upsertés (tier C, archivés), même sans notif.
+        self.assertEqual(set(db["profiles"].keys()), {"a", "b"})
+        self.assertEqual(db["profiles"]["a"]["tier"], "C")
+        self.assertTrue(db["profiles"]["a"]["archived"])
+        # Pas de notif sous 500.
+        notif_mock.assert_not_called()
+        # Et save_db a bien été appelé (à chaque upsert hors mock).
+        self.assertGreaterEqual(save_db_mock.call_count, 2)
+
+
+class PrintScoreSummaryTest(unittest.TestCase):
+    def test_format_matches_brief(self) -> None:
+        summary = {
+            "score_result": {
+                "username": "raikkonenaf",
+                "score": 448.0,
+                "t_type_dominant": "T2",
+            },
+            "profile": {"tier": "B"},
+            "tier": "B",
+            "notified": True,
+        }
+        with patch("builtins.print") as mock_print:
+            discovery._print_score_summary(summary, "@raikkonenaf")
+        out = mock_print.call_args.args[0]
+        self.assertIn("@raikkonenaf", out)
+        self.assertIn("Score : 448", out)
+        self.assertIn("Tier : B", out)
+        self.assertIn("T-type : T2", out)
+        self.assertIn("Notif : ✅", out)
+
+    def test_format_when_filtered(self) -> None:
+        with patch("builtins.print") as mock_print:
+            discovery._print_score_summary(None, "ghost")
+        out = mock_print.call_args.args[0]
+        self.assertIn("@ghost", out)
+        self.assertIn("filtré", out)
 
 
 if __name__ == "__main__":
