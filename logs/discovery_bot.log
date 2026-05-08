@@ -288,3 +288,55 @@
 2026-05-08 17:41:00,603 [WARNING] notify_score_evolution skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
 2026-05-08 17:41:00,603 [INFO] [mock] notify_score_evolution : 📈 @raikkonenaf : 448 → 745 (+66%) — Tier B→A
 2026-05-08 17:41:00,604 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-08 22:47:45,136 [INFO] set t_type @promising_creator -> T4
+2026-05-08 22:48:03,367 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-08 22:48:03,406 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-08 22:48:03,406 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-08 22:48:03,406 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-08 22:48:03,409 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-08 22:48:03,412 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-08 22:48:03,417 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-08 22:48:03,424 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-08 22:48:03,424 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-08 22:48:03,424 [INFO] set t_type @promising_creator -> T4
+2026-05-08 22:48:03,430 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-08 22:48:03,431 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-08 22:48:03,431 [INFO] set t_type @promising_creator -> T2
+2026-05-08 22:48:03,433 [INFO] set t_type @promising_creator -> T9
+2026-05-08 22:48:03,439 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-08 22:48:03,439 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-08 22:48:03,439 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-08 22:48:03,442 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-08 22:48:03,443 [INFO] evolution @ghost
+2026-05-08 22:48:03,445 [INFO] evolution @alice
+2026-05-08 22:48:03,445 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-08 22:48:03,446 [INFO] [mock] notify_candidate @promising_creator
+2026-05-08 22:48:03,446 [WARNING] notify_score_evolution skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-08 22:48:03,446 [INFO] [mock] notify_score_evolution : 📈 @raikkonenaf : 448 → 745 (+66%) — Tier B→A
+2026-05-08 22:48:03,448 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-08 22:55:25,850 [INFO] set t_type @promising_creator -> T4
+2026-05-08 22:55:37,729 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-08 22:55:37,739 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-08 22:55:37,739 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-08 22:55:37,740 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-08 22:55:37,742 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-08 22:55:37,745 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-08 22:55:37,750 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-08 22:55:37,757 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-08 22:55:37,758 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-08 22:55:37,758 [INFO] set t_type @promising_creator -> T4
+2026-05-08 22:55:37,768 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-08 22:55:37,769 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-08 22:55:37,769 [INFO] set t_type @promising_creator -> T2
+2026-05-08 22:55:37,771 [INFO] set t_type @promising_creator -> T9
+2026-05-08 22:55:37,777 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-08 22:55:37,778 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-08 22:55:37,778 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-08 22:55:37,780 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-08 22:55:37,782 [INFO] evolution @ghost
+2026-05-08 22:55:37,784 [INFO] evolution @alice
+2026-05-08 22:55:37,785 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-08 22:55:37,785 [INFO] [mock] notify_candidate @promising_creator
+2026-05-08 22:55:37,786 [WARNING] notify_score_evolution skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-08 22:55:37,786 [INFO] [mock] notify_score_evolution : 📈 @raikkonenaf : 448 → 745 (+66%) — Tier B→A
+2026-05-08 22:55:37,787 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.

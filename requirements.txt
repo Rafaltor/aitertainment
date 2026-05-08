@@ -1,6 +1,27 @@
-apify-client
-python-dotenv
-pandas
-requests
-schedule
-instagrapi
+# AItertainment — runtime Python (Mac Mini M4, Python 3.11+)
+#
+# Inventaire généré à partir des imports de :
+#   watcher.py, discovery.py, database.py, instagram_client.py,
+#   telegram_discovery_bot.py, rescore_scheduler.py, dataset_builder.py,
+#   modules/classifier.py, config.py.
+#
+# Tout le reste (json, logging, datetime, statistics, pathlib, tempfile,
+# argparse, math, re, dataclasses, typing, os, sys, time, random) vient de
+# la stdlib Python — aucune dépendance pip à ajouter pour ces modules.
+#
+# IA locale : Ollama (qwen2.5:7b) tourne en daemon séparé, accédé via
+# `requests` (pas de SDK Python officiel — l'API HTTP /api/generate suffit).
+
+# --- API privée Instagram (sessions persistantes, anti-détection) ---
+# Versions ≥ 2.x stables ; tu tournes sur 2.5.13.
+instagrapi>=2.5.0,<3.0
+
+# --- HTTP client (Telegram Bot API + Ollama /api/generate) ---
+requests>=2.32,<3.0
+
+# --- Chargement automatique de .env au démarrage de config.py ---
+python-dotenv>=1.0,<2.0
+
+# --- Tests (optionnel mais inclus pour pouvoir lancer la suite) ---
+# unittest est dans la stdlib ; pytest n'est pas requis.
+# Aucune lib de mocking externe — `unittest.mock` suffit.

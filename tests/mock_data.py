@@ -358,11 +358,16 @@ def ollama_post_double_stub(
     def _post(url: str, *, json_body: dict[str, Any] | None = None, timeout: int = 120):
         _ = url, timeout
         system = (json_body or {}).get("system") or ""
-        payload = (
-            generate_payload
-            if "conseiller culturel" in system.lower()
-            else classify_payload
+        # On distingue classify vs generate par un marqueur du **nouveau**
+        # system prompt generator ("utilisateur lambda" / "RÈGLES ABSOLUES").
+        # Repli legacy : ancienne chaîne "conseiller culturel".
+        sys_lower = system.lower()
+        is_generate = (
+            "utilisateur lambda" in sys_lower
+            or "règles absolues" in sys_lower
+            or "conseiller culturel" in sys_lower
         )
+        payload = generate_payload if is_generate else classify_payload
 
         class _Resp:
             def raise_for_status(self) -> None:

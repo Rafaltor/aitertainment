@@ -2,9 +2,36 @@
   "domains": [
     {
       "name": "humour",
-      "seeds": ["alexandreskrt"],
-      "keywords": ["drôle", "mdr", "😂", "💀"],
-      "t_types_target": ["T2", "T2b", "T3b", "T5"]
+      "niche": "humour",
+      "seeds": [
+        "recrutestagiaire",
+        "raafale_",
+        "lokman.mh",
+        "babushkabibi",
+        "sashacortesi",
+        "gregreact",
+        "remi.idlt",
+        "loevasoltani",
+        "lequinoaa",
+        "alainleroux_",
+        "stranogui",
+        "louloutic",
+        "fcgolmon",
+        "docteur.drew",
+        "raikkonenaf",
+        "sutuswing",
+        "anais.gadaud",
+        "jonas_respect",
+        "marrant_club",
+        "baran_oga",
+        "ouaissalut5",
+        "71_cent",
+        "helenaschz",
+        "dweezil_tiktok_pro",
+        "92johnmarston"
+      ],
+      "keywords": ["drôle", "mdr", "😂", "💀", "humour", "sketch"],
+      "t_types_target": ["T2", "T2b", "T3b", "T4", "T5"]
     }
   ]
 }

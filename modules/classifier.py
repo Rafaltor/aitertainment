@@ -27,15 +27,113 @@ Retourne UNIQUEMENT un JSON avec :
   "brand_risk": "low"|"medium"|"high"
 }"""
 
-GENERATE_COMMENTS_SYSTEM = """Tu es conseiller culturel pour une marque sur les réseaux sociaux.
-Tu proposes des réponses courtes, crédibles, dans le registre de la communauté (pas de ton publicitaire).
-Retourne UNIQUEMENT un JSON valide, sans texte avant ou après :
-{
-  "comments": ["suggestion 1", "suggestion 2", "suggestion 3"]
-}
-Les trois chaînes doivent être des commentaires prêts à poster (une phrase chacune si possible)."""
+GENERATE_COMMENTS_SYSTEM = """Tu es un utilisateur lambda qui commente des Reels Instagram.
+Tu ne représentes aucune marque. Tu écris comme tu parlerais à un ami — vite, sans réfléchir, en 3 secondes.
 
-VALID_TYPES = frozenset({"T1", "T2", "T3a", "T3b", "T4", "T5"})
+RÈGLES ABSOLUES (violation = réponse rejetée) :
+- Maximum 8 mots par commentaire
+- Minuscule en début (sauf nom propre)
+- 0 ou 1 emoji max, placé naturellement
+- Jamais ces mots : incroyable, impressionnant, vraiment, tellement, félicitations, magnifique, superbe, excellent, contenu, créateur, vidéo, post
+- Pas de point final
+- Registre oral SMS, pas rédactionnel
+- Imparfait orthographiquement si ça sonne plus naturel
+
+Retourne UNIQUEMENT ce JSON, rien d'autre :
+{"comments": ["commentaire 1", "commentaire 2", "commentaire 3"]}"""
+
+
+# ---------------------------------------------------------------------------
+# Prompts user spécialisés par T-type
+# ---------------------------------------------------------------------------
+#
+# Chaque template est formaté avec ``str.format(**ctx)`` et reçoit :
+# ``niche``, ``caption``, ``hashtags``, ``comments_sample``.
+#
+# T1 et T3a sont volontairement absents :
+# - T1 (admiration sincère) → la marque ne génère pas dans ce registre
+#   (cf. brief Watcher : T1 est exclu de ``_generate_for_post``).
+# - T3a (haine directe) → toxique, pas de génération.
+#
+# Les T-types non listés ici retombent sur **T2** (registre le plus neutre
+# parmi les générables ; cf. ``_resolve_ttype_prompt``).
+
+GENERATE_PROMPTS_BY_TTYPE: dict[str, str] = {
+    "T2": """Contexte : communauté humour niche soudée, inside jokes.
+Tu fais partie du groupe. Tu réagis à l'inside joke sans l'expliquer.
+Ton commentaire prouve que tu as compris.
+
+Niche : {niche}
+Caption du Reel : {caption}
+Hashtags : {hashtags}
+
+Exemples de vrais commentaires de la communauté :
+{comments_sample}""",
+    "T2b": """Contexte : humour participatif, les gens continuent le sketch dans les commentaires.
+Tu ajoutes une couche, tu continues la blague,
+tu réponds dans le même registre que le créateur.
+
+Niche : {niche}
+Caption du Reel : {caption}
+Hashtags : {hashtags}
+
+Exemples de vrais commentaires :
+{comments_sample}""",
+    "T3b": """Contexte : second degré invisible. Le créateur ne perçoit pas
+qu'on se moque. Ton commentaire semble un éloge mais le sous-texte
+est moqueur — subtil, pas agressif.
+La cible doit pouvoir liker ton commentaire sans comprendre.
+
+Niche : {niche}
+Caption du Reel : {caption}
+Hashtags : {hashtags}
+
+Exemples de vrais commentaires :
+{comments_sample}""",
+    "T4": """Contexte : identité communautaire ritualisée.
+Tu poses un marqueur d'appartenance au groupe.
+Phrase courte, rituelle, que seuls les membres comprennent.
+
+Niche : {niche}
+Caption du Reel : {caption}
+Hashtags : {hashtags}
+
+Exemples de vrais commentaires :
+{comments_sample}""",
+    "T5": """Contexte : créateur provocateur conscient, troll assumé.
+Tu joues le jeu — punchline directe, humour noir, tu assumes.
+Pas d'agressivité gratuite, juste du piquant.
+
+Niche : {niche}
+Caption du Reel : {caption}
+Hashtags : {hashtags}
+
+Exemples de vrais commentaires :
+{comments_sample}""",
+}
+
+GENERATE_FALLBACK_TTYPE = "T2"
+
+# Mots interdits explicités côté system prompt — listés ici aussi pour
+# permettre un check programmatique côté tests / debug (pas de filtrage
+# automatique côté code de prod : on fait confiance au modèle, on ne fait
+# pas de censure post-hoc qui dégraderait la cohérence des suggestions).
+FORBIDDEN_GENERATOR_WORDS: frozenset[str] = frozenset({
+    "incroyable",
+    "impressionnant",
+    "vraiment",
+    "tellement",
+    "félicitations",
+    "magnifique",
+    "superbe",
+    "excellent",
+    "contenu",
+    "créateur",
+    "vidéo",
+    "post",
+})
+
+VALID_TYPES = frozenset({"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"})
 VALID_RISK = frozenset({"low", "medium", "high"})
 
 
@@ -219,24 +317,101 @@ class CommentClassifier:
             raise ClassificationError(str(e), raw_text=raw_text) from e
 
 
+def _resolve_ttype_prompt(t_type: str | None) -> tuple[str, str]:
+    """Retourne ``(t_type_effectif, template)``.
+
+    Si ``t_type`` est inconnu / vide / pas dans ``GENERATE_PROMPTS_BY_TTYPE``,
+    on retombe sur le prompt **T2** (registre le plus neutre parmi les
+    générables — humour de niche, applicable à 80 % des cas). Le t_type
+    effectif est aussi retourné pour que le caller puisse l'auditer.
+    """
+    key = str(t_type or "").strip()
+    if key in GENERATE_PROMPTS_BY_TTYPE:
+        return key, GENERATE_PROMPTS_BY_TTYPE[key]
+    return GENERATE_FALLBACK_TTYPE, GENERATE_PROMPTS_BY_TTYPE[GENERATE_FALLBACK_TTYPE]
+
+
+def _normalize_video_context(
+    video_context: dict[str, Any] | None,
+    *,
+    niche: str,
+) -> dict[str, str]:
+    """Construit le contexte de format ``str.format(**ctx)`` du prompt T-type.
+
+    On force des **strings** sur tous les champs : ``str.format`` doit pouvoir
+    interpoler sans surprise même si l'appelant passe ``None`` ou des
+    nombres. Les hashtags sont normalisés en chaîne ``#tag #tag2`` (ou
+    ``(aucun)`` si vide) — c'est ce que le LLM voit le plus souvent dans le
+    contenu réel d'Instagram.
+    """
+    ctx = video_context or {}
+    raw_hashtags = ctx.get("hashtags") or []
+    if isinstance(raw_hashtags, str):
+        # Caller a passé une string pré-formatée : on la respecte.
+        hashtags_str = raw_hashtags.strip() or "(aucun)"
+    else:
+        tags = [str(h).lstrip("#").strip() for h in raw_hashtags if str(h).strip()]
+        hashtags_str = " ".join(f"#{t}" for t in tags) if tags else "(aucun)"
+
+    return {
+        "niche": (niche or "").strip() or "(non précisée)",
+        "caption": str(ctx.get("caption") or "").strip() or "(vide)",
+        "hashtags": hashtags_str,
+    }
+
+
+def _format_comments_sample(
+    comments_sample: list[str], *, max_lines: int = 20
+) -> str:
+    """Joint les vrais commentaires humains en bloc lisible pour le LLM.
+
+    Le brief insiste : c'est le **signal le plus fort** pour calibrer le
+    registre — on en passe jusqu'à 20 (vs 40 dans l'ancien prompt). Pas
+    de numérotation : on veut imiter, pas analyser.
+    """
+    lines: list[str] = []
+    for c in comments_sample[:max_lines]:
+        s = str(c or "").strip()
+        if s:
+            lines.append(f"- {s}")
+    return "\n".join(lines) if lines else "(aucun commentaire disponible)"
+
+
 def generate_comments(
     classification: dict[str, Any],
     comments_sample: list[str],
     *,
     niche: str = "",
+    video_context: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Produit 3 suggestions via Ollama (même signature qu'avant)."""
-    user_lines = [
-        f"Niche / contexte : {niche.strip() or '(non précisé)'}",
-        "",
-        "Classification (JSON) :",
-        json.dumps(classification, ensure_ascii=False),
-        "",
-        "Exemples de commentaires existants (extrait) :",
-    ]
-    for i, c in enumerate(comments_sample[:40], start=1):
-        user_lines.append(f"{i}. {c}")
-    prompt = "\n".join(user_lines)
+    """Produit 3 commentaires via Ollama, prompt **spécialisé par T-type**.
+
+    Pipeline :
+
+    1. Lit ``classification["type"]`` ; fallback **T2** si T-type inconnu /
+       absent / non couvert (cf. ``_resolve_ttype_prompt``).
+    2. Construit le contexte vidéo : ``niche``, ``caption``, ``hashtags``
+       depuis ``video_context`` (signature étendue, rétro-compat conservée
+       en passant ``video_context=None``).
+    3. Injecte ``comments_sample[:20]`` comme exemples de registre humain.
+    4. Appelle Ollama avec ``GENERATE_COMMENTS_SYSTEM`` (système global :
+       règles absolues anti-marketing) + le template T-type comme user.
+
+    En phase **Watcher**, ``comments_sample`` est typiquement vide (pas de
+    scrape sur post frais) et tout repose sur ``video_context``. En phase
+    Discovery / generator de masse, on a au contraire ``comments_sample``
+    riche et ``video_context`` peut être ``None``.
+    """
+    t_type, template = _resolve_ttype_prompt(
+        (classification or {}).get("type")
+    )
+    ctx = _normalize_video_context(video_context, niche=niche)
+    prompt = template.format(
+        niche=ctx["niche"],
+        caption=ctx["caption"],
+        hashtags=ctx["hashtags"],
+        comments_sample=_format_comments_sample(comments_sample),
+    )
 
     body: dict[str, Any] = {
         "model": config.OLLAMA_MODEL,
@@ -266,4 +441,6 @@ def generate_comments(
     try:
         return _normalize_three_comments(payload)
     except ClassificationError as e:
-        raise ClassificationError(str(e), raw_text=raw_text) from e
+        raise ClassificationError(
+            f"{e} (t_type={t_type})", raw_text=raw_text
+        ) from e

@@ -84,7 +84,7 @@ _HASHTAG_RE = re.compile(r"#(\w+)")
 _PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_WATCHLIST_PATH = _PROJECT_ROOT / "watchlist.json"
 
-VALID_T_TYPES = frozenset({"T1", "T2", "T3a", "T3b", "T4", "T5"})
+VALID_T_TYPES = frozenset({"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"})
 VALID_PLATFORMS = frozenset({"instagram", "tiktok"})
 
 _LOGGER = logging.getLogger("aitertainment")
@@ -555,10 +555,11 @@ def _build_classification_from_t_type(t_type: str) -> dict[str, Any]:
 def _generate_for_post(context: dict[str, Any]) -> list[str]:
     """Produit 3 commentaires depuis le ``context`` (pas de ``comments_sample``).
 
-    Le contexte vidéo (caption, hashtags, audio_id) est injecté à la place de
-    l'échantillon de commentaires existants (cf. brief : phase Watcher = pas de
-    scrape de commentaires sur post frais). Renvoie ``[]`` si ``t_type`` est
-    ``T1`` ou ``T3a`` (le brief les exclut de la génération).
+    Le contexte vidéo (caption, hashtags, audio_id) est passé directement à
+    ``generate_comments`` via le paramètre ``video_context`` — aucun scrape
+    de commentaires n'est fait par le Watcher (post frais, distribution non
+    stabilisée). Renvoie ``[]`` si ``t_type`` est ``T1`` ou ``T3a`` (le brief
+    les exclut de la génération).
     """
     from modules.classifier import generate_comments  # import local : Ollama
 
@@ -569,14 +570,16 @@ def _generate_for_post(context: dict[str, Any]) -> list[str]:
         return []
 
     classification = _build_classification_from_t_type(t_type)
-    hashtags = context.get("hashtags") or []
-    payload = [
-        f"caption du post : {context.get('caption') or '(vide)'}",
-        f"hashtags : {' '.join('#' + str(h) for h in hashtags) or '(aucun)'}",
-        f"audio_id : {context.get('audio') or context.get('audio_id') or 'aucun'}",
-        f"créateur : @{context.get('username') or '?'}",
-    ]
-    return generate_comments(classification, payload, niche=niche)
+    return generate_comments(
+        classification,
+        [],  # pas de comments_sample en phase Watcher (post frais)
+        niche=niche,
+        video_context={
+            "caption": context.get("caption"),
+            "hashtags": context.get("hashtags"),
+            "audio_id": context.get("audio") or context.get("audio_id"),
+        },
+    )
 
 
 def notify_new_post(

@@ -464,5 +464,62 @@ class RunWatcherProtectionsTest(unittest.TestCase):
         self.assertEqual(mock_check.call_count, 1)
 
 
+class GenerateForPostTest(unittest.TestCase):
+    """Vérifie le câblage Watcher → ``modules.classifier.generate_comments``."""
+
+    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    def test_passes_video_context_with_caption_hashtags_audio(
+        self, mock_gen: MagicMock
+    ) -> None:
+        from watcher import _generate_for_post
+
+        ctx = {
+            "t_type": "T2",
+            "niche": "humour",
+            "caption": "moment culte F1",
+            "hashtags": ["F1", "monaco"],
+            "audio_id": "AUD42",
+            "username": "raikkonenaf",
+        }
+        out = _generate_for_post(ctx)
+        self.assertEqual(out, ["a", "b", "c"])
+        mock_gen.assert_called_once()
+        kwargs = mock_gen.call_args.kwargs
+        # comments_sample = [] (pas de scrape en phase Watcher).
+        self.assertEqual(mock_gen.call_args.args[1], [])
+        self.assertEqual(kwargs["niche"], "humour")
+        self.assertEqual(
+            kwargs["video_context"],
+            {"caption": "moment culte F1", "hashtags": ["F1", "monaco"], "audio_id": "AUD42"},
+        )
+
+    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    def test_falls_back_to_audio_field_when_no_audio_id(
+        self, mock_gen: MagicMock
+    ) -> None:
+        from watcher import _generate_for_post
+
+        # Compatibilité ancienne clé ``audio`` (utilisée par certains paths).
+        _generate_for_post({"t_type": "T2", "niche": "x", "audio": "OLD_KEY"})
+        kwargs = mock_gen.call_args.kwargs
+        self.assertEqual(kwargs["video_context"]["audio_id"], "OLD_KEY")
+
+    @patch("modules.classifier.generate_comments")
+    def test_t1_skips_generation(self, mock_gen: MagicMock) -> None:
+        from watcher import _generate_for_post
+
+        out = _generate_for_post({"t_type": "T1", "niche": "x"})
+        self.assertEqual(out, [])
+        mock_gen.assert_not_called()
+
+    @patch("modules.classifier.generate_comments")
+    def test_t3a_skips_generation(self, mock_gen: MagicMock) -> None:
+        from watcher import _generate_for_post
+
+        out = _generate_for_post({"t_type": "T3a", "niche": "x"})
+        self.assertEqual(out, [])
+        mock_gen.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

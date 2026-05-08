@@ -10,8 +10,8 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-08T14:21:48",
-      "last_scored_at": "2026-05-08T15:40:34",
-      "next_rescore_at": "2026-05-15T15:40:34",
+      "last_scored_at": "2026-05-08T20:55:12",
+      "next_rescore_at": "2026-05-15T20:55:12",
       "archived": false,
       "scores_history": [
         {
@@ -148,6 +148,36 @@
           "t_type_distribution": {
             "T2": 1.0
           }
+        },
+        {
+          "date": "2026-05-08T20:47:21",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-08T20:55:12",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
         }
       ]
     },
@@ -161,7 +191,7 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-08T14:21:48",
-      "last_scored_at": "2026-05-08T15:40:34",
+      "last_scored_at": "2026-05-08T20:55:12",
       "next_rescore_at": null,
       "archived": true,
       "scores_history": [
@@ -287,6 +317,36 @@
         },
         {
           "date": "2026-05-08T15:40:34",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-08T20:47:21",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-08T20:55:12",
           "score": 250.0,
           "score_reels": null,
           "score_posts": null,
