@@ -86,3 +86,14 @@
 2026-05-08 00:39:58,182 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
 2026-05-08 00:39:58,182 [INFO] [mock] notify_candidate @promising_creator
 2026-05-08 00:39:58,183 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-08 01:15:11,409 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-08 01:15:11,411 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-08 01:15:11,416 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-08 01:15:11,421 [INFO] set t_type @promising_creator -> T4
+2026-05-08 01:15:11,426 [INFO] set t_type @promising_creator -> T2
+2026-05-08 01:15:11,428 [INFO] set t_type @promising_creator -> T9
+2026-05-08 01:15:11,434 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-08 01:15:11,436 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-08 01:15:11,437 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-08 01:15:11,437 [INFO] [mock] notify_candidate @promising_creator
+2026-05-08 01:15:11,437 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.

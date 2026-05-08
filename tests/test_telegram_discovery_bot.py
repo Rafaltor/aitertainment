@@ -29,7 +29,7 @@ SAMPLE_CANDIDATE = {
     "reel_trend": "rising",
     "post_ratio_median": 0.05,
     "post_engagement_median": 0.04,
-    "publish_frequency": 0.8,
+    "posting_rhythm": 0.8,
     "t_type_dominant": "T2",
     "t_type_distribution": {"T2": 0.7, "T3b": 0.3},
     "biography": "Je fais du contenu humour décalé pour la zoomer génération",

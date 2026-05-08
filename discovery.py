@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import random
 import statistics
 import time
@@ -96,34 +97,40 @@ MAX_FOLLOWERS = 1_000_000
 MIN_MEDIA_COUNT = 2
 HISTORY_MEDIAS_TO_FETCH = 15          # historique (+ marge vs épinglés exclus)
 MIN_TOTAL_MEDIAS_REQUIRED = 3          # nb min de médias TOTAL (reels + posts) pour scorer
-COMMENTS_MEDIA_SAMPLE = 3              # nombre de posts dont on scrape les commentaires
+MAX_POSTS_FOR_SCORING = 4              # cap sur les Posts scorés (les 4 plus récents non-épinglés)
+COMMENTS_MEDIA_SAMPLE = 3              # nombre de médias dont on scrape les commentaires
 COMMENTS_PER_MEDIA = 15
 REEL_PRODUCT_TYPE = "clips"
 
-# Complète les vues Reels via ``media_info`` quand ``user_medias`` renvoie 0.
-MAX_REEL_VIEW_TOP_UP_CALLS = 5
 # Plafonds / pondérations SCORE_PROFIL (voir docstring de score_profile)
 # ----------------------------------------------------------------------------
 
 # Plafonds de normalisation
-SCORE_REEL_RATIO_CAP = 30.0      # views/followers (Reels), ratio "viral"
+SCORE_REEL_RATIO_CAP = 30.0      # views/followers — médiane Reels (stabilité)
+SCORE_REEL_RATIO_P90_CAP = 50.0  # views/followers — P90 Reels (potentiel viral)
 SCORE_ENGAGEMENT_CAP = 0.15      # (likes+comments)/followers — commun aux deux types
 SCORE_POST_RATIO_CAP = 0.15      # likes/followers (Posts)
 
-# Pondérations Reels (Σ = 1000)
-SCORE_REEL_RATIO_W = 350
+# Pondérations Reels (Σ = 925)
+# Le signal "ratio views/followers" est éclaté entre la médiane (stabilité,
+# 250 pts, plafond 30×) et le P90 (potentiel viral, 100 pts, plafond 50×).
+# Total inchangé sur ce signal = 350 pts.
+SCORE_REEL_RATIO_W = 250
+SCORE_REEL_RATIO_P90_W = 100
 SCORE_REEL_ENGAGEMENT_W = 200
 SCORE_REEL_TREND_W = 150
 SCORE_REEL_T_TYPE_W = 200
-SCORE_REEL_FREQ_W = 100
+# Le rythme de publication ("posting_rhythm") est un signal d'activité, pas de
+# qualité — on ne veut pas qu'il pèse autant que ratio/engagement/trend.
+SCORE_REEL_FREQ_W = 25
 
-# Pondérations Posts (Σ = 800 ; reliquat de 200 historiquement attribué au
+# Pondérations Posts (Σ = 725 ; reliquat de 200 historiquement attribué au
 # signal "post_comment_ratio" — supprimé. On garde les autres poids tels quels
 # pour ne rien rebalancer implicitement.)
 SCORE_POST_RATIO_W = 300
 SCORE_POST_ENGAGEMENT_W = 250
 SCORE_POST_T_TYPE_W = 150
-SCORE_POST_FREQ_W = 100
+SCORE_POST_FREQ_W = 25
 
 # --- Aliases rétro-compat (anciens noms locaux) ---
 SCORE_RATIO_CAP = SCORE_REEL_RATIO_CAP
@@ -392,30 +399,106 @@ def _media_metric_row(media: Any) -> dict[str, Any]:
     }
 
 
+def debug_reel_views(username: str) -> None:
+    """Debug brut : compare les compteurs de vues Reels ``user_medias`` vs ``media_info``.
+
+    Utile pour diagnostiquer pourquoi ``view_count`` / ``play_count`` sont à 0
+    sur les lignes ``user_medias`` alors que le détail média les expose.
+
+    Pas de scoring, pas de ``polite_sleep`` — uniquement des ``print`` ligne par ligne.
+    """
+    u = (username or "").lstrip("@").strip()
+    if not u:
+        print("debug_reel_views: username vide")
+        return
+
+    client = get_client()
+    user_id = client.user_id_from_username(u)
+    medias = client.user_medias(str(user_id), amount=20)
+    reels = [
+        m
+        for m in medias
+        if str(getattr(m, "product_type", "") or "") == REEL_PRODUCT_TYPE
+    ]
+
+    print(f"=== debug_reel_views @{u} ===")
+    print(f"user_id={user_id}  total_medias={len(medias)}  reels(clips)={len(reels)}")
+    print()
+
+    for idx, m in enumerate(reels, start=1):
+        pk = getattr(m, "pk", None) or getattr(m, "id", None)
+        pk_str = str(pk) if pk is not None else ""
+
+        vc_um = getattr(m, "view_count", None)
+        pc_um = getattr(m, "play_count", None)
+
+        print(f"--- Reel #{idx} (user_medias) pk={pk_str!r} ---")
+        print(f"  media_id (pk): {pk_str!r}")
+        print(f"  taken_at: {getattr(m, 'taken_at', None)!r}")
+        print(f"  is_pinned: {getattr(m, 'is_pinned', None)!r}")
+        print(f"  product_type: {getattr(m, 'product_type', None)!r}")
+        print(f"  view_count (user_medias): {vc_um!r}")
+        print(f"  play_count (user_medias): {pc_um!r}")
+        print(f"  views (_media_views): {_media_views(m)}")
+        print()
+
+        if not pk_str:
+            print("  media_info: skip (pk vide)")
+            print()
+            continue
+
+        try:
+            full = client.media_info(pk_str)
+        except Exception as e:
+            print(f"  media_info({pk_str}) ERROR: {type(e).__name__}: {e}")
+            print()
+            continue
+
+        vc_mi = getattr(full, "view_count", None)
+        pc_mi = getattr(full, "play_count", None)
+        vvc = getattr(full, "video_view_count", None)
+        mt = getattr(full, "media_type", None)
+        pt_mi = getattr(full, "product_type", None)
+        meta = getattr(full, "clips_metadata", None)
+        if meta is None:
+            clips_vc_repr = "<clips_metadata absent>"
+        elif isinstance(meta, dict):
+            clips_vc_repr = repr(meta.get("view_count", "<pas de clé view_count>"))
+        else:
+            clips_vc_repr = repr(getattr(meta, "view_count", "<pas d'attribut view_count>"))
+
+        print(f"  --- media_info({pk_str}) ---")
+        print(f"  view_count (media_info): {vc_mi!r}")
+        print(f"  play_count (media_info): {pc_mi!r}")
+        print(f"  video_view_count (media_info): {vvc!r}")
+        print(f"  media_type: {mt!r}")
+        print(f"  product_type (media_info): {pt_mi!r}")
+        print(f"  clips_metadata.get('view_count') si dict / équivalent: {clips_vc_repr}")
+        print()
+
+
 def _top_up_reel_views_via_media_info(
     client: Any,
     reels: list[dict[str, Any]],
     *,
     log: logging.Logger,
     username: str,
-    max_calls: int = MAX_REEL_VIEW_TOP_UP_CALLS,
 ) -> None:
     """Complète ``views`` pour les Reels où ``user_medias`` n'a pas les compteurs.
 
-    Instagram/instagrapi renvoie souvent ``view_count`` / ``play_count`` à 0 sur
-    les lignes de ``user_medias`` alors que ``media_info(pk)`` expose les vues.
-
-    Au plus ``max_calls`` appels (priorité aux Reels les plus **récents** parmi
-    ceux à ``views == 0``). ``polite_sleep()`` est appelé après chaque
-    ``media_info``.
+    Le debug @raikkonenaf a confirmé que ``user_medias`` renvoie **toujours**
+    ``view_count = play_count = 0`` sur les Reels, alors que ``media_info(pk)``
+    expose ``play_count`` non-nul. ``media_info`` est donc la **seule source
+    fiable** : on top-up tous les Reels à ``views == 0`` (pas de cap).
+    ``polite_sleep()`` est appelé après chaque appel.
     """
-    if not reels or max_calls <= 0:
+    if not reels:
         return
     zero_views = [r for r in reels if int(r.get("views") or 0) == 0]
     if not zero_views:
         return
     zero_views.sort(key=lambda r: r["taken_at"], reverse=True)
-    for reel in zero_views[:max_calls]:
+    for reel in zero_views:
         pk = str(reel.get("media_id") or "").strip()
         if not pk:
             continue
@@ -451,7 +534,7 @@ def _top_up_reel_views_via_media_info(
             continue
         vc = int(getattr(media_full, "view_count", None) or 0)
         pc = int(getattr(media_full, "play_count", None) or 0)
-        reel["views"] = vc or pc or 0
+        reel["views"] = pc or vc or 0
         polite_sleep()
 
 
@@ -477,6 +560,31 @@ def _reel_ratio_median(reels: list[dict[str, Any]], followers: int) -> float:
             int(r["views"]) / float(followers) for r in reels_with_views
         )
     )
+
+
+def _reel_ratio_p90(reels: list[dict[str, Any]], followers: int) -> float:
+    """90e percentile de ``views / followers`` — capte le **potentiel viral**.
+
+    Méthode "nearest-rank" : sur ``N`` Reels triés croissants, on retourne le
+    ratio à l'indice ``ceil(0.9 * N) - 1`` (un Reel réellement publié, pas
+    une interpolation entre deux). Ainsi, sur 10 Reels, c'est le 9ᵉ le plus
+    haut qui sort.
+
+    Comme ``_reel_ratio_median``, on ne considère que les Reels avec
+    ``views > 0``. Avec **moins de 3** Reels exploitables, on retourne ``0.0``
+    (signal pas significatif).
+    """
+    if followers <= 0 or not reels:
+        return 0.0
+    ratios = sorted(
+        int(r["views"]) / float(followers)
+        for r in reels
+        if int(r.get("views", 0) or 0) > 0
+    )
+    if len(ratios) < 3:
+        return 0.0
+    idx = max(0, math.ceil(0.9 * len(ratios)) - 1)
+    return float(ratios[idx])
 
 
 def _reel_view_trend(reels_chronological: list[dict[str, Any]], followers: int) -> str:
@@ -543,8 +651,58 @@ def _engagement_median(rows: list[dict[str, Any]], followers: int) -> float:
     return float(statistics.median(eng))
 
 
+def _median_datetime(values: list[datetime]) -> datetime:
+    """Médiane temporelle (milieu exact si ``n`` pair — ``statistics.median``
+    ne sait pas additionner deux ``datetime`` en 3.14+).
+    """
+    if not values:
+        raise ValueError("values must be non-empty")
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    if n % 2 == 1:
+        return s[mid]
+    return s[mid - 1] + (s[mid] - s[mid - 1]) / 2
+
+
+def _remove_pinned_reels(reels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Heuristique : Reels « épinglés » sur la page Reels (``is_pinned`` souvent ``None``).
+
+    Ils apparaissent en **tête** du feed avec un ``taken_at`` très antérieur aux
+    Reels suivants. On ne peut pas s'appuyer sur ``is_pinned`` seul.
+
+    **Entrée** : ordre de récupération ``user_medias`` (indices 0, 1, 2…).
+
+    **Logique** :
+
+    1. Médiane des ``taken_at`` de **tous** les Reels.
+    2. Pour les indices 0, 1 et 2 uniquement : si ``taken_at`` est strictement
+       antérieur à ``médiane - 30 jours`` → exclure (traité comme épinglé).
+
+    Si un ``taken_at`` manque ou n'est pas un ``datetime``, la liste est
+    retournée **inchangée** (fail-open).
+    """
+    if not reels:
+        return []
+    if any(not isinstance(r.get("taken_at"), datetime) for r in reels):
+        return list(reels)
+    dates = [r["taken_at"] for r in reels]
+    median_dt = _median_datetime(dates)
+    threshold = median_dt - timedelta(days=30)
+    drop = {
+        i
+        for i in range(min(3, len(reels)))
+        if reels[i]["taken_at"] < threshold
+    }
+    return [r for i, r in enumerate(reels) if i not in drop]
+
+
 def _publish_frequency(rows_chronological: list[dict[str, Any]]) -> float:
-    """Posts par jour sur la période couverte."""
+    """Médias par jour sur la période couverte.
+
+    ``score_profile`` ne passe que les **Reels** retenus après
+    ``_remove_pinned_reels`` (épingles page Reels sans ``is_pinned`` fiable).
+    """
     dates = [
         r["taken_at"] for r in rows_chronological
         if isinstance(r.get("taken_at"), datetime)
@@ -563,7 +721,12 @@ def _classify_recent_comments(
     log: logging.Logger,
     sleep_between_posts: bool = True,
 ) -> tuple[dict[str, float], str | None]:
-    """Classifie les commentaires de ``COMMENTS_MEDIA_SAMPLE`` posts récents.
+    """Classifie les commentaires des derniers médias passés (au plus
+    ``COMMENTS_MEDIA_SAMPLE``, ordre chronologique ancien → récent).
+
+    Le caller (``score_profile``) priorise les Reels et complète au besoin
+    avec des Posts non-épinglés ; cette fonction se contente de scraper et
+    classifier ce qu'on lui passe.
 
     Retourne ``(distribution, dominant_type)``. La distribution est pondérée
     par ``confidence`` retourné par le classifieur, normalisée pour sommer à 1.
@@ -662,15 +825,19 @@ def _frequency_score(freq_per_day: float) -> float:
 def _compute_reel_score(
     *,
     reel_ratio_median: float,
+    reel_ratio_p90: float,
     reel_engagement_median: float,
     reel_trend: str,
     t_type_distribution: dict[str, float],
     publish_frequency: float,
     domain: dict[str, Any],
 ) -> float:
-    """SCORE_REELS ∈ [0, 1000]. Voir docstring ``score_profile``."""
-    ratio_norm = (
+    """SCORE_REELS ∈ [0, 925]. Voir docstring ``score_profile``."""
+    ratio_median_norm = (
         min(reel_ratio_median, SCORE_REEL_RATIO_CAP) / SCORE_REEL_RATIO_CAP
+    )
+    ratio_p90_norm = (
+        min(reel_ratio_p90, SCORE_REEL_RATIO_P90_CAP) / SCORE_REEL_RATIO_P90_CAP
     )
     eng_norm = (
         min(reel_engagement_median, SCORE_ENGAGEMENT_CAP) / SCORE_ENGAGEMENT_CAP
@@ -683,7 +850,8 @@ def _compute_reel_score(
     )
     freq_norm = _frequency_score(publish_frequency)
     return float(
-        ratio_norm * SCORE_REEL_RATIO_W
+        ratio_median_norm * SCORE_REEL_RATIO_W
+        + ratio_p90_norm * SCORE_REEL_RATIO_P90_W
         + eng_norm * SCORE_REEL_ENGAGEMENT_W
         + trend_norm * SCORE_REEL_TREND_W
         + t_match * SCORE_REEL_T_TYPE_W
@@ -744,48 +912,65 @@ def score_profile(
     4. ``user_medias(amount=15)`` puis exclusion des médias **épinglés**
        (``is_pinned is True``). Le champ ``media_sampled`` du résultat compte
        les médias **retournés par l'API avant** ce filtre.
-       **Segmentation** par ``product_type`` :
+       **Segmentation** par ``product_type`` (ordre ``user_medias`` conservé) :
         - ``reels`` = ``product_type == "clips"``
         - ``posts`` = tout le reste (carousel, photo, IGTV…)
        Si ``len(reels) + len(posts) < MIN_TOTAL_MEDIAS_REQUIRED`` (3), on
        retourne ``None`` (historique trop maigre).
-    5. **Complément des vues Reels** : ``user_medias`` omet souvent les vues.
-       Pour les Reels avec ``views == 0``, on appelle ``media_info(pk)`` pour
-       au plus ``MAX_REEL_VIEW_TOP_UP_CALLS`` (5) Reels — les plus **récents**
-       parmi ceux sans vues — puis ``polite_sleep()`` après chaque appel.
-       Les vues sont ``view_count or play_count or 0`` sur la réponse détaillée.
+       **Reels page Reels** : ``_remove_pinned_reels`` retire en tête de liste
+       les clips trop anciens vs la médiane des dates (épingles sans
+       ``is_pinned`` fiable). Puis tri chronologique **ancien → récent** pour
+       le reste du pipeline.
+       **Cap Posts** : tri chronologique puis les ``MAX_POSTS_FOR_SCORING`` (4)
+       posts non-épinglés les plus récents (les anciens posts vivent dans
+       des conditions d'audience / d'algo obsolètes).
+    5. **Complément des vues Reels** : ``user_medias`` retourne ``view_count =
+       play_count = 0`` sur les Reels (confirmé en debug). Pour **chaque** Reel
+       à ``views == 0``, on appelle ``media_info(pk)`` (du plus récent au plus
+       ancien) puis ``polite_sleep()`` après chaque appel. Les vues sont
+       ``play_count or view_count or 0`` sur la réponse détaillée. Cette étape
+       précède toute métrique Reels (médiane, P90, trend) qui dépend de
+       ``views``.
     6. Métriques par type :
 
        **Reels** (si ≥ 1) :
-        - ``reel_ratio_median`` = médiane(``views / followers``)
+        - ``reel_ratio_median`` = médiane(``views / followers``) — stabilité
+        - ``reel_ratio_p90`` = 90e percentile (``views / followers``) — capte
+          le **potentiel viral** (sur ≥ 3 Reels avec vues, sinon 0)
         - ``reel_engagement_median`` = médiane((likes+comments)/followers)
         - ``reel_trend`` (``rising``/``stable``/``declining``) sur ``views``
 
-       **Posts** (si ≥ 1) :
+       **Posts** (si ≥ 1, max 4) :
         - ``post_ratio_median`` = médiane(``likes / followers``)
         - ``post_engagement_median`` = médiane((likes+comments)/followers)
 
        **Commun** :
-        - ``publish_frequency`` = médias/jour sur l'ensemble (Reels + Posts)
-    7. Classification T-type sur **3 médias les plus récents tous types
-       confondus** (Reels et Posts) — la signature émotionnelle de la
-       communauté ne dépend pas du format. 8–20 s de pause aléatoire entre
-       chaque média (anti-détection).
-    8. SCORE_PROFIL ∈ [0, 1000] = ``score_reels × reel_weight + score_posts × post_weight``.
-       ``reel_weight = len(reels) / total``, ``post_weight = 1 - reel_weight``.
+        - ``posting_rhythm`` = Reels/jour sur les **Reels** retenus après
+          ``_remove_pinned_reels`` (les Posts photos peuvent dater de plusieurs
+          mois et fausseraient la fenêtre temporelle)
+    7. Classification T-type — on **priorise les Reels** (signal le plus pur
+       sur la consommation actuelle de la communauté) :
+        - si ``reels_count >= 3`` : 3 Reels les plus récents uniquement
+        - sinon : on complète avec des Posts non-épinglés jusqu'à 3 médias
+       8–20 s de pause aléatoire entre chaque média (anti-détection).
+    8. SCORE_PROFIL = ``score_reels × reel_weight + score_posts × post_weight``
+       (Option C — voir docstring `_compute_*_score`). Les poids sont calculés
+       sur ce qui a *réellement* été scoré : ``reel_weight = reels_count /
+       (reels_count + posts_count)`` après cap des posts.
 
-       **SCORE_REELS** ∈ [0, 1000] :
-        - ``reel_ratio_median`` × 350 (plafond 30×)
+       **SCORE_REELS** ∈ [0, 925] :
+        - ``reel_ratio_median`` × 250 (plafond 30×) — stabilité
+        - ``reel_ratio_p90`` × 100 (plafond 50×) — potentiel viral
         - ``reel_engagement_median`` × 200 (plafond 0.15)
         - ``reel_trend`` × 150 (rising=1.0 / stable=0.5 / declining=0.0)
         - ``t_type_match`` × 200
-        - ``publish_frequency`` × 100
+        - ``posting_rhythm`` × 25
 
-       **SCORE_POSTS** ∈ [0, 800] :
+       **SCORE_POSTS** ∈ [0, 725] :
         - ``post_ratio_median`` × 300 (plafond 0.15)
         - ``post_engagement_median`` × 250 (plafond 0.15)
         - ``t_type_match`` × 150
-        - ``publish_frequency`` × 100
+        - ``posting_rhythm`` × 25
 
     Returns
     -------
@@ -796,11 +981,12 @@ def score_profile(
         ``t_type_dominant``, ``t_type_distribution``, ``biography``,
         ``scored_at``, plus les détails par type : ``score_reels``,
         ``score_posts``, ``reel_weight``, ``post_weight``,
-        ``reel_ratio_median``, ``reel_engagement_median``, ``reel_trend``,
+        ``reel_ratio_median``, ``reel_ratio_p90``, ``reel_engagement_median``,
+        ``reel_trend``,
         ``post_ratio_median``, ``post_engagement_median``,
-        ``publish_frequency``, ``media_sampled`` (taille brute renvoyée par
+        ``posting_rhythm``, ``media_sampled`` (taille brute renvoyée par
         ``user_medias``, avant exclusion épinglés), ``reels_count``,
-        ``posts_count``.
+        ``posts_count`` (après cap à 4).
 
     Raises
     ------
@@ -931,12 +1117,11 @@ def score_profile(
 
     rows = [_media_metric_row(m) for m in medias]
     rows = [r for r in rows if isinstance(r.get("taken_at"), datetime)]
-    rows.sort(key=lambda r: r["taken_at"])  # chronologique : ancien -> récent
     if not rows:
         log.info("score_profile @%s : aucun media exploitable — skip.", u)
         return None
 
-    # Segmentation Reels / Posts (basée sur ``product_type``)
+    # Segmentation Reels / Posts — ordre API préservé pour ``_remove_pinned_reels``.
     total_medias = len(rows)
     reels = [r for r in rows if str(r.get("product_type") or "") == REEL_PRODUCT_TYPE]
     posts = [r for r in rows if str(r.get("product_type") or "") != REEL_PRODUCT_TYPE]
@@ -950,28 +1135,49 @@ def score_profile(
         )
         return None
 
+    reels = _remove_pinned_reels(reels)
+    reels.sort(key=lambda r: r["taken_at"])
+    posts.sort(key=lambda r: r["taken_at"])
+
+    # Cap les Posts aux 4 plus récents (non-épinglés). Les anciens posts
+    # tirent les médianes vers des conditions d'audience / d'algo obsolètes.
+    posts = posts[-MAX_POSTS_FOR_SCORING:]
+    total_for_scoring = len(reels) + len(posts)
+
+    # ``_top_up_*`` doit s'exécuter AVANT toute métrique Reels (ratio_median,
+    # ratio_p90, view_trend) qui dépend du champ ``views``.
     _top_up_reel_views_via_media_info(client, reels, log=log, username=u)
 
     # 6. Métriques agrégées -----------------------------------------------
-    # Fréquence de publication sur l'ensemble (signal "actif" global).
-    freq = _publish_frequency(rows)
+    # ``posting_rhythm`` sur **Reels uniquement** (les Posts photos peuvent
+    # dater de plusieurs mois et fausseraient la fenêtre temporelle).
+    reels_chronological = sorted(reels, key=lambda r: r["taken_at"])
+    posting_rhythm = _publish_frequency(reels_chronological)
 
     # Reels (sinon valeurs neutres : 0 / "stable")
     reel_ratio_med = _reel_ratio_median(reels, follower_count) if reels else 0.0
+    reel_ratio_p90 = _reel_ratio_p90(reels, follower_count) if reels else 0.0
     reel_eng_med = _engagement_median(reels, follower_count) if reels else 0.0
-    reel_trend = _reel_view_trend(reels, follower_count) if reels else "stable"
+    reel_trend = (
+        _reel_view_trend(reels_chronological, follower_count) if reels else "stable"
+    )
 
     # Posts (sinon valeurs neutres)
     post_ratio_med = _post_ratio_median(posts, follower_count) if posts else 0.0
     post_eng_med = _engagement_median(posts, follower_count) if posts else 0.0
 
-    # 7. Classification T-type sur les 3 médias les plus récents (tous types)
-    # On scrape les commentaires sans distinguer Reel/Post : la signature
-    # émotionnelle de la communauté ne dépend pas du format.
+    # 7. Classification T-type — on priorise les Reels (signal le plus pur sur
+    # la consommation actuelle), et on complète avec des Posts non-épinglés
+    # uniquement si on a moins de 3 Reels.
+    if len(reels) >= COMMENTS_MEDIA_SAMPLE:
+        media_for_classification = reels[-COMMENTS_MEDIA_SAMPLE:]
+    else:
+        needed = COMMENTS_MEDIA_SAMPLE - len(reels)
+        media_for_classification = reels + posts[-needed:]
     niche = str(domain.get("niche") or domain.get("name") or "")
     distribution, dominant = _classify_recent_comments(
         client,
-        rows,
+        media_for_classification,
         niche=niche,
         log=log,
     )
@@ -980,10 +1186,11 @@ def score_profile(
     score_reels = (
         _compute_reel_score(
             reel_ratio_median=reel_ratio_med,
+            reel_ratio_p90=reel_ratio_p90,
             reel_engagement_median=reel_eng_med,
             reel_trend=reel_trend,
             t_type_distribution=distribution,
-            publish_frequency=freq,
+            publish_frequency=posting_rhythm,
             domain=domain,
         )
         if reels
@@ -994,13 +1201,15 @@ def score_profile(
             post_ratio_median=post_ratio_med,
             post_engagement_median=post_eng_med,
             t_type_distribution=distribution,
-            publish_frequency=freq,
+            publish_frequency=posting_rhythm,
             domain=domain,
         )
         if posts
         else 0.0
     )
-    reel_weight = len(reels) / float(total_medias)
+    # Option C : poids basés sur ce qu'on a *réellement* scoré (Reels + Posts
+    # capés à 4), pas sur le brut renvoyé par ``user_medias``.
+    reel_weight = len(reels) / float(total_for_scoring)
     post_weight = 1.0 - reel_weight
     score_final = score_reels * reel_weight + score_posts * post_weight
 
@@ -1033,13 +1242,14 @@ def score_profile(
         "post_weight": float(post_weight),
         # Métriques Reels (None si aucun reel)
         "reel_ratio_median": float(reel_ratio_med) if reels else None,
+        "reel_ratio_p90": float(reel_ratio_p90) if reels else None,
         "reel_engagement_median": float(reel_eng_med) if reels else None,
         "reel_trend": reel_trend if reels else None,
         # Métriques Posts (None si aucun post)
         "post_ratio_median": float(post_ratio_med) if posts else None,
         "post_engagement_median": float(post_eng_med) if posts else None,
         # Communs
-        "publish_frequency": float(freq),
+        "posting_rhythm": float(posting_rhythm),
         "t_type_dominant": dominant,
         "t_type_distribution": distribution,
         "biography": biography,
@@ -1653,11 +1863,12 @@ def _mock_score_profile(username: str, domain: dict[str, Any]) -> dict[str, Any]
         "reel_weight": reel_w,
         "post_weight": post_w,
         "reel_ratio_median": (h % 50) / 10.0 if reels_n else None,
+        "reel_ratio_p90": (h % 50) / 10.0 * 3.0 if reels_n else None,
         "reel_engagement_median": 0.04 if reels_n else None,
         "reel_trend": ["rising", "stable", "declining"][h % 3] if reels_n else None,
         "post_ratio_median": 0.05 if posts_n else None,
         "post_engagement_median": 0.04 if posts_n else None,
-        "publish_frequency": 0.7,
+        "posting_rhythm": 0.7,
         "t_type_dominant": dom_t,
         "t_type_distribution": {dom_t: 1.0},
         "biography": f"mock bio {username}",
@@ -1858,9 +2069,9 @@ __all__ = [
     "LUNCH_END_HOUR",
     "LUNCH_START_HOUR",
     "MAX_PROFILES_PER_DAY",
-    "MAX_REEL_VIEW_TOP_UP_CALLS",
     "NIGHT_END_HOUR",
     "NIGHT_START_HOUR",
+    "debug_reel_views",
     "explore_network",
     "load_blacklist",
     "load_candidates",

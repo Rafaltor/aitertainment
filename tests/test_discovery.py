@@ -391,7 +391,8 @@ class ScoreProfileTest(unittest.TestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["reels_count"], 0)
-        self.assertEqual(result["posts_count"], 8)
+        # 8 posts en entrée → cap à MAX_POSTS_FOR_SCORING (4) pour le scoring.
+        self.assertEqual(result["posts_count"], 4)
         self.assertAlmostEqual(result["reel_weight"], 0.0, places=5)
         self.assertAlmostEqual(result["post_weight"], 1.0, places=5)
         self.assertIsNone(result["reel_ratio_median"])
@@ -400,14 +401,14 @@ class ScoreProfileTest(unittest.TestCase):
         self.assertGreaterEqual(result["score"], 0.0)
         # score = score_posts × 1.0
         self.assertAlmostEqual(result["score"], result["score_posts"], places=3)
-        # post_ratio_median = 800/10000 = 0.08
+        # post_ratio_median = 800/10000 = 0.08 (4 plus récents, tous identiques)
         self.assertAlmostEqual(result["post_ratio_median"], 0.08, places=4)
 
     def test_mixed_50_50_balances_weights(self) -> None:
-        # 5 reels qualité + 5 posts moyens → weights 50/50
+        # 4 reels qualité + 4 posts moyens → weights 50/50 (sous le cap posts).
         followers = 10_000
         medias = []
-        for i in range(5):
+        for i in range(4):
             medias.append(
                 _make_media(
                     pk=f"r{i}",
@@ -419,7 +420,7 @@ class ScoreProfileTest(unittest.TestCase):
                     product_type="clips",
                 )
             )
-        for i in range(5):
+        for i in range(4):
             medias.append(
                 _make_media(
                     pk=f"p{i}",
@@ -450,8 +451,8 @@ class ScoreProfileTest(unittest.TestCase):
             )
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result["reels_count"], 5)
-        self.assertEqual(result["posts_count"], 5)
+        self.assertEqual(result["reels_count"], 4)
+        self.assertEqual(result["posts_count"], 4)
         self.assertAlmostEqual(result["reel_weight"], 0.5, places=5)
         self.assertAlmostEqual(result["post_weight"], 0.5, places=5)
         # SCORE_FINAL = 0.5 × score_reels + 0.5 × score_posts
@@ -541,7 +542,29 @@ class ScoreProfileTest(unittest.TestCase):
         self.assertEqual(client.media_info.call_count, 3)
         self.assertAlmostEqual(result["reel_ratio_median"], 5.0, places=4)
 
-    def test_reel_view_top_up_caps_at_five_calls(self) -> None:
+    def test_top_up_sets_reel_views_from_play_count_when_view_count_zero(self) -> None:
+        """media_info avec view_count=0 et play_count=50000 → reel["views"] == 50000."""
+        reels = [
+            {
+                "media_id": "999",
+                "views": 0,
+                "taken_at": datetime.now(timezone.utc),
+            }
+        ]
+        client = MagicMock()
+        client.media_info.return_value = SimpleNamespace(
+            view_count=0, play_count=50_000
+        )
+        discovery._top_up_reel_views_via_media_info(
+            client,
+            reels,
+            log=logging.getLogger("test_top_up"),
+            username="testuser",
+        )
+        self.assertEqual(reels[0]["views"], 50_000)
+
+    def test_reel_view_top_up_no_cap_processes_all_zero_reels(self) -> None:
+        """Pas de cap : 16 Reels à 0 vue → 16 appels media_info."""
         followers = 10_000
         medias = [
             _make_media(
@@ -551,10 +574,10 @@ class ScoreProfileTest(unittest.TestCase):
                 play_count=0,
                 likes=400,
                 comments=30,
-                days_ago=20 - i,
+                days_ago=30 - i,
                 product_type="clips",
             )
-            for i in range(10)
+            for i in range(16)
         ]
         client = self._make_client(
             user=_make_user(follower_count=followers, media_count=40),
@@ -565,16 +588,14 @@ class ScoreProfileTest(unittest.TestCase):
         )
         with patch("modules.classifier.CommentClassifier"):
             result = discovery.score_profile(
-                "many_zero_reels",
+                "all_zero_reels",
                 self.DOMAIN,
                 blacklist={"profiles": []},
                 client=client,
             )
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(client.media_info.call_count, 5)
-        # 5 Reels topés à 50k → ratio = 5.0 ; les 5 restants (views=0) sont
-        # ignorés par _reel_ratio_median.
+        self.assertEqual(client.media_info.call_count, 16)
         self.assertAlmostEqual(result["reel_ratio_median"], 5.0, places=4)
 
     def test_reel_views_skip_media_info_when_list_has_views(self) -> None:
@@ -602,6 +623,73 @@ class ScoreProfileTest(unittest.TestCase):
                 client=client,
             )
         client.media_info.assert_not_called()
+
+    def test_viral_outlier_pushes_score_above_median_only(self) -> None:
+        """Distribution skewée @raikkonenaf : P90 capte le potentiel viral.
+
+        10 Reels [19k, 28k, 45k, 49k, 64k, 77k, 115k, 500k, 1300k, 1500k] /
+        48k followers → reel_ratio_p90 ≈ 27.08x (1300k / 48k, nearest-rank).
+
+        Vérifie aussi que le score est plus élevé qu'une version "médiane
+        seule" (P90 forcé à 0.0), via deux appels directs à
+        ``_compute_reel_score`` avec exactement les mêmes autres signaux.
+        """
+        followers = 48_000
+        views = [19_000, 28_000, 45_000, 49_000, 64_000,
+                 77_000, 115_000, 500_000, 1_300_000, 1_500_000]
+        medias = [
+            _make_media(
+                pk=f"r{i}",
+                views=v,
+                likes=int(v * 0.05),
+                comments=int(v * 0.005),
+                days_ago=15 - i,
+                product_type="clips",
+            )
+            for i, v in enumerate(views)
+        ]
+        client = self._make_client(
+            user=_make_user(follower_count=followers, media_count=40),
+            medias=medias,
+        )
+        with patch("modules.classifier.CommentClassifier"):
+            result = discovery.score_profile(
+                "viral_skew",
+                self.DOMAIN,
+                blacklist={"profiles": []},
+                client=client,
+            )
+        self.assertIsNotNone(result)
+        assert result is not None
+
+        self.assertAlmostEqual(
+            result["reel_ratio_p90"], 1_300_000 / 48_000.0, places=4
+        )
+        self.assertAlmostEqual(
+            result["reel_ratio_median"],
+            (64_000 / 48_000.0 + 77_000 / 48_000.0) / 2.0,
+            places=4,
+        )
+
+        common_kwargs = {
+            "reel_ratio_median": result["reel_ratio_median"],
+            "reel_engagement_median": result["reel_engagement_median"],
+            "reel_trend": result["reel_trend"],
+            "t_type_distribution": result["t_type_distribution"],
+            "publish_frequency": result["posting_rhythm"],
+            "domain": self.DOMAIN,
+        }
+        score_with_p90 = discovery._compute_reel_score(
+            reel_ratio_p90=result["reel_ratio_p90"], **common_kwargs
+        )
+        score_median_only = discovery._compute_reel_score(
+            reel_ratio_p90=0.0, **common_kwargs
+        )
+        self.assertGreater(score_with_p90, score_median_only)
+        # Contribution attendue du P90 : 27.08/50 * 100 ≈ 54.17
+        self.assertAlmostEqual(
+            score_with_p90 - score_median_only, 27.083333 / 50.0 * 100, places=3
+        )
 
     def test_pinned_medias_excluded_from_scoring(self) -> None:
         """2 épinglés + 10 normaux : épinglés exclus ; media_sampled = brut API."""
@@ -648,6 +736,270 @@ class ScoreProfileTest(unittest.TestCase):
         # Médiane des ratios sur les 10 non épinglés uniquement (20k / 10k = 2.0)
         self.assertAlmostEqual(result["reel_ratio_median"], 2.0, places=4)
 
+    def test_posts_capped_at_max_for_scoring_keeps_most_recent(self) -> None:
+        """6 reels + 8 posts → posts capés à 4, reel_weight = 6/10 = 0.6."""
+        followers = 10_000
+        medias = []
+        for i in range(6):
+            medias.append(
+                _make_media(
+                    pk=f"r{i}",
+                    views=20_000,
+                    likes=1_500,
+                    comments=120,
+                    days_ago=30 - i,
+                    product_type="clips",
+                )
+            )
+        # 8 posts : "old0..old3" très anciens (likes faibles, signaux dégradés),
+        # "p0..p3" récents (likes élevés). Le cap doit garder les 4 récents.
+        for i in range(4):
+            medias.append(
+                _make_media(
+                    pk=f"old_p{i}",
+                    views=0,
+                    likes=10,
+                    comments=1,
+                    days_ago=180 - i,
+                    product_type="feed",
+                )
+            )
+        for i in range(4):
+            medias.append(
+                _make_media(
+                    pk=f"p{i}",
+                    views=0,
+                    likes=900,
+                    comments=80,
+                    days_ago=4 - i,
+                    product_type="feed",
+                )
+            )
+        client = self._make_client(
+            user=_make_user(follower_count=followers, media_count=40),
+            medias=medias,
+        )
+        with patch("modules.classifier.CommentClassifier"):
+            result = discovery.score_profile(
+                "capped_posts",
+                self.DOMAIN,
+                blacklist={"profiles": []},
+                client=client,
+            )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["reels_count"], 6)
+        self.assertEqual(result["posts_count"], 4)
+        self.assertAlmostEqual(result["reel_weight"], 0.6, places=5)
+        self.assertAlmostEqual(result["post_weight"], 0.4, places=5)
+        # post_ratio_median = médiane(900/10000) sur les 4 récents uniquement
+        # (les anciens "old_p*" à 10 likes seraient ~0.001 et tireraient la
+        # médiane vers 0 si pris en compte).
+        self.assertAlmostEqual(result["post_ratio_median"], 0.09, places=4)
+
+    def test_classification_uses_only_recent_reels_when_three_or_more(self) -> None:
+        """≥ 3 Reels : on classifie sur les 3 plus récents, pas sur les Posts."""
+        followers = 10_000
+        medias = []
+        for i in range(3):
+            medias.append(
+                _make_media(
+                    pk=f"old_r{i}",
+                    views=10_000,
+                    likes=500,
+                    comments=40,
+                    days_ago=40 - i,
+                    product_type="clips",
+                )
+            )
+        for i in range(3):
+            medias.append(
+                _make_media(
+                    pk=f"recent_r{i}",
+                    views=20_000,
+                    likes=1_000,
+                    comments=80,
+                    days_ago=3 - i,
+                    product_type="clips",
+                )
+            )
+        for i in range(2):
+            medias.append(
+                _make_media(
+                    pk=f"p{i}",
+                    views=0,
+                    likes=300,
+                    comments=20,
+                    days_ago=1 - i,
+                    product_type="feed",
+                )
+            )
+        client = self._make_client(
+            user=_make_user(follower_count=followers, media_count=40),
+            medias=medias,
+            comments_per_media={f"recent_r{i}": ["lol"] for i in range(3)},
+        )
+        with patch("modules.classifier.CommentClassifier"):
+            discovery.score_profile(
+                "reels_priority",
+                self.DOMAIN,
+                blacklist={"profiles": []},
+                client=client,
+            )
+        scraped_pks = {
+            str(call.args[0]) for call in client.media_comments.call_args_list
+        }
+        self.assertEqual(scraped_pks, {"recent_r0", "recent_r1", "recent_r2"})
+
+    def test_classification_completes_with_posts_when_reels_below_three(self) -> None:
+        """1 Reel + ≥ 2 Posts : on complète avec les 2 Posts les plus récents."""
+        followers = 10_000
+        medias = [
+            _make_media(
+                pk="r_only",
+                views=20_000,
+                likes=1_500,
+                comments=120,
+                days_ago=10,
+                product_type="clips",
+            ),
+            _make_media(
+                pk="old_p",
+                views=0,
+                likes=400,
+                comments=30,
+                days_ago=60,
+                product_type="feed",
+            ),
+            _make_media(
+                pk="p_recent_0",
+                views=0,
+                likes=600,
+                comments=50,
+                days_ago=4,
+                product_type="feed",
+            ),
+            _make_media(
+                pk="p_recent_1",
+                views=0,
+                likes=800,
+                comments=70,
+                days_ago=2,
+                product_type="feed",
+            ),
+        ]
+        client = self._make_client(
+            user=_make_user(follower_count=followers, media_count=40),
+            medias=medias,
+            comments_per_media={
+                "r_only": ["lol"], "p_recent_0": ["wow"], "p_recent_1": ["nice"],
+            },
+        )
+        with patch("modules.classifier.CommentClassifier"):
+            discovery.score_profile(
+                "complete_with_posts",
+                self.DOMAIN,
+                blacklist={"profiles": []},
+                client=client,
+            )
+        scraped_pks = {
+            str(call.args[0]) for call in client.media_comments.call_args_list
+        }
+        # 1 reel + 2 posts les plus récents (jamais "old_p"). Cap classifieur = 3.
+        self.assertEqual(scraped_pks, {"r_only", "p_recent_0", "p_recent_1"})
+
+    def test_posting_rhythm_in_result_dict(self) -> None:
+        """``publish_frequency`` retiré ; clé renommée ``posting_rhythm``."""
+        followers = 10_000
+        medias = [
+            _make_media(
+                pk=f"r{i}",
+                views=20_000,
+                likes=1_500,
+                comments=120,
+                days_ago=10 - i,
+                product_type="clips",
+            )
+            for i in range(4)
+        ]
+        client = self._make_client(
+            user=_make_user(follower_count=followers, media_count=40),
+            medias=medias,
+        )
+        with patch("modules.classifier.CommentClassifier"):
+            result = discovery.score_profile(
+                "rhythm_check",
+                self.DOMAIN,
+                blacklist={"profiles": []},
+                client=client,
+            )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertIn("posting_rhythm", result)
+        self.assertNotIn("publish_frequency", result)
+        # 4 médias étalés sur 3 jours (j-10 → j-7) → 4/3 médias/jour.
+        self.assertAlmostEqual(result["posting_rhythm"], 4 / 3.0, places=3)
+
+    def test_posting_rhythm_ignores_posts_window(self) -> None:
+        """Les anciens Posts ne dilatent plus la fenêtre — calcul sur Reels seuls."""
+        followers = 10_000
+        medias = []
+        # 4 Reels récents : j-10 → j-7 (span 3 jours).
+        for i in range(4):
+            medias.append(
+                _make_media(
+                    pk=f"r{i}",
+                    views=20_000,
+                    likes=1_500,
+                    comments=120,
+                    days_ago=10 - i,
+                    product_type="clips",
+                )
+            )
+        # 4 Posts photos sur l'année passée — sans top-up de vues, leur
+        # taken_at était auparavant inclus dans la fenêtre de posting_rhythm.
+        for i, ago in enumerate((350, 270, 180, 90)):
+            medias.append(
+                _make_media(
+                    pk=f"p{i}",
+                    views=0,
+                    likes=600,
+                    comments=40,
+                    days_ago=ago,
+                    product_type="feed",
+                )
+            )
+        client = self._make_client(
+            user=_make_user(follower_count=followers, media_count=40),
+            medias=medias,
+        )
+        with patch("modules.classifier.CommentClassifier"):
+            result = discovery.score_profile(
+                "reel_rhythm_only",
+                self.DOMAIN,
+                blacklist={"profiles": []},
+                client=client,
+            )
+        self.assertIsNotNone(result)
+        assert result is not None
+        # Reels seuls : 4 / 3 jours ≈ 1.33 (au lieu de 8/350 ≈ 0.023 si Posts
+        # anciens étaient inclus).
+        self.assertAlmostEqual(result["posting_rhythm"], 4 / 3.0, places=3)
+
+    def test_remove_pinned_reels_excludes_two_stale_leaders(self) -> None:
+        """2 Reels anciens en tête (j-180, j-200) + 3 récents (j-1..j-3) → 3 Reels."""
+        base = datetime.now(timezone.utc)
+        reels = [
+            {"taken_at": base - timedelta(days=180)},
+            {"taken_at": base - timedelta(days=200)},
+            {"taken_at": base - timedelta(days=1)},
+            {"taken_at": base - timedelta(days=2)},
+            {"taken_at": base - timedelta(days=3)},
+        ]
+        out = discovery._remove_pinned_reels(reels)
+        self.assertEqual(len(out), 3)
+        self.assertEqual(out, reels[2:])
+
 
 def _row(views: int) -> dict[str, Any]:
     return {"views": views}
@@ -666,6 +1018,31 @@ class ReelMetricsZeroViewsTest(unittest.TestCase):
     def test_ratio_median_all_zero_returns_zero(self) -> None:
         reels = [_row(0), _row(0), _row(0)]
         self.assertEqual(discovery._reel_ratio_median(reels, 10_000), 0.0)
+
+    def test_ratio_p90_picks_high_outlier_with_nearest_rank(self) -> None:
+        # Reels [19k, 28k, 45k, 49k, 64k, 77k, 115k, 500k, 1300k, 1500k] / 48k
+        # ratios sortés ≈ [0.40, 0.58, 0.94, 1.02, 1.33, 1.60, 2.40, 10.42,
+        # 27.08, 31.25]. Nearest-rank P90 = ceil(0.9*10)-1 = 8 → 1300/48 ≈ 27.08.
+        views = [19_000, 28_000, 45_000, 49_000, 64_000,
+                 77_000, 115_000, 500_000, 1_300_000, 1_500_000]
+        reels = [_row(v) for v in views]
+        self.assertAlmostEqual(
+            discovery._reel_ratio_p90(reels, 48_000),
+            1_300_000 / 48_000.0,
+            places=4,
+        )
+
+    def test_ratio_p90_ignores_zero_view_reels(self) -> None:
+        # 3 zéros + 5 valeurs → on travaille sur les 5 valeurs uniquement.
+        # P90 nearest-rank sur 5 = ceil(4.5)-1 = 4 → max = 50k/10k = 5.0.
+        reels = [_row(0)] * 3 + [_row(v) for v in (10_000, 20_000, 30_000, 40_000, 50_000)]
+        self.assertAlmostEqual(
+            discovery._reel_ratio_p90(reels, 10_000), 5.0, places=6
+        )
+
+    def test_ratio_p90_under_three_reels_with_views_returns_zero(self) -> None:
+        reels = [_row(0)] * 8 + [_row(50_000), _row(80_000)]
+        self.assertEqual(discovery._reel_ratio_p90(reels, 10_000), 0.0)
 
     def test_view_trend_requires_eight_reels_with_views(self) -> None:
         # 7 reels avec vues + 1 reel à 0 → < 8 exploitables → "stable"
