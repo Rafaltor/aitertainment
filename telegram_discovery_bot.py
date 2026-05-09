@@ -321,8 +321,44 @@ def _build_candidate_text(candidate: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _normalize_username_for_url(username: str) -> str:
+    """Nettoie un username pour le passer dans une URL Instagram.
+
+    Instagram tolère uniquement ``[a-zA-Z0-9._]`` dans les usernames. On
+    enlève tous les ``@`` initiaux (un caller peut envoyer ``"@@user"`` par
+    erreur) puis on strip + lower. On ne ``urlquote`` PAS — un username
+    contenant des caractères hors charset Instagram est de toute façon
+    invalide, et l'URL résultante doit rester lisible (Telegram l'affiche
+    en tooltip au survol sur desktop).
+    """
+    u = (username or "").strip()
+    # Boucle sur ``lstrip("@")`` pour absorber ``"@@user"`` ou ``"@ @user"``.
+    while u.startswith("@"):
+        u = u[1:].lstrip()
+    return u.strip().lower()
+
+
 def _build_candidate_keyboard(username: str) -> dict[str, Any]:
-    u = username.lstrip("@").strip()
+    """Construit le clavier inline avec les **4 boutons obligatoires** + 1 bonus.
+
+    Les 4 boutons exigés par le brief :
+
+    * ``✅ Valider``         → callback ``v:{username}``
+    * ``❌ Rejeter``         → callback ``r:{username}``
+    * ``✏️ Modifier T-type`` → callback ``m:{username}``
+    * ``👁 Voir profil``      → URL ``https://www.instagram.com/{username}/``
+
+    Le 5e bouton (``📈 Voir évolution``, callback ``ev:{username}``) est
+    conservé pour les profils ayant un ``scores_history`` ; il n'est pas
+    requis par le brief mais utile au validateur.
+    """
+    u = _normalize_username_for_url(username)
+    if not u:
+        # On loggue mais on construit quand même un keyboard "vide" plutôt
+        # que de retourner ``None`` — sinon le caller envoie un message sans
+        # boutons silencieusement (régression difficile à diagnostiquer).
+        _LOG.warning("_build_candidate_keyboard : username vide reçu — keyboard avec callbacks orphelins.")
+    profile_url = f"https://www.instagram.com/{u}/"
     return {
         "inline_keyboard": [
             [
@@ -331,7 +367,7 @@ def _build_candidate_keyboard(username: str) -> dict[str, Any]:
             ],
             [
                 {"text": "✏️ Modifier T-type", "callback_data": f"m:{u}"},
-                {"text": "👁 Voir profil", "url": f"https://www.instagram.com/{u}/"},
+                {"text": "👁 Voir profil", "url": profile_url},
             ],
             [
                 {"text": "📈 Voir évolution", "callback_data": f"ev:{u}"},
@@ -440,19 +476,81 @@ def notify_candidate(
         _LOG.warning("notify_candidate skip : %s", e)
         return None
 
-    username = str(candidate.get("username") or "").lstrip("@").strip()
+    username = _normalize_username_for_url(str(candidate.get("username") or ""))
     if not username:
         _LOG.warning("notify_candidate : username vide — skip.")
         return None
 
+    reply_markup = _build_candidate_keyboard(username)
     payload = {
         "chat_id": c,
         "text": _build_candidate_text(candidate),
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
-        "reply_markup": _build_candidate_keyboard(username),
+        "reply_markup": reply_markup,
     }
-    return _telegram_post("sendMessage", payload, token=t)
+
+    # Debug ciblé : quand le validateur signale "boutons absents", la 1re
+    # vérification est de s'assurer que le keyboard est bien construit ET
+    # bien sérialisé dans le payload envoyé. On loggue donc la liste des
+    # boutons (text + callback ou URL) pour pouvoir corréler rapidement
+    # avec l'absence visuelle côté Telegram.
+    _log_reply_markup_debug(username, reply_markup)
+
+    response = _telegram_post("sendMessage", payload, token=t)
+    if response and response.get("ok"):
+        msg_id = (response.get("result") or {}).get("message_id")
+        _LOG.info("notify_candidate @%s : envoyé (message_id=%s)", username, msg_id)
+    elif response is not None:
+        _LOG.warning(
+            "notify_candidate @%s : Telegram a refusé (description=%s).",
+            username,
+            response.get("description"),
+        )
+    return response
+
+
+def _log_reply_markup_debug(username: str, reply_markup: dict[str, Any] | None) -> None:
+    """Inspecte ``reply_markup`` et loggue un résumé structuré.
+
+    Émet un ``WARNING`` si le keyboard est ``None`` ou structurellement
+    invalide (régression que ce log doit attraper en priorité), sinon un
+    ``INFO`` listant les boutons par ligne. Tolère silencieusement les
+    types inattendus pour ne **jamais** faire planter ``notify_candidate``
+    à cause d'un log debug.
+    """
+    if reply_markup is None:
+        _LOG.warning("notify_candidate @%s : reply_markup=None (boutons ABSENTS).", username)
+        return
+    rows = (reply_markup or {}).get("inline_keyboard")
+    if not isinstance(rows, list) or not rows:
+        _LOG.warning(
+            "notify_candidate @%s : reply_markup invalide (inline_keyboard manquant ou vide) — %r",
+            username,
+            reply_markup,
+        )
+        return
+
+    summary: list[str] = []
+    total = 0
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        for btn in row:
+            if not isinstance(btn, dict):
+                continue
+            total += 1
+            text = str(btn.get("text") or "?")
+            target = btn.get("callback_data") or btn.get("url") or "(sans cible)"
+            summary.append(f"{text} → {target}")
+
+    _LOG.info(
+        "notify_candidate @%s : reply_markup = %d boutons sur %d ligne(s) [%s]",
+        username,
+        total,
+        len(rows),
+        " | ".join(summary),
+    )
 
 
 def _format_score_evolution_text(

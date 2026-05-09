@@ -1,3 +1,52 @@
 {
-  "profiles": []
+  "profiles": [
+    {
+      "username": "charton_arthur",
+      "platform": "instagram",
+      "domain": "humour",
+      "outcome": "rejected",
+      "score": 274.15041981803444,
+      "added_at": "2026-05-08T22:07:06+00:00"
+    },
+    {
+      "username": "saleblancc",
+      "platform": "instagram",
+      "domain": "humour",
+      "outcome": "ineligible",
+      "score": null,
+      "added_at": "2026-05-08T22:08:49+00:00"
+    },
+    {
+      "username": "marrant_clips",
+      "platform": "instagram",
+      "domain": "humour",
+      "outcome": "rejected",
+      "score": 401.59376151726553,
+      "added_at": "2026-05-08T22:26:24+00:00"
+    },
+    {
+      "username": "theo_sabadel",
+      "platform": "instagram",
+      "domain": "humour",
+      "outcome": "candidate",
+      "score": 627.7586587162674,
+      "added_at": "2026-05-08T22:44:53+00:00"
+    },
+    {
+      "username": "tom_liogier",
+      "platform": "instagram",
+      "domain": "humour",
+      "outcome": "candidate",
+      "score": 1166.2340417503613,
+      "added_at": "2026-05-08T23:14:03+00:00"
+    },
+    {
+      "username": "donpollo.waza",
+      "platform": "instagram",
+      "domain": "humour",
+      "outcome": "ineligible",
+      "score": null,
+      "added_at": "2026-05-08T23:16:21+00:00"
+    }
+  ]
 }

@@ -68,6 +68,15 @@ DISABLE_HUMAN_SCHEDULE = (
     in ("1", "true", "yes", "on")
 )
 
+# Seuil de score au-dessus duquel ``score_and_persist`` envoie une notif
+# Telegram au validateur humain. Tout score est de toute façon upserté dans
+# ``database.json`` — la notif est juste un signal pour un examen prioritaire.
+# 350 = sweet spot empirique : assez bas pour capter les profils corrects en
+# milieu de tier B, assez haut pour ne pas spammer le bot sur du tier C.
+DISCOVERY_NOTIFY_THRESHOLD = float(
+    os.environ.get("DISCOVERY_NOTIFY_THRESHOLD", "350")
+)
+
 # Ollama (classifier / generate_comments) — OLLAMA_GENERATE_URL reste accepté en repli
 OLLAMA_URL = (
     os.environ.get("OLLAMA_URL")

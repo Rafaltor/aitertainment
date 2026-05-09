@@ -2769,3 +2769,967 @@
 2026-05-08 22:55:12,817 [INFO] media r8 : aucun commentaire exploitable.
 2026-05-08 22:55:12,817 [INFO] media r7 : aucun commentaire exploitable.
 2026-05-08 22:55:12,817 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-08 23:53:58,935 [INFO] Nuit (23h) — pause 486 min jusqu'à 08h.
+2026-05-09 00:04:05,185 [INFO] === Discovery démarrée (mock=False, only_domain=humour, only_seed=None) ===
+2026-05-09 00:04:10,647 [INFO] Domaine humour : 25 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:04:29,372 [INFO] Seed @recrutestagiaire : 12 followings collectés.
+2026-05-09 00:04:29,373 [INFO] Scoring @charton_arthur (depuis seed @recrutestagiaire, domaine humour)...
+2026-05-09 00:05:39,903 [WARNING] Classification échouée pour media 3875232702274380150 (Erreur HTTP Ollama (réponse): 500 Server Error: Internal Server Error for url: http://localhost:11434/api/generate) — skip.
+2026-05-09 00:06:17,405 [WARNING] Classification échouée pour media 3851911096420669328 (Erreur HTTP Ollama (réponse): 500 Server Error: Internal Server Error for url: http://localhost:11434/api/generate) — skip.
+2026-05-09 00:07:06,437 [WARNING] Classification échouée pour media 3865151975876862021 (Erreur HTTP Ollama (réponse): 500 Server Error: Internal Server Error for url: http://localhost:11434/api/generate) — skip.
+2026-05-09 00:07:06,438 [INFO] score_profile @charton_arthur : score=274.2 (reels=1 w=0.20 score=194.6 / posts=4 w=0.80 score=294.0) t_type=None followers=1248
+2026-05-09 00:07:06,443 [INFO] Blacklist sauvegardée : 1 entrée(s) -> C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\blacklist.json
+2026-05-09 00:08:38,938 [INFO] Scoring @saleblancc (depuis seed @recrutestagiaire, domaine humour)...
+2026-05-09 00:08:49,506 [INFO] score_profile @saleblancc : followers=898 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:08:49,509 [INFO] Blacklist sauvegardée : 2 entrée(s) -> C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\blacklist.json
+2026-05-09 00:10:33,113 [INFO] Scoring @alexandreskrt (depuis seed @recrutestagiaire, domaine humour)...
+2026-05-09 00:11:48,271 [WARNING] Classification échouée pour media 3891119567804339493 (Erreur HTTP Ollama (réponse): 500 Server Error: Internal Server Error for url: http://localhost:11434/api/generate) — skip.
+2026-05-09 00:12:31,407 [WARNING] Classification échouée pour media 3886820628989000093 (Erreur HTTP Ollama (réponse): 500 Server Error: Internal Server Error for url: http://localhost:11434/api/generate) — skip.
+2026-05-09 00:13:51,458 [INFO] Interruption clavier — arrêt Discovery.
+2026-05-09 00:13:51,459 [INFO] === Discovery terminée (profiles_today=2, candidates=0, blacklisted=2) ===
+2026-05-09 00:15:28,079 [INFO] === Discovery démarrée (mock=False, only_domain=humour, only_seed=None) ===
+2026-05-09 00:15:33,866 [INFO] Domaine humour : 25 seeds, watchlist=0, blacklist=2.
+2026-05-09 00:15:43,639 [INFO] Interruption clavier — arrêt Discovery.
+2026-05-09 00:15:43,640 [INFO] === Discovery terminée (profiles_today=0, candidates=0, blacklisted=0) ===
+2026-05-09 00:17:33,230 [INFO] === Discovery démarrée (mock=False, only_domain=humour, only_seed=None) ===
+2026-05-09 00:17:38,880 [INFO] Domaine humour : 24 seeds, watchlist=0, blacklist=2.
+2026-05-09 00:17:49,650 [INFO] Seed @marrant_club : 4 followings collectés.
+2026-05-09 00:17:49,650 [INFO] Scoring @marrant_clips (depuis seed @marrant_club, domaine humour)...
+2026-05-09 00:24:02,686 [INFO] media 3892524037312903017 : aucun commentaire exploitable.
+2026-05-09 00:24:55,888 [INFO] media 3891835925335307529 : aucun commentaire exploitable.
+2026-05-09 00:26:24,466 [INFO] score_profile @marrant_clips : score=401.6 (reels=15 w=1.00 score=401.6 / posts=0 w=0.00 score=0.0) t_type=T2 followers=13939
+2026-05-09 00:26:24,471 [INFO] Blacklist sauvegardée : 3 entrée(s) -> C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\blacklist.json
+2026-05-09 00:28:26,432 [INFO] Scoring @tom_liogier (depuis seed @marrant_club, domaine humour)...
+2026-05-09 00:29:21,786 [INFO] Interruption clavier — arrêt Discovery.
+2026-05-09 00:29:21,786 [INFO] === Discovery terminée (profiles_today=1, candidates=0, blacklisted=1) ===
+2026-05-09 00:33:34,456 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:33:34,457 [INFO] Seed @seed_one : 10 followings collectés.
+2026-05-09 00:33:34,457 [INFO] Scoring @u0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:33:34,457 [INFO] Scoring @u1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:33:34,457 [INFO] Quota quotidien atteint (5) — arrêt seed seed_one.
+2026-05-09 00:33:34,458 [INFO] Domaine humour : 1 seeds, watchlist=1, blacklist=1.
+2026-05-09 00:33:34,458 [INFO] Seed @seed_one : 3 followings collectés.
+2026-05-09 00:33:34,458 [INFO] Scoring @alpha (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:33:34,460 [INFO] Blacklist sauvegardée : 2 entrée(s) -> \tmp\skip_persist_bl.json
+2026-05-09 00:33:34,460 [INFO] @gamma déjà dans watchlist — skip.
+2026-05-09 00:33:34,461 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:33:34,461 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:33:34,461 [INFO] Scoring @promising (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:33:34,467 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:33:34,467 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:33:34,467 [INFO] Scoring @meh (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:33:34,469 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:33:34,469 [INFO] Scoring @seed_one_follow_0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:33:34,470 [INFO] Scoring @seed_one_follow_1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:33:34,470 [INFO] [mock] notif candidate skip — @seed_one_follow_1 score=620
+2026-05-09 00:33:34,470 [INFO] Scoring @seed_one_follow_2 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:33:34,470 [INFO] [mock] notif candidate skip — @seed_one_follow_2 score=768
+2026-05-09 00:33:34,471 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:33:34,471 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:33:34,471 [INFO] Seed @seed_one : 2 followings collectés.
+2026-05-09 00:33:34,472 [INFO] Scoring @a (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:33:34,472 [INFO] Scoring @b (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:33:34,476 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-09 00:33:34,478 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:33:34,478 [INFO] Scoring @alpha_follow_0 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:33:34,478 [INFO] Scoring @alpha_follow_1 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:33:34,478 [INFO] [mock] notif candidate skip — @alpha_follow_1 score=629
+2026-05-09 00:33:34,478 [INFO] Scoring @alpha_follow_2 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:33:34,478 [INFO] [mock] notif candidate skip — @alpha_follow_2 score=656
+2026-05-09 00:33:34,478 [INFO] Domaine humour terminé — pause 129 min avant le suivant.
+2026-05-09 00:33:34,478 [INFO] Domaine streetwear : 1 seeds, watchlist=0, blacklist=3.
+2026-05-09 00:33:34,478 [INFO] Scoring @beta_follow_0 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:33:34,478 [INFO] Scoring @beta_follow_1 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:33:34,479 [INFO] Quota quotidien atteint (5) — arrêt seed beta.
+2026-05-09 00:33:34,479 [INFO] === Discovery terminée (profiles_today=5, candidates=2, blacklisted=5) ===
+2026-05-09 00:33:34,480 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-09 00:33:34,481 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-09 00:33:34,481 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:33:34,481 [INFO] Scoring @brand_new_follow_0 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:33:34,481 [INFO] Scoring @brand_new_follow_1 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:33:34,482 [INFO] [mock] notif candidate skip — @brand_new_follow_1 score=574
+2026-05-09 00:33:34,482 [INFO] Scoring @brand_new_follow_2 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:33:34,482 [INFO] [mock] notif candidate skip — @brand_new_follow_2 score=509
+2026-05-09 00:33:34,482 [INFO] === Discovery terminée (profiles_today=3, candidates=2, blacklisted=3) ===
+2026-05-09 00:33:34,486 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-09 00:33:34,487 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:33:34,489 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-09 00:33:34,491 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:33:34,493 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-09 00:33:34,494 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-09 00:33:34,496 [INFO] score_profile @complete_with_posts : score=400.9 (reels=1 w=0.25 score=426.8 / posts=3 w=0.75 score=392.2) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2087861208128'> followers=10000
+2026-05-09 00:33:34,498 [INFO] score_profile @reels_priority : score=366.6 (reels=6 w=0.75 score=392.4 / posts=2 w=0.25 score=289.1) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2087861212832'> followers=10000
+2026-05-09 00:33:34,499 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:33:34,499 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:33:34,500 [INFO] score_profile @rising_creator : score=583.7 (reels=12 w=1.00 score=583.7 / posts=0 w=0.00 score=0.0) t_type=T2 followers=10000
+2026-05-09 00:33:34,502 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-09 00:33:34,503 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,503 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,503 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,503 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-09 00:33:34,504 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,504 [INFO] media r6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,504 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,504 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-09 00:33:34,505 [INFO] media ok9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,505 [INFO] media ok8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,505 [INFO] media ok7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,505 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:33:34,506 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,506 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,506 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,506 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-09 00:33:34,507 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,507 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,507 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,507 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:33:34,508 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,508 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,508 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,508 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-09 00:33:34,509 [INFO] media p7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,509 [INFO] media p6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,509 [INFO] media p5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,509 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-09 00:33:34,510 [INFO] score_profile @secret : compte privé — skip.
+2026-05-09 00:33:34,511 [INFO] media r15 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,511 [INFO] media r14 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,511 [INFO] media r13 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,511 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:33:34,511 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,512 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,512 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,512 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:33:34,513 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,514 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,514 [INFO] media r0 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,514 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:33:34,514 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,515 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,515 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,515 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:33:34,515 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-09 00:33:34,516 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-09 00:33:34,517 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,517 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,517 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:33:34,517 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-09 00:35:32,263 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:35:32,263 [INFO] Seed @seed_one : 10 followings collectés.
+2026-05-09 00:35:32,263 [INFO] Scoring @u0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:35:32,264 [INFO] Scoring @u1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:35:32,264 [INFO] Quota quotidien atteint (5) — arrêt seed seed_one.
+2026-05-09 00:35:32,265 [INFO] Domaine humour : 1 seeds, watchlist=1, blacklist=1.
+2026-05-09 00:35:32,265 [INFO] Seed @seed_one : 3 followings collectés.
+2026-05-09 00:35:32,265 [INFO] Scoring @alpha (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:35:32,265 [INFO] Blacklist sauvegardée : 2 entrée(s) -> \tmp\skip_persist_bl.json
+2026-05-09 00:35:32,266 [INFO] @gamma déjà dans watchlist — skip.
+2026-05-09 00:35:32,267 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:35:32,267 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:35:32,267 [INFO] Scoring @promising (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:35:32,269 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:35:32,270 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:35:32,270 [INFO] Scoring @meh (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:35:32,272 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:35:32,272 [INFO] Scoring @seed_one_follow_0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:35:32,272 [INFO] Scoring @seed_one_follow_1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:35:32,272 [INFO] [mock] notif candidate skip — @seed_one_follow_1 score=552
+2026-05-09 00:35:32,272 [INFO] Scoring @seed_one_follow_2 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:35:32,272 [INFO] [mock] notif candidate skip — @seed_one_follow_2 score=759
+2026-05-09 00:35:32,273 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:35:32,274 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:35:32,275 [INFO] Seed @seed_one : 2 followings collectés.
+2026-05-09 00:35:32,275 [INFO] Scoring @a (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:35:32,275 [INFO] Scoring @b (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:35:32,279 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-09 00:35:32,281 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:35:32,281 [INFO] Scoring @alpha_follow_0 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:35:32,281 [INFO] Scoring @alpha_follow_1 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:35:32,281 [INFO] [mock] notif candidate skip — @alpha_follow_1 score=579
+2026-05-09 00:35:32,281 [INFO] Scoring @alpha_follow_2 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:35:32,281 [INFO] [mock] notif candidate skip — @alpha_follow_2 score=527
+2026-05-09 00:35:32,281 [INFO] Domaine humour terminé — pause 83 min avant le suivant.
+2026-05-09 00:35:32,281 [INFO] Domaine streetwear : 1 seeds, watchlist=0, blacklist=3.
+2026-05-09 00:35:32,282 [INFO] Scoring @beta_follow_0 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:35:32,282 [INFO] Scoring @beta_follow_1 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:35:32,282 [INFO] [mock] notif candidate skip — @beta_follow_1 score=722
+2026-05-09 00:35:32,282 [INFO] Quota quotidien atteint (5) — arrêt seed beta.
+2026-05-09 00:35:32,282 [INFO] === Discovery terminée (profiles_today=5, candidates=3, blacklisted=5) ===
+2026-05-09 00:35:32,284 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-09 00:35:32,284 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-09 00:35:32,285 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:35:32,285 [INFO] Scoring @brand_new_follow_0 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:35:32,285 [INFO] [mock] notif candidate skip — @brand_new_follow_0 score=561
+2026-05-09 00:35:32,285 [INFO] Scoring @brand_new_follow_1 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:35:32,285 [INFO] [mock] notif candidate skip — @brand_new_follow_1 score=571
+2026-05-09 00:35:32,285 [INFO] Scoring @brand_new_follow_2 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:35:32,285 [INFO] === Discovery terminée (profiles_today=3, candidates=2, blacklisted=3) ===
+2026-05-09 00:35:32,289 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-09 00:35:32,291 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:35:32,292 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-09 00:35:32,294 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:35:32,296 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-09 00:35:32,296 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-09 00:35:32,299 [INFO] score_profile @complete_with_posts : score=400.9 (reels=1 w=0.25 score=426.8 / posts=3 w=0.75 score=392.2) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2114170190352'> followers=10000
+2026-05-09 00:35:32,301 [INFO] score_profile @reels_priority : score=366.6 (reels=6 w=0.75 score=392.4 / posts=2 w=0.25 score=289.1) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2114169614896'> followers=10000
+2026-05-09 00:35:32,302 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:35:32,302 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:35:32,303 [INFO] score_profile @rising_creator : score=583.7 (reels=12 w=1.00 score=583.7 / posts=0 w=0.00 score=0.0) t_type=T2 followers=10000
+2026-05-09 00:35:32,304 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-09 00:35:32,305 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,305 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,305 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,305 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-09 00:35:32,306 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,306 [INFO] media r6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,306 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,306 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-09 00:35:32,307 [INFO] media ok9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,307 [INFO] media ok8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,307 [INFO] media ok7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,307 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:35:32,308 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,308 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,308 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,308 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-09 00:35:32,309 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,309 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,309 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,310 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:35:32,311 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,311 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,311 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,312 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-09 00:35:32,312 [INFO] media p7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,312 [INFO] media p6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,312 [INFO] media p5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,312 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-09 00:35:32,313 [INFO] score_profile @secret : compte privé — skip.
+2026-05-09 00:35:32,314 [INFO] media r15 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,314 [INFO] media r14 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,314 [INFO] media r13 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,314 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:35:32,315 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,315 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,315 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,315 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:35:32,316 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,316 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,316 [INFO] media r0 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,316 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:35:32,317 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,317 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,317 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,317 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:35:32,318 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-09 00:35:32,319 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-09 00:35:32,320 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,320 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,320 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:35:32,320 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-09 00:36:04,555 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:04,555 [INFO] Seed @seed_one : 10 followings collectés.
+2026-05-09 00:36:04,555 [INFO] Scoring @u0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:04,555 [INFO] Scoring @u1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:04,555 [INFO] Quota quotidien atteint (5) — arrêt seed seed_one.
+2026-05-09 00:36:04,556 [INFO] Domaine humour : 1 seeds, watchlist=1, blacklist=1.
+2026-05-09 00:36:04,556 [INFO] Seed @seed_one : 3 followings collectés.
+2026-05-09 00:36:04,556 [INFO] Scoring @alpha (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:04,557 [INFO] Blacklist sauvegardée : 2 entrée(s) -> \tmp\skip_persist_bl.json
+2026-05-09 00:36:04,557 [INFO] @gamma déjà dans watchlist — skip.
+2026-05-09 00:36:04,559 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:04,559 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:36:04,559 [INFO] Scoring @promising (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:04,562 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:04,563 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:36:04,563 [INFO] Scoring @meh (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:04,565 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:04,565 [INFO] Scoring @seed_one_follow_0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:04,565 [INFO] Scoring @seed_one_follow_1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:04,565 [INFO] Scoring @seed_one_follow_2 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:04,565 [INFO] [mock] notif candidate skip — @seed_one_follow_2 score=545
+2026-05-09 00:36:04,566 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:04,566 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:04,566 [INFO] Seed @seed_one : 2 followings collectés.
+2026-05-09 00:36:04,567 [INFO] Scoring @a (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:04,567 [INFO] Scoring @b (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:04,570 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-09 00:36:04,572 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:04,572 [INFO] Scoring @alpha_follow_0 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:36:04,572 [INFO] Scoring @alpha_follow_1 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:36:04,572 [INFO] [mock] notif candidate skip — @alpha_follow_1 score=543
+2026-05-09 00:36:04,572 [INFO] Scoring @alpha_follow_2 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:36:04,572 [INFO] [mock] notif candidate skip — @alpha_follow_2 score=597
+2026-05-09 00:36:04,572 [INFO] Domaine humour terminé — pause 65 min avant le suivant.
+2026-05-09 00:36:04,572 [INFO] Domaine streetwear : 1 seeds, watchlist=0, blacklist=3.
+2026-05-09 00:36:04,572 [INFO] Scoring @beta_follow_0 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:36:04,573 [INFO] [mock] notif candidate skip — @beta_follow_0 score=568
+2026-05-09 00:36:04,573 [INFO] Scoring @beta_follow_1 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:36:04,573 [INFO] [mock] notif candidate skip — @beta_follow_1 score=522
+2026-05-09 00:36:04,573 [INFO] Quota quotidien atteint (5) — arrêt seed beta.
+2026-05-09 00:36:04,573 [INFO] === Discovery terminée (profiles_today=5, candidates=4, blacklisted=5) ===
+2026-05-09 00:36:04,575 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-09 00:36:04,576 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-09 00:36:04,577 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:04,577 [INFO] Scoring @brand_new_follow_0 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:36:04,577 [INFO] [mock] notif candidate skip — @brand_new_follow_0 score=687
+2026-05-09 00:36:04,577 [INFO] Scoring @brand_new_follow_1 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:36:04,577 [INFO] Scoring @brand_new_follow_2 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:36:04,577 [INFO] === Discovery terminée (profiles_today=3, candidates=1, blacklisted=3) ===
+2026-05-09 00:36:04,581 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-09 00:36:04,582 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:36:04,583 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-09 00:36:04,585 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:36:04,587 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-09 00:36:04,587 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-09 00:36:04,590 [INFO] score_profile @complete_with_posts : score=400.9 (reels=1 w=0.25 score=426.8 / posts=3 w=0.75 score=392.2) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2395797140352'> followers=10000
+2026-05-09 00:36:04,593 [INFO] score_profile @reels_priority : score=366.6 (reels=6 w=0.75 score=392.4 / posts=2 w=0.25 score=289.1) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2395798436368'> followers=10000
+2026-05-09 00:36:04,593 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:36:04,594 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:36:04,595 [INFO] score_profile @rising_creator : score=583.7 (reels=12 w=1.00 score=583.7 / posts=0 w=0.00 score=0.0) t_type=T2 followers=10000
+2026-05-09 00:36:04,595 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-09 00:36:04,596 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,596 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,596 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,596 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-09 00:36:04,597 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,597 [INFO] media r6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,597 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,598 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-09 00:36:04,598 [INFO] media ok9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,598 [INFO] media ok8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,598 [INFO] media ok7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,599 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:04,599 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,599 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,599 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,599 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-09 00:36:04,601 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,601 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,601 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,601 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:04,602 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,602 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,602 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,602 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-09 00:36:04,603 [INFO] media p7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,603 [INFO] media p6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,603 [INFO] media p5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,603 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-09 00:36:04,604 [INFO] score_profile @secret : compte privé — skip.
+2026-05-09 00:36:04,605 [INFO] media r15 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,605 [INFO] media r14 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,605 [INFO] media r13 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,605 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:04,606 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,606 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,606 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,606 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:04,607 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,607 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,607 [INFO] media r0 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,607 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:04,609 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,609 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,609 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,609 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:04,611 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-09 00:36:04,611 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-09 00:36:04,612 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,612 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,612 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:04,612 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-09 00:36:11,365 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:11,365 [INFO] Seed @seed_one : 10 followings collectés.
+2026-05-09 00:36:11,365 [INFO] Scoring @u0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:11,365 [INFO] Scoring @u1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:11,365 [INFO] Quota quotidien atteint (5) — arrêt seed seed_one.
+2026-05-09 00:36:11,366 [INFO] Domaine humour : 1 seeds, watchlist=1, blacklist=1.
+2026-05-09 00:36:11,366 [INFO] Seed @seed_one : 3 followings collectés.
+2026-05-09 00:36:11,366 [INFO] Scoring @alpha (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:11,367 [INFO] Blacklist sauvegardée : 2 entrée(s) -> \tmp\skip_persist_bl.json
+2026-05-09 00:36:11,367 [INFO] @gamma déjà dans watchlist — skip.
+2026-05-09 00:36:11,368 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:11,368 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:36:11,368 [INFO] Scoring @promising (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:11,371 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:11,371 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:36:11,372 [INFO] Scoring @meh (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:11,374 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:11,374 [INFO] Scoring @seed_one_follow_0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:11,374 [INFO] Scoring @seed_one_follow_1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:11,374 [INFO] [mock] notif candidate skip — @seed_one_follow_1 score=555
+2026-05-09 00:36:11,374 [INFO] Scoring @seed_one_follow_2 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:11,374 [INFO] [mock] notif candidate skip — @seed_one_follow_2 score=625
+2026-05-09 00:36:11,375 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:11,376 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:11,376 [INFO] Seed @seed_one : 2 followings collectés.
+2026-05-09 00:36:11,376 [INFO] Scoring @a (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:11,376 [INFO] Scoring @b (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:11,380 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-09 00:36:11,380 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:11,381 [INFO] Scoring @alpha_follow_0 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:36:11,381 [INFO] Scoring @alpha_follow_1 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:36:11,381 [INFO] Scoring @alpha_follow_2 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:36:11,381 [INFO] Domaine humour terminé — pause 152 min avant le suivant.
+2026-05-09 00:36:11,381 [INFO] Domaine streetwear : 1 seeds, watchlist=0, blacklist=3.
+2026-05-09 00:36:11,381 [INFO] Scoring @beta_follow_0 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:36:11,381 [INFO] [mock] notif candidate skip — @beta_follow_0 score=719
+2026-05-09 00:36:11,381 [INFO] Scoring @beta_follow_1 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:36:11,381 [INFO] Quota quotidien atteint (5) — arrêt seed beta.
+2026-05-09 00:36:11,381 [INFO] === Discovery terminée (profiles_today=5, candidates=1, blacklisted=5) ===
+2026-05-09 00:36:11,383 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-09 00:36:11,383 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-09 00:36:11,384 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:11,384 [INFO] Scoring @brand_new_follow_0 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:36:11,384 [INFO] Scoring @brand_new_follow_1 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:36:11,384 [INFO] Scoring @brand_new_follow_2 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:36:11,384 [INFO] [mock] notif candidate skip — @brand_new_follow_2 score=863
+2026-05-09 00:36:11,385 [INFO] === Discovery terminée (profiles_today=3, candidates=1, blacklisted=3) ===
+2026-05-09 00:36:11,389 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-09 00:36:11,390 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:36:11,391 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-09 00:36:11,394 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:36:11,395 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-09 00:36:11,395 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-09 00:36:11,397 [INFO] score_profile @complete_with_posts : score=400.9 (reels=1 w=0.25 score=426.8 / posts=3 w=0.75 score=392.2) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2011044898736'> followers=10000
+2026-05-09 00:36:11,399 [INFO] score_profile @reels_priority : score=366.6 (reels=6 w=0.75 score=392.4 / posts=2 w=0.25 score=289.1) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2011044903440'> followers=10000
+2026-05-09 00:36:11,400 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:36:11,400 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:36:11,401 [INFO] score_profile @rising_creator : score=583.7 (reels=12 w=1.00 score=583.7 / posts=0 w=0.00 score=0.0) t_type=T2 followers=10000
+2026-05-09 00:36:11,402 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-09 00:36:11,403 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,404 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,404 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,404 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-09 00:36:11,409 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,409 [INFO] media r6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,409 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,409 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-09 00:36:11,410 [INFO] media ok9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,410 [INFO] media ok8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,410 [INFO] media ok7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,410 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:11,411 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,411 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,411 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,411 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-09 00:36:11,412 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,412 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,412 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,412 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:11,413 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,413 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,413 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,413 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-09 00:36:11,414 [INFO] media p7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,414 [INFO] media p6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,414 [INFO] media p5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,414 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-09 00:36:11,415 [INFO] score_profile @secret : compte privé — skip.
+2026-05-09 00:36:11,416 [INFO] media r15 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,416 [INFO] media r14 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,416 [INFO] media r13 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,416 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:11,417 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,417 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,417 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,417 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:11,418 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,418 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,418 [INFO] media r0 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,418 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:11,419 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,419 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,419 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,420 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:11,420 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-09 00:36:11,421 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-09 00:36:11,422 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,422 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,422 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:11,422 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-09 00:36:43,389 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:43,389 [INFO] Seed @seed_one : 10 followings collectés.
+2026-05-09 00:36:43,389 [INFO] Scoring @u0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:43,390 [INFO] Scoring @u1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:43,390 [INFO] Quota quotidien atteint (5) — arrêt seed seed_one.
+2026-05-09 00:36:43,391 [INFO] Domaine humour : 1 seeds, watchlist=1, blacklist=1.
+2026-05-09 00:36:43,391 [INFO] Seed @seed_one : 3 followings collectés.
+2026-05-09 00:36:43,391 [INFO] Scoring @alpha (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:43,392 [INFO] Blacklist sauvegardée : 2 entrée(s) -> \tmp\skip_persist_bl.json
+2026-05-09 00:36:43,392 [INFO] @gamma déjà dans watchlist — skip.
+2026-05-09 00:36:43,393 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:43,393 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:36:43,393 [INFO] Scoring @promising (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:43,396 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:43,396 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:36:43,396 [INFO] Scoring @meh (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:43,398 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:43,398 [INFO] Scoring @seed_one_follow_0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:43,398 [INFO] [mock] notif candidate skip — @seed_one_follow_0 score=864
+2026-05-09 00:36:43,398 [INFO] Scoring @seed_one_follow_1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:43,399 [INFO] [mock] notif candidate skip — @seed_one_follow_1 score=731
+2026-05-09 00:36:43,399 [INFO] Scoring @seed_one_follow_2 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:43,399 [INFO] [mock] notif candidate skip — @seed_one_follow_2 score=565
+2026-05-09 00:36:43,399 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:43,400 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:43,400 [INFO] Seed @seed_one : 2 followings collectés.
+2026-05-09 00:36:43,400 [INFO] Scoring @a (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:43,401 [INFO] Scoring @b (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:36:43,405 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-09 00:36:43,406 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:43,406 [INFO] Scoring @alpha_follow_0 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:36:43,406 [INFO] Scoring @alpha_follow_1 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:36:43,406 [INFO] [mock] notif candidate skip — @alpha_follow_1 score=890
+2026-05-09 00:36:43,406 [INFO] Scoring @alpha_follow_2 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:36:43,406 [INFO] Domaine humour terminé — pause 73 min avant le suivant.
+2026-05-09 00:36:43,406 [INFO] Domaine streetwear : 1 seeds, watchlist=0, blacklist=3.
+2026-05-09 00:36:43,406 [INFO] Scoring @beta_follow_0 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:36:43,406 [INFO] [mock] notif candidate skip — @beta_follow_0 score=674
+2026-05-09 00:36:43,406 [INFO] Scoring @beta_follow_1 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:36:43,407 [INFO] [mock] notif candidate skip — @beta_follow_1 score=709
+2026-05-09 00:36:43,407 [INFO] Quota quotidien atteint (5) — arrêt seed beta.
+2026-05-09 00:36:43,407 [INFO] === Discovery terminée (profiles_today=5, candidates=3, blacklisted=5) ===
+2026-05-09 00:36:43,409 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-09 00:36:43,409 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-09 00:36:43,410 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:36:43,410 [INFO] Scoring @brand_new_follow_0 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:36:43,410 [INFO] [mock] notif candidate skip — @brand_new_follow_0 score=716
+2026-05-09 00:36:43,410 [INFO] Scoring @brand_new_follow_1 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:36:43,410 [INFO] [mock] notif candidate skip — @brand_new_follow_1 score=690
+2026-05-09 00:36:43,411 [INFO] Scoring @brand_new_follow_2 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:36:43,411 [INFO] [mock] notif candidate skip — @brand_new_follow_2 score=864
+2026-05-09 00:36:43,411 [INFO] === Discovery terminée (profiles_today=3, candidates=3, blacklisted=3) ===
+2026-05-09 00:36:43,414 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-09 00:36:43,416 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:36:43,417 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-09 00:36:43,419 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:36:43,421 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-09 00:36:43,421 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-09 00:36:43,423 [INFO] score_profile @complete_with_posts : score=400.9 (reels=1 w=0.25 score=426.8 / posts=3 w=0.75 score=392.2) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2174737311664'> followers=10000
+2026-05-09 00:36:43,425 [INFO] score_profile @reels_priority : score=366.6 (reels=6 w=0.75 score=392.4 / posts=2 w=0.25 score=289.1) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2174737316368'> followers=10000
+2026-05-09 00:36:43,425 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:36:43,426 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:36:43,427 [INFO] score_profile @rising_creator : score=583.7 (reels=12 w=1.00 score=583.7 / posts=0 w=0.00 score=0.0) t_type=T2 followers=10000
+2026-05-09 00:36:43,427 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-09 00:36:43,428 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,428 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,428 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,429 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-09 00:36:43,433 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,433 [INFO] media r6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,433 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,433 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-09 00:36:43,434 [INFO] media ok9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,434 [INFO] media ok8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,434 [INFO] media ok7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,434 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:43,435 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,435 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,435 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,435 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-09 00:36:43,436 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,436 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,436 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,436 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:43,437 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,437 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,437 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,437 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-09 00:36:43,438 [INFO] media p7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,438 [INFO] media p6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,438 [INFO] media p5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,438 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-09 00:36:43,439 [INFO] score_profile @secret : compte privé — skip.
+2026-05-09 00:36:43,441 [INFO] media r15 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,441 [INFO] media r14 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,441 [INFO] media r13 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,441 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:43,442 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,442 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,442 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,442 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:43,443 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,443 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,443 [INFO] media r0 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,443 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:43,444 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,444 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,444 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,444 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:36:43,445 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-09 00:36:43,446 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-09 00:36:43,446 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,446 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,447 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:36:43,447 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-09 00:37:34,606 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:37:34,606 [INFO] Seed @seed_one : 10 followings collectés.
+2026-05-09 00:37:34,606 [INFO] Scoring @u0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:37:34,606 [INFO] Scoring @u1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:37:34,606 [INFO] Quota quotidien atteint (5) — arrêt seed seed_one.
+2026-05-09 00:37:34,607 [INFO] Domaine humour : 1 seeds, watchlist=1, blacklist=1.
+2026-05-09 00:37:34,607 [INFO] Seed @seed_one : 3 followings collectés.
+2026-05-09 00:37:34,607 [INFO] Scoring @alpha (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:37:34,608 [INFO] Blacklist sauvegardée : 2 entrée(s) -> \tmp\skip_persist_bl.json
+2026-05-09 00:37:34,608 [INFO] @gamma déjà dans watchlist — skip.
+2026-05-09 00:37:34,609 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:37:34,609 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:37:34,609 [INFO] Scoring @promising (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:37:34,612 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:37:34,612 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:37:34,612 [INFO] Scoring @meh (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:37:34,614 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:37:34,615 [INFO] Scoring @seed_one_follow_0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:37:34,615 [INFO] Scoring @seed_one_follow_1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:37:34,615 [INFO] Scoring @seed_one_follow_2 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:37:34,616 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:37:34,617 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:37:34,617 [INFO] Seed @seed_one : 2 followings collectés.
+2026-05-09 00:37:34,617 [INFO] Scoring @a (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:37:34,617 [INFO] Scoring @b (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:37:34,621 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-09 00:37:34,621 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:37:34,622 [INFO] Scoring @alpha_follow_0 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:37:34,622 [INFO] [mock] notif candidate skip — @alpha_follow_0 score=632
+2026-05-09 00:37:34,622 [INFO] Scoring @alpha_follow_1 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:37:34,622 [INFO] [mock] notif candidate skip — @alpha_follow_1 score=525
+2026-05-09 00:37:34,622 [INFO] Scoring @alpha_follow_2 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:37:34,622 [INFO] Domaine humour terminé — pause 76 min avant le suivant.
+2026-05-09 00:37:34,622 [INFO] Domaine streetwear : 1 seeds, watchlist=0, blacklist=3.
+2026-05-09 00:37:34,622 [INFO] Scoring @beta_follow_0 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:37:34,622 [INFO] Scoring @beta_follow_1 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:37:34,622 [INFO] Quota quotidien atteint (5) — arrêt seed beta.
+2026-05-09 00:37:34,622 [INFO] === Discovery terminée (profiles_today=5, candidates=2, blacklisted=5) ===
+2026-05-09 00:37:34,624 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-09 00:37:34,625 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-09 00:37:34,625 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:37:34,625 [INFO] Scoring @brand_new_follow_0 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:37:34,625 [INFO] Scoring @brand_new_follow_1 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:37:34,625 [INFO] Scoring @brand_new_follow_2 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:37:34,625 [INFO] [mock] notif candidate skip — @brand_new_follow_2 score=543
+2026-05-09 00:37:34,626 [INFO] === Discovery terminée (profiles_today=3, candidates=1, blacklisted=3) ===
+2026-05-09 00:37:34,629 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-09 00:37:34,632 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:37:34,633 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-09 00:37:34,635 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:37:34,637 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-09 00:37:34,637 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-09 00:37:34,639 [INFO] score_profile @complete_with_posts : score=400.9 (reels=1 w=0.25 score=426.8 / posts=3 w=0.75 score=392.2) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2769450706528'> followers=10000
+2026-05-09 00:37:34,641 [INFO] score_profile @reels_priority : score=366.6 (reels=6 w=0.75 score=392.4 / posts=2 w=0.25 score=289.1) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2769450711232'> followers=10000
+2026-05-09 00:37:34,641 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:37:34,642 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:37:34,643 [INFO] score_profile @rising_creator : score=583.7 (reels=12 w=1.00 score=583.7 / posts=0 w=0.00 score=0.0) t_type=T2 followers=10000
+2026-05-09 00:37:34,643 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-09 00:37:34,644 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,644 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,644 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,644 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-09 00:37:34,649 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,649 [INFO] media r6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,649 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,650 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-09 00:37:34,650 [INFO] media ok9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,651 [INFO] media ok8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,651 [INFO] media ok7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,651 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:37:34,652 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,652 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,652 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,652 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-09 00:37:34,653 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,653 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,653 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,653 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:37:34,654 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,654 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,654 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,654 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-09 00:37:34,655 [INFO] media p7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,655 [INFO] media p6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,655 [INFO] media p5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,655 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-09 00:37:34,655 [INFO] score_profile @secret : compte privé — skip.
+2026-05-09 00:37:34,656 [INFO] media r15 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,656 [INFO] media r14 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,656 [INFO] media r13 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,656 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:37:34,657 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,657 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,657 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,657 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:37:34,658 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,658 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,658 [INFO] media r0 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,658 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:37:34,659 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,659 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,659 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,659 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:37:34,660 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-09 00:37:34,661 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-09 00:37:34,661 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,661 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,662 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:37:34,662 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-09 00:38:21,781 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:38:21,782 [INFO] Seed @seed_one : 10 followings collectés.
+2026-05-09 00:38:21,782 [INFO] Scoring @u0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:38:21,782 [INFO] Scoring @u1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:38:21,782 [INFO] Quota quotidien atteint (5) — arrêt seed seed_one.
+2026-05-09 00:38:21,783 [INFO] Domaine humour : 1 seeds, watchlist=1, blacklist=1.
+2026-05-09 00:38:21,783 [INFO] Seed @seed_one : 3 followings collectés.
+2026-05-09 00:38:21,783 [INFO] Scoring @alpha (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:38:21,784 [INFO] Blacklist sauvegardée : 2 entrée(s) -> \tmp\skip_persist_bl.json
+2026-05-09 00:38:21,784 [INFO] @gamma déjà dans watchlist — skip.
+2026-05-09 00:38:21,785 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:38:21,785 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:38:21,785 [INFO] Scoring @promising (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:38:21,788 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:38:21,788 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:38:21,788 [INFO] Scoring @meh (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:38:21,790 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:38:21,790 [INFO] Scoring @seed_one_follow_0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:38:21,790 [INFO] Scoring @seed_one_follow_1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:38:21,790 [INFO] Scoring @seed_one_follow_2 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:38:21,791 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:38:21,792 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:38:21,792 [INFO] Seed @seed_one : 2 followings collectés.
+2026-05-09 00:38:21,792 [INFO] Scoring @a (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:38:21,793 [INFO] Scoring @b (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:38:21,796 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-09 00:38:21,797 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:38:21,797 [INFO] Scoring @alpha_follow_0 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:38:21,797 [INFO] [mock] notif candidate skip — @alpha_follow_0 score=684
+2026-05-09 00:38:21,797 [INFO] Scoring @alpha_follow_1 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:38:21,797 [INFO] [mock] notif candidate skip — @alpha_follow_1 score=739
+2026-05-09 00:38:21,798 [INFO] Scoring @alpha_follow_2 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:38:21,798 [INFO] [mock] notif candidate skip — @alpha_follow_2 score=809
+2026-05-09 00:38:21,798 [INFO] Domaine humour terminé — pause 82 min avant le suivant.
+2026-05-09 00:38:21,798 [INFO] Domaine streetwear : 1 seeds, watchlist=0, blacklist=3.
+2026-05-09 00:38:21,798 [INFO] Scoring @beta_follow_0 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:38:21,798 [INFO] [mock] notif candidate skip — @beta_follow_0 score=502
+2026-05-09 00:38:21,798 [INFO] Scoring @beta_follow_1 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:38:21,798 [INFO] [mock] notif candidate skip — @beta_follow_1 score=631
+2026-05-09 00:38:21,798 [INFO] Quota quotidien atteint (5) — arrêt seed beta.
+2026-05-09 00:38:21,798 [INFO] === Discovery terminée (profiles_today=5, candidates=5, blacklisted=5) ===
+2026-05-09 00:38:21,800 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-09 00:38:21,800 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-09 00:38:21,801 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:38:21,801 [INFO] Scoring @brand_new_follow_0 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:38:21,801 [INFO] Scoring @brand_new_follow_1 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:38:21,801 [INFO] Scoring @brand_new_follow_2 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:38:21,801 [INFO] === Discovery terminée (profiles_today=3, candidates=0, blacklisted=3) ===
+2026-05-09 00:38:21,804 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-09 00:38:21,806 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:38:21,808 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-09 00:38:21,811 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:38:21,812 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-09 00:38:21,813 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-09 00:38:21,815 [INFO] score_profile @complete_with_posts : score=400.9 (reels=1 w=0.25 score=426.8 / posts=3 w=0.75 score=392.2) t_type=<MagicMock name='CommentClassifier().classify().get()' id='1533772899936'> followers=10000
+2026-05-09 00:38:21,816 [INFO] score_profile @reels_priority : score=366.6 (reels=6 w=0.75 score=392.4 / posts=2 w=0.25 score=289.1) t_type=<MagicMock name='CommentClassifier().classify().get()' id='1533772904640'> followers=10000
+2026-05-09 00:38:21,817 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:38:21,817 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:38:21,818 [INFO] score_profile @rising_creator : score=583.7 (reels=12 w=1.00 score=583.7 / posts=0 w=0.00 score=0.0) t_type=T2 followers=10000
+2026-05-09 00:38:21,819 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-09 00:38:21,820 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,820 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,820 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,820 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-09 00:38:21,824 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,825 [INFO] media r6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,825 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,825 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-09 00:38:21,826 [INFO] media ok9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,826 [INFO] media ok8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,826 [INFO] media ok7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,826 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:38:21,827 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,827 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,827 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,827 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-09 00:38:21,828 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,828 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,828 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,828 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:38:21,829 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,829 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,829 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,829 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-09 00:38:21,830 [INFO] media p7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,830 [INFO] media p6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,830 [INFO] media p5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,830 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-09 00:38:21,830 [INFO] score_profile @secret : compte privé — skip.
+2026-05-09 00:38:21,831 [INFO] media r15 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,832 [INFO] media r14 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,832 [INFO] media r13 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,832 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:38:21,832 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,832 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,833 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,833 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:38:21,833 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,834 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,834 [INFO] media r0 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,834 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:38:21,834 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,835 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,835 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,835 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:38:21,835 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-09 00:38:21,836 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-09 00:38:21,837 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,837 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,837 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:38:21,837 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-09 00:40:52,962 [INFO] === Discovery démarrée (mock=False, only_domain=humour, only_seed=None) ===
+2026-05-09 00:40:58,483 [INFO] Domaine humour : 24 seeds, watchlist=0, blacklist=3.
+2026-05-09 00:41:11,612 [INFO] Seed @marrant_club : 4 followings collectés.
+2026-05-09 00:41:11,613 [INFO] Scoring @theo_sabadel (depuis seed @marrant_club, domaine humour)...
+2026-05-09 00:44:53,267 [INFO] score_profile @theo_sabadel : score=627.8 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=627.8) t_type=T2 followers=6613
+2026-05-09 00:44:53,270 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:44:53,845 [INFO] Blacklist sauvegardée : 4 entrée(s) -> C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\blacklist.json
+2026-05-09 00:47:38,026 [INFO] Scoring @tom_liogier (depuis seed @marrant_club, domaine humour)...
+2026-05-09 00:48:18,119 [INFO] Interruption clavier — arrêt Discovery.
+2026-05-09 00:48:18,120 [INFO] === Discovery terminée (profiles_today=1, candidates=1, blacklisted=1) ===
+2026-05-09 00:52:22,511 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:52:22,511 [INFO] Seed @seed_one : 10 followings collectés.
+2026-05-09 00:52:22,511 [INFO] Scoring @u0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:52:22,512 [INFO] Scoring @u1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:52:22,512 [INFO] Quota quotidien atteint (5) — arrêt seed seed_one.
+2026-05-09 00:52:22,512 [INFO] Domaine humour : 1 seeds, watchlist=1, blacklist=1.
+2026-05-09 00:52:22,513 [INFO] Seed @seed_one : 3 followings collectés.
+2026-05-09 00:52:22,513 [INFO] Scoring @alpha (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:52:22,514 [INFO] Blacklist sauvegardée : 2 entrée(s) -> \tmp\skip_persist_bl.json
+2026-05-09 00:52:22,514 [INFO] @gamma déjà dans watchlist — skip.
+2026-05-09 00:52:22,515 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:52:22,515 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:52:22,515 [INFO] Scoring @promising (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:52:22,519 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:52:22,519 [INFO] Seed @seed_one : 1 followings collectés.
+2026-05-09 00:52:22,519 [INFO] Scoring @meh (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:52:22,521 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:52:22,521 [INFO] Scoring @seed_one_follow_0 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:52:22,521 [INFO] Scoring @seed_one_follow_1 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:52:22,522 [INFO] [mock] notif candidate skip — @seed_one_follow_1 score=659
+2026-05-09 00:52:22,522 [INFO] Scoring @seed_one_follow_2 (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:52:22,522 [INFO] [mock] notif candidate skip — @seed_one_follow_2 score=860
+2026-05-09 00:52:22,523 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:52:22,523 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:52:22,523 [INFO] Seed @seed_one : 2 followings collectés.
+2026-05-09 00:52:22,524 [INFO] Scoring @a (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:52:22,524 [INFO] Scoring @b (depuis seed @seed_one, domaine humour)...
+2026-05-09 00:52:22,527 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-09 00:52:22,528 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:52:22,528 [INFO] Scoring @alpha_follow_0 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:52:22,529 [INFO] [mock] notif candidate skip — @alpha_follow_0 score=578
+2026-05-09 00:52:22,529 [INFO] Scoring @alpha_follow_1 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:52:22,529 [INFO] Scoring @alpha_follow_2 (depuis seed @alpha, domaine humour)...
+2026-05-09 00:52:22,529 [INFO] [mock] notif candidate skip — @alpha_follow_2 score=736
+2026-05-09 00:52:22,529 [INFO] Domaine humour terminé — pause 86 min avant le suivant.
+2026-05-09 00:52:22,529 [INFO] Domaine streetwear : 1 seeds, watchlist=0, blacklist=3.
+2026-05-09 00:52:22,529 [INFO] Scoring @beta_follow_0 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:52:22,529 [INFO] [mock] notif candidate skip — @beta_follow_0 score=688
+2026-05-09 00:52:22,529 [INFO] Scoring @beta_follow_1 (depuis seed @beta, domaine streetwear)...
+2026-05-09 00:52:22,529 [INFO] Quota quotidien atteint (5) — arrêt seed beta.
+2026-05-09 00:52:22,529 [INFO] === Discovery terminée (profiles_today=5, candidates=3, blacklisted=5) ===
+2026-05-09 00:52:22,532 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-09 00:52:22,532 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-09 00:52:22,532 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-09 00:52:22,533 [INFO] Scoring @brand_new_follow_0 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:52:22,533 [INFO] Scoring @brand_new_follow_1 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:52:22,533 [INFO] [mock] notif candidate skip — @brand_new_follow_1 score=535
+2026-05-09 00:52:22,533 [INFO] Scoring @brand_new_follow_2 (depuis seed @brand_new, domaine humour)...
+2026-05-09 00:52:22,533 [INFO] === Discovery terminée (profiles_today=3, candidates=1, blacklisted=3) ===
+2026-05-09 00:52:22,537 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-09 00:52:22,539 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:52:22,540 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-09 00:52:22,542 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-09 00:52:22,544 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-09 00:52:22,544 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-09 00:52:22,546 [INFO] score_profile @complete_with_posts : score=400.9 (reels=1 w=0.25 score=426.8 / posts=3 w=0.75 score=392.2) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2557912458176'> followers=10000
+2026-05-09 00:52:22,549 [INFO] score_profile @reels_priority : score=366.6 (reels=6 w=0.75 score=392.4 / posts=2 w=0.25 score=289.1) t_type=<MagicMock name='CommentClassifier().classify().get()' id='2557912462880'> followers=10000
+2026-05-09 00:52:22,550 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:52:22,551 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-09 00:52:22,555 [INFO] score_profile @rising_creator : score=583.7 (reels=12 w=1.00 score=583.7 / posts=0 w=0.00 score=0.0) t_type=T2 followers=10000
+2026-05-09 00:52:22,556 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-09 00:52:22,557 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,557 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,557 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,557 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-09 00:52:22,558 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,558 [INFO] media r6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,558 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,558 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-09 00:52:22,559 [INFO] media ok9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,559 [INFO] media ok8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,559 [INFO] media ok7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,559 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:52:22,560 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,560 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,560 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,560 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-09 00:52:22,561 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,561 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,561 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,561 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:52:22,562 [INFO] media r5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,562 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,562 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,562 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-09 00:52:22,563 [INFO] media p7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,563 [INFO] media p6 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,563 [INFO] media p5 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,563 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-09 00:52:22,563 [INFO] score_profile @secret : compte privé — skip.
+2026-05-09 00:52:22,564 [INFO] media r15 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,564 [INFO] media r14 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,564 [INFO] media r13 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,564 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:52:22,565 [INFO] media r4 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,565 [INFO] media r3 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,565 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,565 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:52:22,566 [INFO] media r2 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,566 [INFO] media r1 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,567 [INFO] media r0 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,567 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:52:22,568 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,568 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,568 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,568 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-09 00:52:22,569 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-09 00:52:22,570 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-09 00:52:22,571 [INFO] media r9 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,571 [INFO] media r8 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,571 [INFO] media r7 : 0 commentaires bruts, max_likes=0, exploitables=0 — aucun commentaire exploitable.
+2026-05-09 00:52:22,571 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-09 00:54:30,560 [INFO] score_and_persist @theo_sabadel : domaine par défaut 'humour'.
+2026-05-09 00:54:35,507 [INFO] score_profile @theo_sabadel : déjà en blacklist — skip.
+2026-05-09 00:54:35,510 [INFO] score_and_persist @theo_sabadel : filtré (None).
+2026-05-09 00:55:06,215 [INFO] score_and_persist @theosabadel : domaine par défaut 'humour'.
+2026-05-09 00:55:35,287 [INFO] score_profile @theosabadel : compte privé — skip.
+2026-05-09 00:55:35,287 [INFO] score_and_persist @theosabadel : filtré (None).
+2026-05-09 00:56:52,482 [INFO] score_and_persist @marrant_club : domaine par défaut 'humour'.
+2026-05-09 01:03:39,758 [INFO] score_profile @marrant_club : score=529.8 (reels=1 w=0.20 score=343.3 / posts=4 w=0.80 score=576.4) t_type=T1 followers=456776
+2026-05-09 01:03:39,765 [INFO] Candidates sauvegardés : 2 entrée(s) -> candidates.json
+2026-05-09 01:07:29,885 [INFO] === Discovery démarrée (mock=False, only_domain=humour, only_seed=None) ===
+2026-05-09 01:07:35,780 [INFO] Domaine humour : 24 seeds, watchlist=0, blacklist=4.
+2026-05-09 01:07:45,747 [INFO] Seed @marrant_club : 4 followings collectés.
+2026-05-09 01:07:45,748 [INFO] Scoring @tom_liogier (depuis seed @marrant_club, domaine humour)...
+2026-05-09 01:14:02,604 [INFO] score_profile @tom_liogier : score=1166.2 (reels=3 w=1.00 score=1166.2 / posts=0 w=0.00 score=0.0) t_type=T3b followers=8667
+2026-05-09 01:14:02,610 [INFO] Candidates sauvegardés : 3 entrée(s) -> candidates.json
+2026-05-09 01:14:03,194 [WARNING] Telegram Discovery non-200 (400) pour @tom_liogier
+2026-05-09 01:14:03,198 [INFO] Blacklist sauvegardée : 5 entrée(s) -> C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\blacklist.json
+2026-05-09 01:16:09,124 [INFO] Scoring @donpollo.waza (depuis seed @marrant_club, domaine humour)...
+2026-05-09 01:16:21,075 [INFO] score_profile @donpollo.waza : followers=1443286 hors fourchette [1000, 1000000] — skip.
+2026-05-09 01:16:21,078 [INFO] Blacklist sauvegardée : 6 entrée(s) -> C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\blacklist.json
+2026-05-09 08:36:36,476 [INFO] Seed @baran_oga : 1 followings collectés.
+2026-05-09 08:36:36,477 [INFO] Scoring @kadirov_ai (depuis seed @baran_oga, domaine humour)...
+2026-05-09 08:42:37,438 [INFO] Interruption clavier — arrêt Discovery.
+2026-05-09 08:42:37,439 [INFO] === Discovery terminée (profiles_today=2, candidates=1, blacklisted=2) ===
+2026-05-09 08:43:34,291 [INFO] score_and_persist @tom_liogier : domaine par défaut 'humour'.
+2026-05-09 08:43:52,715 [INFO] score_profile @tom_liogier : déjà en blacklist — skip.
+2026-05-09 08:43:52,716 [INFO] score_and_persist @tom_liogier : filtré (None).

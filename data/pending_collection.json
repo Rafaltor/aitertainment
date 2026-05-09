@@ -2,8 +2,13 @@
   "entries": [
     {
       "username": "promising_creator",
-      "collect_after": "2026-05-15T20:55:37",
-      "scheduled_at": "2026-05-08T20:55:37"
+      "collect_after": "2026-05-15T22:52:50",
+      "scheduled_at": "2026-05-08T22:52:50"
+    },
+    {
+      "username": "marrant_club",
+      "collect_after": "2026-05-16T06:36:50",
+      "scheduled_at": "2026-05-09T06:36:50"
     }
   ]
 }

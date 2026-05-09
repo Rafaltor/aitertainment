@@ -1,0 +1,45 @@
+{
+  "entries": [
+    {
+      "media_id": "3883202869000445117",
+      "username": "marrant_club",
+      "reel_url": "https://www.instagram.com/reel/DXj6G9tjJy9/",
+      "collected_at": "2026-05-08T23:17:22",
+      "generator_input": {
+        "t_type": "T2",
+        "niche": "humour",
+        "caption": "RDV vendredi 1er mai sur Twitch (@marrant_club) pour le premier épisode dans l’Ain 👍",
+        "hashtags": [],
+        "audio_id": "36322251794028492"
+      },
+      "classifier_context": {
+        "views": 0,
+        "likes": 21063,
+        "comment_count": 133,
+        "shares": null,
+        "comment_to_like_ratio": 0.0063,
+        "share_to_like_ratio": null
+      },
+      "top_comments": [
+        {
+          "text": "Ceux qui ont pleuré/joui en voyant leur département >>>>>>>😢",
+          "likes": 860,
+          "t_type": "T2",
+          "niche": "humour"
+        },
+        {
+          "text": "SALUT J’UTILISE WATSAPP DE FAÇON RÉGULIÈRE",
+          "likes": 389,
+          "t_type": "T2",
+          "niche": "humour"
+        },
+        {
+          "text": "vivement le département du BAS RHIN 67 SIX SEVEEEEEEEN 6767676767",
+          "likes": 297,
+          "t_type": "T2",
+          "niche": "humour"
+        }
+      ]
+    }
+  ]
+}

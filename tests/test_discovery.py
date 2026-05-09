@@ -147,9 +147,13 @@ class ScoreProfileTest(unittest.TestCase):
 
         comments_per_media = comments_per_media or {}
 
-        def _media_comments(media_id: str, amount: int = 15):
+        def _media_comments(media_id: str, amount: int = 50):
+            # Par défaut on fournit ``like_count=1`` non nul pour rester sur
+            # le chemin nominal (sans déclencher le fallback "max_likes=0").
+            # Les tests qui veulent vérifier le fallback construisent leur
+            # propre stub explicite (cf. ClassifyRecentCommentsTest).
             texts = comments_per_media.get(str(media_id), [])
-            return [SimpleNamespace(text=t) for t in texts]
+            return [SimpleNamespace(text=t, like_count=1) for t in texts]
 
         client.media_comments.side_effect = _media_comments
         return client
@@ -1859,6 +1863,166 @@ class PrintScoreSummaryTest(unittest.TestCase):
         out = mock_print.call_args.args[0]
         self.assertIn("@ghost", out)
         self.assertIn("filtré", out)
+
+
+class ClassifyRecentCommentsTest(unittest.TestCase):
+    """Couvre le log enrichi (raw / max_likes / exploitables) + fallback top-5."""
+
+    def setUp(self) -> None:
+        # ``_classify_recent_comments`` appelle ``polite_sleep()`` avant chaque
+        # ``media_comments`` (1.5-4s par appel) — on neutralise pour la suite.
+        self._sleep_patch = patch("discovery.polite_sleep", return_value=None)
+        self._sleep_patch.start()
+
+    def tearDown(self) -> None:
+        self._sleep_patch.stop()
+
+    @staticmethod
+    def _comment(text: str, likes: int = 1) -> SimpleNamespace:
+        return SimpleNamespace(text=text, like_count=likes)
+
+    @staticmethod
+    def _row(media_id: str = "M1") -> dict[str, str]:
+        return {"media_id": media_id}
+
+    def _patch_classifier(self, ttype: str = "T2", confidence: float = 0.85):
+        """Patch ``CommentClassifier`` pour retourner un T-type figé."""
+        instance = MagicMock()
+        instance.classify.return_value = {"type": ttype, "confidence": confidence}
+        return patch(
+            "modules.classifier.CommentClassifier",
+            return_value=instance,
+        ), instance
+
+    def _run(self, client: MagicMock):
+        log = MagicMock()
+        return discovery._classify_recent_comments(
+            client,
+            [self._row("M1")],
+            niche="humour",
+            log=log,
+            sleep_between_posts=False,
+        ), log
+
+    # ---- amount=50 -----------------------------------------------------
+
+    def test_media_comments_called_with_amount_50(self) -> None:
+        client = MagicMock()
+        client.media_comments.return_value = [
+            self._comment("commentaire assez long pour passer", likes=5),
+        ]
+        cls_patch, _ = self._patch_classifier()
+        with cls_patch:
+            self._run(client)
+        kwargs = client.media_comments.call_args.kwargs
+        self.assertEqual(kwargs.get("amount"), 50)
+
+    # ---- log enrichi ---------------------------------------------------
+
+    def test_no_comments_logs_raw_and_max_likes_zero(self) -> None:
+        client = MagicMock()
+        client.media_comments.return_value = []
+        cls_patch, instance = self._patch_classifier()
+        with cls_patch:
+            (_, dominant), log = self._run(client)
+        self.assertIsNone(dominant)
+        instance.classify.assert_not_called()
+        # Format attendu : "media M1 : 0 commentaires bruts, max_likes=0, exploitables=0"
+        msg = log.info.call_args.args[0] % log.info.call_args.args[1:]
+        self.assertIn("media M1", msg)
+        self.assertIn("0 commentaires bruts", msg)
+        self.assertIn("max_likes=0", msg)
+        self.assertIn("exploitables=0", msg)
+        self.assertIn("aucun commentaire exploitable", msg)
+
+    def test_only_emoji_comments_log_includes_raw_count(self) -> None:
+        """Cas Instagram fréquent : commentaires bruts = N mais texte vide → 0 exploitables."""
+        client = MagicMock()
+        client.media_comments.return_value = [
+            SimpleNamespace(text="", like_count=10),
+            SimpleNamespace(text="   ", like_count=2),
+            SimpleNamespace(text="\n\t  ", like_count=0),
+        ]
+        cls_patch, instance = self._patch_classifier()
+        with cls_patch:
+            (_, dominant), log = self._run(client)
+        self.assertIsNone(dominant)
+        instance.classify.assert_not_called()
+        msg = log.info.call_args.args[0] % log.info.call_args.args[1:]
+        self.assertIn("3 commentaires bruts", msg)
+        self.assertIn("max_likes=0", msg)  # text vide → on n'a PAS compté les likes
+        self.assertIn("exploitables=0", msg)
+
+    # ---- fallback max_likes=0 -----------------------------------------
+
+    def test_fallback_top5_longest_when_max_likes_zero(self) -> None:
+        """Tous les commentaires à 0 like → on garde les 5 textes les plus longs (>10 chars)."""
+        client = MagicMock()
+        client.media_comments.return_value = [
+            self._comment("court", likes=0),                         # 5 chars : éliminé
+            self._comment("court aussi", likes=0),                   # 11 chars : OK
+            self._comment("commentaire vraiment long numéro 1", likes=0),
+            self._comment("commentaire vraiment long numéro 2", likes=0),
+            self._comment("commentaire vraiment long numéro 3", likes=0),
+            self._comment("commentaire vraiment long numéro 4", likes=0),
+            self._comment("commentaire vraiment long numéro 5", likes=0),
+            self._comment("commentaire vraiment long numéro 6", likes=0),
+        ]
+        cls_patch, instance = self._patch_classifier(ttype="T3b", confidence=0.7)
+        with cls_patch:
+            (distribution, dominant), log = self._run(client)
+        # Le classifier a été appelé avec exactement 5 textes (top par longueur).
+        instance.classify.assert_called_once()
+        called_texts = instance.classify.call_args.args[0]
+        self.assertEqual(len(called_texts), 5)
+        # Le plus long est en tête (sort descending par longueur).
+        self.assertTrue(all(len(t) > 10 for t in called_texts))
+        # Et le résultat propage le T-type retourné par le classifier.
+        self.assertEqual(dominant, "T3b")
+        self.assertAlmostEqual(distribution["T3b"], 1.0)
+        # Log contient bien "fallback".
+        log_msgs = [
+            (c.args[0] % c.args[1:]) for c in log.info.call_args_list
+        ]
+        self.assertTrue(
+            any("fallback sur 5 textes" in m for m in log_msgs),
+            f"log info attendu (fallback) absent ; reçu : {log_msgs}",
+        )
+
+    def test_fallback_skipped_if_some_comment_has_likes(self) -> None:
+        """Si au moins 1 commentaire a likes>0, on prend tous les textes (pas de fallback)."""
+        client = MagicMock()
+        client.media_comments.return_value = [
+            self._comment("petit", likes=0),                                # 5 chars
+            self._comment("commentaire moyen", likes=12),                   # >10 chars + liké
+            self._comment("autre commentaire bien plus long", likes=0),     # >10 chars
+        ]
+        cls_patch, instance = self._patch_classifier()
+        with cls_patch:
+            self._run(client)
+        # En mode nominal on garde TOUT (y compris les courts non likés).
+        called_texts = instance.classify.call_args.args[0]
+        self.assertEqual(len(called_texts), 3)
+
+    def test_fallback_yields_skip_when_all_texts_too_short(self) -> None:
+        """max_likes=0 et tous les textes ≤ 10 chars → log "tous ≤ 10 chars" + skip."""
+        client = MagicMock()
+        client.media_comments.return_value = [
+            self._comment("lol", likes=0),
+            self._comment("ok", likes=0),
+            self._comment("sympa", likes=0),
+        ]
+        cls_patch, instance = self._patch_classifier()
+        with cls_patch:
+            (_, dominant), log = self._run(client)
+        instance.classify.assert_not_called()
+        self.assertIsNone(dominant)
+        log_msgs = [
+            (c.args[0] % c.args[1:]) for c in log.info.call_args_list
+        ]
+        # On doit voir le log "fallback" puis le log "tous ≤ 10 chars".
+        self.assertTrue(any("max_likes=0" in m for m in log_msgs))
+        self.assertTrue(any("≤ 10 chars" in m for m in log_msgs))
 
 
 if __name__ == "__main__":

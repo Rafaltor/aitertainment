@@ -105,7 +105,9 @@ HISTORY_MEDIAS_TO_FETCH = 15          # historique (+ marge vs épinglés exclus
 MIN_TOTAL_MEDIAS_REQUIRED = 3          # nb min de médias TOTAL (reels + posts) pour scorer
 MAX_POSTS_FOR_SCORING = 4              # cap sur les Posts scorés (les 4 plus récents non-épinglés)
 COMMENTS_MEDIA_SAMPLE = 3              # nombre de médias dont on scrape les commentaires
-COMMENTS_PER_MEDIA = 15
+COMMENTS_PER_MEDIA = 50                # ↑ depuis 15 : améliore le signal classifier sur les
+                                       # posts à faible engagement (la plupart des Reels
+                                       # n'ont que 5-15 commentaires likés sur les 50 premiers)
 REEL_PRODUCT_TYPE = "clips"
 
 # Pondérations & valeurs de **référence** SCORE_PROFIL
@@ -160,10 +162,10 @@ SCORE_FREQ_W = SCORE_REEL_FREQ_W
 
 CANDIDATE_SCORE_THRESHOLD = 500.0
 
-# Seuil distinct (plus bas) sous lequel on **n'envoie pas** de notif Telegram
-# depuis ``score_and_persist`` (CLI ``--score``). Tout score est de toute façon
-# upserté dans ``database.json`` — la notif est juste un signal humain.
-DISCOVERY_NOTIFY_THRESHOLD = 300.0
+# Seuil distinct (plus bas) au-dessus duquel ``score_and_persist`` envoie une
+# notif Telegram. Tout score est de toute façon upserté dans ``database.json``.
+# Source de vérité : ``config.DISCOVERY_NOTIFY_THRESHOLD`` (overridable .env).
+DISCOVERY_NOTIFY_THRESHOLD = float(config.DISCOVERY_NOTIFY_THRESHOLD)
 
 # Profils explorés par seed (suffisant pour découvrir 50 candidats sans
 # attaquer le rate limit instagrapi sur user_following).
@@ -794,13 +796,63 @@ def _classify_recent_comments(
             log.warning("media_comments(%s) : erreur (%s) — skip.", media_id, e)
             continue
 
-        texts = [
-            str(getattr(c, "text", "")).strip()
-            for c in (comments or [])
-            if str(getattr(c, "text", "")).strip()
-        ]
+        # On parse texte + likes en un seul pass pour pouvoir loguer un
+        # diagnostic riche (utile quand un profil scoré ressort sans T-type
+        # dominant — la 1re question est toujours "y avait-il du signal ?").
+        # Matérialisation explicite : ``media_comments`` peut renvoyer un
+        # générateur paresseux, on ne veut pas l'épuiser à la 1re passe.
+        raw_list = list(comments or [])
+        raw_total = len(raw_list)
+        parsed: list[tuple[str, int]] = []
+        for c in raw_list:
+            text = str(getattr(c, "text", "")).strip()
+            if not text:
+                continue
+            try:
+                likes = int(getattr(c, "like_count", 0) or 0)
+            except (TypeError, ValueError):
+                likes = 0
+            parsed.append((text, likes))
+
+        max_likes = max((lk for _, lk in parsed), default=0)
+        exploitable = len(parsed)
+
+        if exploitable == 0:
+            log.info(
+                "media %s : %d commentaires bruts, max_likes=%d, exploitables=0 — "
+                "aucun commentaire exploitable.",
+                media_id, raw_total, max_likes,
+            )
+            texts: list[str] = []
+        elif max_likes == 0:
+            # Fallback : aucun commentaire liké → on garde les 5 textes les
+            # plus longs (>10 chars) pour donner quand même un signal au
+            # classifier. Sur les Reels jeunes ou faibles engagements, c'est
+            # fréquent que les premiers commentaires soient à 0 like ; sans
+            # ce fallback on perdrait toute info de T-type sur ces profils.
+            long_texts = sorted(
+                (t for t, _ in parsed if len(t) > 10),
+                key=len,
+                reverse=True,
+            )[:5]
+            texts = long_texts
+            log.info(
+                "media %s : %d commentaires bruts, max_likes=0, exploitables=%d — "
+                "fallback sur %d textes les plus longs (len>10).",
+                media_id, raw_total, exploitable, len(texts),
+            )
+        else:
+            texts = [t for t, _ in parsed]
+
         if not texts:
-            log.info("media %s : aucun commentaire exploitable.", media_id)
+            # Cas dégénéré : exploitable > 0 mais tous textes ≤ 10 chars
+            # (uniquement des emojis, "lol", "ok", ...). On loggue et on skip.
+            if exploitable > 0:
+                log.info(
+                    "media %s : %d commentaires bruts, max_likes=%d, "
+                    "exploitables=%d (tous ≤ 10 chars après fallback) — skip.",
+                    media_id, raw_total, max_likes, exploitable,
+                )
         else:
             try:
                 result = classifier.classify(texts, niche=niche)

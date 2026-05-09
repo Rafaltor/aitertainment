@@ -115,18 +115,52 @@ class BuildMessageTest(unittest.TestCase):
         self.assertLessEqual(len(bio_line), 100)
         self.assertTrue(bio_line.endswith("…"))
 
-    def test_keyboard_has_five_buttons_with_correct_callbacks(self) -> None:
+    def test_keyboard_contains_the_four_mandatory_buttons(self) -> None:
+        """Les 4 boutons exigés par le brief doivent être présents."""
         kb = bot._build_candidate_keyboard("promising_creator")
         flat = [btn for row in kb["inline_keyboard"] for btn in row]
-        # 4 actions par callback (v / r / m / ev) + 1 lien URL (Voir profil) = 5.
-        self.assertEqual(len(flat), 5)
+        labels = [b["text"] for b in flat]
+        # Les 4 obligatoires (peu importe l'ordre).
+        for required in ("✅ Valider", "❌ Rejeter", "✏️ Modifier T-type", "👁 Voir profil"):
+            self.assertIn(required, labels, f"bouton obligatoire manquant : {required!r}")
+
+    def test_keyboard_callbacks_use_username_payload(self) -> None:
+        kb = bot._build_candidate_keyboard("promising_creator")
+        flat = [btn for row in kb["inline_keyboard"] for btn in row]
         callbacks = [b.get("callback_data") for b in flat if b.get("callback_data")]
         self.assertIn("v:promising_creator", callbacks)
         self.assertIn("r:promising_creator", callbacks)
         self.assertIn("m:promising_creator", callbacks)
         self.assertIn("ev:promising_creator", callbacks)
+
+    def test_view_profile_url_is_strict_canonical_form(self) -> None:
+        """L'URL doit être ``https://www.instagram.com/{u}/`` — slash final, sans paramètres."""
+        kb = bot._build_candidate_keyboard("promising_creator")
+        flat = [btn for row in kb["inline_keyboard"] for btn in row]
         urls = [b.get("url") for b in flat if b.get("url")]
         self.assertEqual(urls, ["https://www.instagram.com/promising_creator/"])
+        # Pas de query string, pas de fragment, pas de double slash.
+        self.assertNotIn("?", urls[0])
+        self.assertNotIn("#", urls[0])
+        self.assertTrue(urls[0].endswith("/"))
+
+    def test_view_profile_url_normalizes_at_sign_and_whitespace(self) -> None:
+        """Caller pollué (``"@@user "`` ou casse mixte) → URL toujours canonique."""
+        for raw in ("@@promising_creator ", "  @PROMISING_creator", "Promising_Creator"):
+            kb = bot._build_candidate_keyboard(raw)
+            urls = [
+                btn.get("url")
+                for row in kb["inline_keyboard"]
+                for btn in row
+                if btn.get("url")
+            ]
+            self.assertEqual(urls, ["https://www.instagram.com/promising_creator/"])
+
+    def test_keyboard_has_five_buttons_total(self) -> None:
+        """4 obligatoires + 1 bonus (📈 Voir évolution) = 5 boutons."""
+        kb = bot._build_candidate_keyboard("promising_creator")
+        flat = [btn for row in kb["inline_keyboard"] for btn in row]
+        self.assertEqual(len(flat), 5)
 
     def test_t_type_keyboard_has_seven_options(self) -> None:
         kb = bot._build_t_type_keyboard("u")
@@ -380,6 +414,69 @@ class NotifyCandidateTest(unittest.TestCase):
             self.assertEqual(payload["parse_mode"], "HTML")
             self.assertIn("@promising_creator", payload["text"])
             self.assertIn("inline_keyboard", payload["reply_markup"])
+
+    def test_payload_reply_markup_is_never_none(self) -> None:
+        """Régression-guard : ``reply_markup`` doit TOUJOURS être un dict avec
+        ``inline_keyboard`` non vide. Sans ça, Telegram envoie le message sans
+        boutons de validation — c'est le bug que ce test gardera fermé."""
+        with patch.object(
+            bot, "_telegram_post", return_value={"ok": True, "result": {"message_id": 1}}
+        ) as mock_post:
+            bot.notify_candidate(SAMPLE_CANDIDATE, token="TKN", chat_id="42")
+            payload = mock_post.call_args.args[1]
+            rm = payload.get("reply_markup")
+            self.assertIsNotNone(rm)
+            self.assertIn("inline_keyboard", rm)
+            self.assertTrue(rm["inline_keyboard"])
+            # Au moins 4 boutons (les obligatoires) répartis sur les rangées.
+            flat = [b for row in rm["inline_keyboard"] for b in row]
+            self.assertGreaterEqual(len(flat), 4)
+
+    def test_logs_reply_markup_summary_before_send(self) -> None:
+        """Le log debug doit lister les boutons → diag rapide en cas d'absence visuelle."""
+        with patch.object(
+            bot, "_telegram_post", return_value={"ok": True, "result": {"message_id": 7}}
+        ), self.assertLogs(bot._LOG, level="INFO") as caught:
+            bot.notify_candidate(SAMPLE_CANDIDATE, token="TKN", chat_id="42")
+
+        joined = "\n".join(caught.output)
+        # Le log INFO doit mentionner le username + 5 boutons.
+        self.assertIn("@promising_creator", joined)
+        self.assertIn("5 boutons", joined)
+        # Et chaque label obligatoire doit apparaître au moins une fois.
+        for label in ("✅ Valider", "❌ Rejeter", "✏️ Modifier T-type", "👁 Voir profil"):
+            self.assertIn(label, joined)
+        # Le log de succès (message_id) doit être présent.
+        self.assertIn("message_id=7", joined)
+
+    def test_logs_warning_when_reply_markup_invalid(self) -> None:
+        """Si ``_build_candidate_keyboard`` retourne un objet sans ``inline_keyboard``,
+        le helper de debug doit lever un WARNING explicite."""
+        with patch.object(bot, "_build_candidate_keyboard", return_value={"foo": "bar"}), \
+             patch.object(
+                 bot, "_telegram_post",
+                 return_value={"ok": True, "result": {"message_id": 9}},
+             ), \
+             self.assertLogs(bot._LOG, level="WARNING") as caught:
+            bot.notify_candidate(SAMPLE_CANDIDATE, token="TKN", chat_id="42")
+
+        self.assertTrue(
+            any("reply_markup invalide" in line for line in caught.output),
+            f"warning attendu absent ; logs reçus : {caught.output}",
+        )
+
+    def test_logs_warning_when_telegram_rejects_message(self) -> None:
+        """Telegram répond ``ok: false`` → on loggue la description pour diag."""
+        with patch.object(
+            bot, "_telegram_post",
+            return_value={"ok": False, "description": "Bad Request: chat not found"},
+        ), self.assertLogs(bot._LOG, level="WARNING") as caught:
+            bot.notify_candidate(SAMPLE_CANDIDATE, token="TKN", chat_id="42")
+
+        self.assertTrue(
+            any("Telegram a refusé" in line and "chat not found" in line for line in caught.output),
+            f"warning Telegram refusé absent ; logs reçus : {caught.output}",
+        )
 
     def test_missing_credentials_returns_none(self) -> None:
         with patch.object(bot.config, "TELEGRAM_DISCOVERY_TOKEN", ""), \
