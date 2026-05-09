@@ -1121,3 +1121,56 @@
 2026-05-09 13:23:37,960 [WARNING] notify_score_evolution skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
 2026-05-09 13:23:37,960 [INFO] [mock] notify_score_evolution : 📈 @raikkonenaf : 448 → 745 (+66%) — Tier B→A
 2026-05-09 13:23:37,960 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-09 13:31:52,007 [INFO] notify_candidate @charton_arthur : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:charton_arthur | ❌ Rejeter → r:charton_arthur | ✏️ Modifier T-type → m:charton_arthur | 👁 Voir profil → https://www.instagram.com/charton_arthur/ | 📈 Voir évolution → ev:charton_arthur]
+2026-05-09 13:31:52,876 [INFO] notify_candidate @charton_arthur : envoyé (message_id=10)
+2026-05-09 13:42:50,841 [INFO] notify_candidate @alexandreskrt : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:alexandreskrt | ❌ Rejeter → r:alexandreskrt | ✏️ Modifier T-type → m:alexandreskrt | 👁 Voir profil → https://www.instagram.com/alexandreskrt/ | 📈 Voir évolution → ev:alexandreskrt]
+2026-05-09 13:42:51,851 [INFO] notify_candidate @alexandreskrt : envoyé (message_id=11)
+2026-05-09 14:17:24,935 [WARNING] Telegram getUpdates GET erreur (('Connection aborted.', ConnectionResetError(10054, 'Une connexion existante a dû être fermée par l’hôte distant', None, 10054, None)))
+2026-05-09 14:17:25,003 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 17:17:42,549 [WARNING] Telegram getUpdates GET erreur (HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded with url: /bot8626967686:AAEDKQzUWxNUkxQ0mod7XjGCMcNoFpebDKw/getUpdates?timeout=25&offset=234052996 (Caused by NameResolutionError("HTTPSConnection(host='api.telegram.org', port=443): Failed to resolve 'api.telegram.org' ([Errno 11001] getaddrinfo failed)")))
+2026-05-09 17:17:42,569 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 17:18:19,245 [INFO] Interruption clavier — arrêt Discovery Bot.
+2026-05-09 17:18:19,255 [INFO] === Discovery Bot arrêté (offset=234052995) ===
+2026-05-09 17:18:28,788 [INFO] === Discovery Bot démarré (offset=234052995) ===
+2026-05-09 17:23:50,039 [INFO] notify_candidate @bolvirgg : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:bolvirgg | ❌ Rejeter → r:bolvirgg | ✏️ Modifier T-type → m:bolvirgg | 👁 Voir profil → https://www.instagram.com/bolvirgg/ | 📈 Voir évolution → ev:bolvirgg]
+2026-05-09 17:23:51,745 [INFO] notify_candidate @bolvirgg : envoyé (message_id=12)
+2026-05-09 17:35:36,406 [INFO] notify_candidate @realo.23 : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:realo.23 | ❌ Rejeter → r:realo.23 | ✏️ Modifier T-type → m:realo.23 | 👁 Voir profil → https://www.instagram.com/realo.23/ | 📈 Voir évolution → ev:realo.23]
+2026-05-09 17:35:37,269 [INFO] notify_candidate @realo.23 : envoyé (message_id=13)
+2026-05-09 17:41:11,154 [INFO] notify_candidate @abalaclavachaud : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:abalaclavachaud | ❌ Rejeter → r:abalaclavachaud | ✏️ Modifier T-type → m:abalaclavachaud | 👁 Voir profil → https://www.instagram.com/abalaclavachaud/ | 📈 Voir évolution → ev:abalaclavachaud]
+2026-05-09 17:41:12,131 [INFO] notify_candidate @abalaclavachaud : envoyé (message_id=14)
+2026-05-09 17:55:51,597 [INFO] set t_type @promising_creator -> T4
+2026-05-09 17:56:04,418 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-09 17:56:04,439 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-09 17:56:04,439 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-09 17:56:04,440 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-09 17:56:04,443 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-09 17:56:04,446 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-09 17:56:04,453 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-09 17:56:04,461 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-09 17:56:04,463 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-09 17:56:04,463 [INFO] set t_type @promising_creator -> T4
+2026-05-09 17:56:04,472 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-09 17:56:04,473 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-09 17:56:04,473 [INFO] set t_type @promising_creator -> T2
+2026-05-09 17:56:04,477 [INFO] set t_type @promising_creator -> T9
+2026-05-09 17:56:04,484 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-09 17:56:04,485 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-09 17:56:04,485 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-09 17:56:04,490 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-09 17:56:04,493 [INFO] evolution @ghost
+2026-05-09 17:56:04,495 [INFO] evolution @alice
+2026-05-09 17:56:04,496 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-09 17:56:04,496 [INFO] notify_candidate @promising_creator : envoyé (message_id=7)
+2026-05-09 17:56:04,497 [WARNING] notify_candidate @promising_creator : reply_markup invalide (inline_keyboard manquant ou vide) — {'foo': 'bar'}
+2026-05-09 17:56:04,498 [INFO] notify_candidate @promising_creator : envoyé (message_id=9)
+2026-05-09 17:56:04,500 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-09 17:56:04,500 [WARNING] notify_candidate @promising_creator : Telegram a refusé (description=Bad Request: chat not found).
+2026-05-09 17:56:04,501 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-09 17:56:04,502 [INFO] [mock] notify_candidate @promising_creator
+2026-05-09 17:56:04,502 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-09 17:56:04,502 [INFO] notify_candidate @promising_creator : envoyé (message_id=1)
+2026-05-09 17:56:04,503 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-09 17:56:04,503 [INFO] notify_candidate @promising_creator : envoyé (message_id=1)
+2026-05-09 17:56:04,503 [WARNING] notify_score_evolution skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-09 17:56:04,504 [INFO] [mock] notify_score_evolution : 📈 @raikkonenaf : 448 → 745 (+66%) — Tier B→A
+2026-05-09 17:56:04,504 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.

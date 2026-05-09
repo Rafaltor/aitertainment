@@ -9,8 +9,8 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-08T14:21:48",
-      "last_scored_at": "2026-05-09T11:23:12",
-      "next_rescore_at": "2026-05-16T11:23:12",
+      "last_scored_at": "2026-05-09T15:55:37",
+      "next_rescore_at": "2026-05-16T15:55:37",
       "archived": false,
       "scores_history": [
         {
@@ -552,6 +552,21 @@
           "t_type_distribution": {
             "T2": 1.0
           }
+        },
+        {
+          "date": "2026-05-09T15:55:37",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
         }
       ],
       "niches": [
@@ -567,7 +582,7 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-08T14:21:48",
-      "last_scored_at": "2026-05-09T11:23:12",
+      "last_scored_at": "2026-05-09T15:55:37",
       "next_rescore_at": null,
       "archived": true,
       "scores_history": [
@@ -1245,6 +1260,36 @@
           "t_type_distribution": {
             "T1": 1.0
           }
+        },
+        {
+          "date": "2026-05-09T15:55:37",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T15:55:37",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
         }
       ],
       "niches": [
@@ -1260,7 +1305,7 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-08T22:07:06+00:00",
-      "last_scored_at": "2026-05-09T11:02:09+00:00",
+      "last_scored_at": "2026-05-09T11:31:51+00:00",
       "next_rescore_at": null,
       "archived": true,
       "scores_history": [
@@ -1291,6 +1336,22 @@
           "t_type_distribution": {
             "T2": 0.6545454545454544,
             "T1": 0.34545454545454546
+          }
+        },
+        {
+          "date": "2026-05-09T11:31:51+00:00",
+          "score": 382.8460450072933,
+          "score_reels": 330.51335808827184,
+          "score_posts": 395.9292167370486,
+          "reel_ratio_median": 1.0408653846153846,
+          "reel_ratio_p90": 0.0,
+          "reel_engagement_median": 0.007211538461538462,
+          "reel_trend": "stable",
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 0.6792452830188679,
+            "T1": 0.32075471698113206
           }
         }
       ],
@@ -1468,8 +1529,8 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-09T09:42:53",
-      "last_scored_at": "2026-05-09T11:23:12",
-      "next_rescore_at": "2026-05-16T11:23:12",
+      "last_scored_at": "2026-05-09T15:55:37",
+      "next_rescore_at": "2026-05-16T15:55:37",
       "archived": false,
       "scores_history": [
         {
@@ -1606,6 +1667,21 @@
           "t_type_distribution": {
             "T2": 1.0
           }
+        },
+        {
+          "date": "2026-05-09T15:55:37",
+          "score": 850.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
         }
       ],
       "niches": [
@@ -1621,7 +1697,7 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-09T09:42:53",
-      "last_scored_at": "2026-05-09T11:23:12",
+      "last_scored_at": "2026-05-09T15:55:37",
       "next_rescore_at": null,
       "archived": true,
       "scores_history": [
@@ -1759,6 +1835,21 @@
           "t_type_distribution": {
             "T2": 1.0
           }
+        },
+        {
+          "date": "2026-05-09T15:55:37",
+          "score": 100.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
         }
       ],
       "niches": [
@@ -1815,21 +1906,21 @@
     },
     "alexandreskrt": {
       "platform": "instagram",
-      "followers": 28190,
+      "followers": 28191,
       "niches": [
         "humour",
         "relatable",
         "trend"
       ],
-      "tier": "B",
+      "tier": "C",
       "validated": false,
       "t_type_original": "T2",
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-09T11:08:53+00:00",
-      "last_scored_at": "2026-05-09T11:08:53+00:00",
-      "next_rescore_at": "2026-06-08T11:08:53",
-      "archived": false,
+      "last_scored_at": "2026-05-09T11:42:50+00:00",
+      "next_rescore_at": null,
+      "archived": true,
       "scores_history": [
         {
           "date": "2026-05-09T11:08:53+00:00",
@@ -1845,12 +1936,28 @@
           "t_type_distribution": {
             "T2": 1.0
           }
+        },
+        {
+          "date": "2026-05-09T11:42:50+00:00",
+          "score": 388.00337106436496,
+          "score_reels": 564.7750369648438,
+          "score_posts": 343.81045458924524,
+          "reel_ratio_median": 3.084530523926076,
+          "reel_ratio_p90": 0.0,
+          "reel_engagement_median": 0.11152495477279983,
+          "reel_trend": "stable",
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 0.6737588652482269,
+            "T1": 0.3262411347517731
+          }
         }
       ]
     },
     "realo.23": {
       "platform": "instagram",
-      "followers": 26171,
+      "followers": 26172,
       "niches": [
         "humour",
         "relatable",
@@ -1862,8 +1969,8 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-09T11:20:43+00:00",
-      "last_scored_at": "2026-05-09T11:20:43+00:00",
-      "next_rescore_at": "2026-06-08T11:20:43",
+      "last_scored_at": "2026-05-09T15:35:36+00:00",
+      "next_rescore_at": "2026-06-08T15:35:36",
       "archived": false,
       "scores_history": [
         {
@@ -1879,6 +1986,93 @@
           "t_type_dominant": "T1",
           "t_type_distribution": {
             "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T15:35:36+00:00",
+          "score": 677.801610983903,
+          "score_reels": 717.3874930514329,
+          "score_posts": 628.3192583994904,
+          "reel_ratio_median": 4.511577258138469,
+          "reel_ratio_p90": 5.011348005502064,
+          "reel_engagement_median": 0.12398746752254318,
+          "reel_trend": "stable",
+          "posting_rhythm": 0.02543275870016703,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        }
+      ]
+    },
+    "bolvirgg": {
+      "platform": "instagram",
+      "followers": 3693,
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "tier": "B",
+      "validated": false,
+      "t_type_original": "T2",
+      "t_type_final": null,
+      "added_via": "discovery",
+      "added_at": "2026-05-09T15:23:50+00:00",
+      "last_scored_at": "2026-05-09T15:23:50+00:00",
+      "next_rescore_at": "2026-06-08T15:23:50",
+      "archived": false,
+      "scores_history": [
+        {
+          "date": "2026-05-09T15:23:50+00:00",
+          "score": 417.6360688771306,
+          "score_reels": 408.54242495016365,
+          "score_posts": 419.90947985887226,
+          "reel_ratio_median": 2.9398862713241267,
+          "reel_ratio_p90": 0.0,
+          "reel_engagement_median": 0.011102085025724344,
+          "reel_trend": "stable",
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 0.6415094339622641,
+            "T1": 0.3584905660377358
+          }
+        }
+      ]
+    },
+    "abalaclavachaud": {
+      "platform": "instagram",
+      "followers": 3734,
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "tier": "B",
+      "validated": false,
+      "t_type_original": "T2",
+      "t_type_final": null,
+      "added_via": "discovery",
+      "added_at": "2026-05-09T15:41:11+00:00",
+      "last_scored_at": "2026-05-09T15:41:11+00:00",
+      "next_rescore_at": "2026-06-08T15:41:11",
+      "archived": false,
+      "scores_history": [
+        {
+          "date": "2026-05-09T15:41:11+00:00",
+          "score": 456.4704849525628,
+          "score_reels": 0.0,
+          "score_posts": 456.4704849525628,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 0.6666666666666667,
+            "T1": 0.33333333333333337
           }
         }
       ]

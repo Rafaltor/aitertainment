@@ -45,8 +45,9 @@ MAX_ACCOUNTS_PER_SESSION = int(os.environ.get("MAX_ACCOUNTS_PER_SESSION", "50"))
 # Discovery (Layer 0) — valeurs MODE TEST par défaut.
 # Override possible via .env / variables d'environnement pour passer en prod.
 # ----------------------------------------------------------------------------
-# Quota humain quotidien : nb de profils scorés/jour. Mode test = 5, prod ≈ 40.
-MAX_PROFILES_PER_DAY = int(os.environ.get("MAX_PROFILES_PER_DAY", "5"))
+# Quota humain quotidien : nb de profils scorés/jour (seed inclus si auto-scoré).
+# Défaut production : 40. Pour les runs CI / tests rapides : MAX_PROFILES_PER_DAY=5 dans .env.
+MAX_PROFILES_PER_DAY = int(os.environ.get("MAX_PROFILES_PER_DAY", "40"))
 # Sleep aléatoire entre deux posts pendant le scrape de commentaires.
 DISCOVERY_BETWEEN_POSTS_MIN_S = float(
     os.environ.get("DISCOVERY_BETWEEN_POSTS_MIN_S", "20")
