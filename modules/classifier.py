@@ -63,7 +63,8 @@ GENERATE_PROMPTS_BY_TTYPE: dict[str, str] = {
 Tu fais partie du groupe. Tu réagis à l'inside joke sans l'expliquer.
 Ton commentaire prouve que tu as compris.
 
-Niche : {niche}
+T-type commentateur : {t_type_profile}
+Niches : {niches}
 Caption du Reel : {caption}
 Hashtags : {hashtags}
 
@@ -73,7 +74,8 @@ Exemples de vrais commentaires de la communauté :
 Tu ajoutes une couche, tu continues la blague,
 tu réponds dans le même registre que le créateur.
 
-Niche : {niche}
+T-type commentateur : {t_type_profile}
+Niches : {niches}
 Caption du Reel : {caption}
 Hashtags : {hashtags}
 
@@ -84,7 +86,8 @@ qu'on se moque. Ton commentaire semble un éloge mais le sous-texte
 est moqueur — subtil, pas agressif.
 La cible doit pouvoir liker ton commentaire sans comprendre.
 
-Niche : {niche}
+T-type commentateur : {t_type_profile}
+Niches : {niches}
 Caption du Reel : {caption}
 Hashtags : {hashtags}
 
@@ -94,7 +97,8 @@ Exemples de vrais commentaires :
 Tu poses un marqueur d'appartenance au groupe.
 Phrase courte, rituelle, que seuls les membres comprennent.
 
-Niche : {niche}
+T-type commentateur : {t_type_profile}
+Niches : {niches}
 Caption du Reel : {caption}
 Hashtags : {hashtags}
 
@@ -104,7 +108,8 @@ Exemples de vrais commentaires :
 Tu joues le jeu — punchline directe, humour noir, tu assumes.
 Pas d'agressivité gratuite, juste du piquant.
 
-Niche : {niche}
+T-type commentateur : {t_type_profile}
+Niches : {niches}
 Caption du Reel : {caption}
 Hashtags : {hashtags}
 
@@ -285,9 +290,12 @@ class CommentClassifier:
         except ValueError as e:
             raise ClassificationError(f"Réponse Ollama invalide: {e}") from e
 
-    def _build_user_message(self, niche: str, comments: list[str]) -> str:
+    def _build_user_message(
+        self, niches: list[str] | str, comments: list[str]
+    ) -> str:
+        niches_str = _format_niches(niches)
         lines = [
-            f"Niche / contexte marché : {niche.strip() or '(non précisé)'}",
+            f"Niches: {niches_str}",
             "",
             "Commentaires (un par ligne, ordre conservé) :",
         ]
@@ -295,12 +303,22 @@ class CommentClassifier:
             lines.append(f"{i}. {c}")
         return "\n".join(lines)
 
-    def classify(self, comments: list[str], niche: str) -> dict[str, Any]:
-        """Envoie les commentaires à Ollama et retourne type, confidence, patterns, tone, brand_risk."""
+    def classify(
+        self,
+        comments: list[str],
+        niches: list[str] | str,
+    ) -> dict[str, Any]:
+        """Envoie les commentaires à Ollama et retourne type, confidence,
+        patterns, tone, brand_risk.
+
+        ``niches`` accepte indifféremment une liste ``list[str]`` (schéma
+        2026-05) ou une string (rétro-compat). En interne on formate via
+        ``_format_niches`` qui produit une chaîne ``"a, b, c"``.
+        """
         if not comments:
             raise ValueError("comments ne doit pas être vide")
 
-        user_content = self._build_user_message(niche, comments)
+        user_content = self._build_user_message(niches, comments)
         raw_text = self._generate(system=SYSTEM_PROMPT, prompt=user_content)
 
         try:
@@ -331,10 +349,34 @@ def _resolve_ttype_prompt(t_type: str | None) -> tuple[str, str]:
     return GENERATE_FALLBACK_TTYPE, GENERATE_PROMPTS_BY_TTYPE[GENERATE_FALLBACK_TTYPE]
 
 
+def _format_niches(niches: list[str] | str | None) -> str:
+    """Joint les niches en une chaîne lisible pour le prompt.
+
+    - ``list[str]`` → ``", ".join(niches)`` après strip et filtrage des
+      chaînes vides. Si la liste résultante est vide → ``"(non précisée)"``.
+    - ``str`` (rétro-compat) → strip puis fallback. La string n'est pas
+      retravaillée — si un caller passe ``"humour, sketch"``, c'est
+      conservé tel quel.
+    - ``None`` → ``"(non précisée)"``.
+
+    Garantit une string non vide en sortie (le placeholder ``{niches}``
+    apparaît sinon vide dans le prompt et perturbe le LLM).
+    """
+    if niches is None:
+        return "(non précisée)"
+    if isinstance(niches, str):
+        s = niches.strip()
+        return s or "(non précisée)"
+    if isinstance(niches, list):
+        clean = [str(n).strip() for n in niches if isinstance(n, str) and str(n).strip()]
+        return ", ".join(clean) if clean else "(non précisée)"
+    return "(non précisée)"
+
+
 def _normalize_video_context(
     video_context: dict[str, Any] | None,
     *,
-    niche: str,
+    niches: list[str] | str | None,
 ) -> dict[str, str]:
     """Construit le contexte de format ``str.format(**ctx)`` du prompt T-type.
 
@@ -354,7 +396,7 @@ def _normalize_video_context(
         hashtags_str = " ".join(f"#{t}" for t in tags) if tags else "(aucun)"
 
     return {
-        "niche": (niche or "").strip() or "(non précisée)",
+        "niches": _format_niches(niches),
         "caption": str(ctx.get("caption") or "").strip() or "(vide)",
         "hashtags": hashtags_str,
     }
@@ -381,33 +423,44 @@ def generate_comments(
     classification: dict[str, Any],
     comments_sample: list[str],
     *,
-    niche: str = "",
+    niches: list[str] | str = "",
+    t_type_profile: str | None = None,
     video_context: dict[str, Any] | None = None,
 ) -> list[str]:
     """Produit 3 commentaires via Ollama, prompt **spécialisé par T-type**.
 
     Pipeline :
 
-    1. Lit ``classification["type"]`` ; fallback **T2** si T-type inconnu /
-       absent / non couvert (cf. ``_resolve_ttype_prompt``).
-    2. Construit le contexte vidéo : ``niche``, ``caption``, ``hashtags``
-       depuis ``video_context`` (signature étendue, rétro-compat conservée
-       en passant ``video_context=None``).
-    3. Injecte ``comments_sample[:20]`` comme exemples de registre humain.
-    4. Appelle Ollama avec ``GENERATE_COMMENTS_SYSTEM`` (système global :
+    1. Lit ``classification["type"]`` (T-type **du contenu** — sert à choisir
+       le template) ; fallback **T2** si inconnu / absent / non couvert
+       (cf. ``_resolve_ttype_prompt``).
+    2. Construit le contexte vidéo : ``niches``, ``caption``, ``hashtags``
+       depuis ``video_context`` (rétro-compat ``video_context=None``).
+    3. Injecte ``t_type_profile`` (T-type **du commentateur**, lu dans
+       ``watchlist.json`` côté caller) — c'est notre persona, distincte du
+       T-type du contenu : on peut commenter en T3b un contenu T2.
+    4. Injecte ``comments_sample[:20]`` comme exemples de registre humain.
+    5. Appelle Ollama avec ``GENERATE_COMMENTS_SYSTEM`` (système global :
        règles absolues anti-marketing) + le template T-type comme user.
 
     En phase **Watcher**, ``comments_sample`` est typiquement vide (pas de
-    scrape sur post frais) et tout repose sur ``video_context``. En phase
-    Discovery / generator de masse, on a au contraire ``comments_sample``
-    riche et ``video_context`` peut être ``None``.
+    scrape sur post frais) et tout repose sur ``video_context`` +
+    ``t_type_profile``. En phase Discovery / generator de masse, on a au
+    contraire ``comments_sample`` riche et ``video_context`` peut être
+    ``None``.
+
+    ``niches`` accepte ``list[str]`` (schéma 2026-05) ou ``str``
+    (rétro-compat). ``t_type_profile=None`` produit ``"(non précisé)"``
+    dans le prompt — utile pour les générations de masse hors watcher.
     """
-    t_type, template = _resolve_ttype_prompt(
+    t_type_content, template = _resolve_ttype_prompt(
         (classification or {}).get("type")
     )
-    ctx = _normalize_video_context(video_context, niche=niche)
+    ctx = _normalize_video_context(video_context, niches=niches)
+    profile_tt = (t_type_profile or "").strip() or "(non précisé)"
     prompt = template.format(
-        niche=ctx["niche"],
+        t_type_profile=profile_tt,
+        niches=ctx["niches"],
         caption=ctx["caption"],
         hashtags=ctx["hashtags"],
         comments_sample=_format_comments_sample(comments_sample),
@@ -442,5 +495,5 @@ def generate_comments(
         return _normalize_three_comments(payload)
     except ClassificationError as e:
         raise ClassificationError(
-            f"{e} (t_type={t_type})", raw_text=raw_text
+            f"{e} (t_type={t_type_content})", raw_text=raw_text
         ) from e

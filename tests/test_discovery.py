@@ -1359,15 +1359,81 @@ class ExploreNetworkTest(unittest.TestCase):
                 candidates_path=Path("/tmp/skip_persist_cand.json"),
             )
 
-        self.assertEqual(scored, ["alpha"])  # beta blacklist, gamma watchlist
+        # Mod B 2026-05 : le seed est désormais scoré en premier
+        # (auto-scoring), avant ses followings.
+        self.assertEqual(scored, ["seed_one", "alpha"])  # beta blacklist, gamma watchlist
         self.assertEqual(candidates["candidates"], [])
-        # alpha a été ajouté à la blacklist (outcome=ineligible)
+        # seed + alpha ajoutés à la blacklist (outcome=ineligible)
         bl_users = [p["username"] for p in blacklist["profiles"]]
+        self.assertIn("seed_one", bl_users)
         self.assertIn("alpha", bl_users)
 
+    def test_seed_in_blacklist_skips_auto_score_but_still_fetches_followings(self) -> None:
+        """Mod B : si le seed est déjà blacklisté, on ne le re-score pas mais
+        on continue à fetch ses followings (le crawl ne s'arrête pas)."""
+        client = self._make_following_client(["alpha"])
+        blacklist = {"profiles": [{"username": "seed_one"}]}
+        candidates: dict[str, Any] = {"candidates": []}
+        session = discovery.DiscoverySession(mock=False)
+
+        scored: list[str] = []
+
+        def fake_score(username, domain, **kw):
+            scored.append(username)
+            return None
+
+        with patch.object(discovery, "score_profile", side_effect=fake_score):
+            discovery.explore_network(
+                self.DOMAIN,
+                blacklist=blacklist,
+                watchlist=[],
+                candidates=candidates,
+                client=client,
+                session=session,
+                blacklist_path=Path("/tmp/skip_persist_bl.json"),
+                candidates_path=Path("/tmp/skip_persist_cand.json"),
+            )
+
+        # Le seed est skip (déjà vu), seul alpha est scoré.
+        self.assertEqual(scored, ["alpha"])
+
+    def test_seed_in_watchlist_skips_auto_score(self) -> None:
+        """Mod B : seed déjà dans la watchlist → log spécifique + skip auto-score."""
+        client = self._make_following_client(["alpha"])
+        watchlist = [{"username": "seed_one"}]
+        session = discovery.DiscoverySession(mock=False)
+
+        scored: list[str] = []
+
+        def fake_score(username, domain, **kw):
+            scored.append(username)
+            return None
+
+        with patch.object(discovery, "score_profile", side_effect=fake_score), \
+             self.assertLogs("aitertainment.discovery", level="INFO") as cm:
+            discovery.explore_network(
+                self.DOMAIN,
+                blacklist={"profiles": []},
+                watchlist=watchlist,
+                candidates={"candidates": []},
+                client=client,
+                session=session,
+                blacklist_path=Path("/tmp/skip_persist_bl.json"),
+                candidates_path=Path("/tmp/skip_persist_cand.json"),
+            )
+
+        self.assertEqual(scored, ["alpha"])
+        # Le log spécifique au seed doit apparaître exactement.
+        self.assertTrue(
+            any("Seed @seed_one déjà vu — skip auto-score." in m for m in cm.output),
+            cm.output,
+        )
+
     def test_high_score_added_to_candidates_and_notified(self) -> None:
+        # Le seed est déjà blacklisté pour isoler le scoring du following
+        # ``promising`` — l'auto-scoring du seed est testé séparément.
         client = self._make_following_client(["promising"])
-        blacklist = {"profiles": []}
+        blacklist = {"profiles": [{"username": "seed_one"}]}
         candidates: dict[str, Any] = {"candidates": []}
         session = discovery.DiscoverySession(mock=False)
 
@@ -1403,6 +1469,50 @@ class ExploreNetworkTest(unittest.TestCase):
         notif.assert_called_once()
         # Toujours blacklisté, même si retenu (jamais reproposé)
         self.assertIn("promising", [p["username"] for p in blacklist["profiles"]])
+
+    def test_seed_itself_can_become_a_candidate(self) -> None:
+        """Mod B : le seed lui-même peut être promu candidat si son score est élevé."""
+        client = self._make_following_client(["other"])
+        blacklist = {"profiles": []}
+        candidates: dict[str, Any] = {"candidates": []}
+        session = discovery.DiscoverySession(mock=False)
+
+        # Score élevé pour le seed, faible pour les followings — pour vérifier
+        # que c'est *bien* le seed qui est ajouté aux candidates.
+        def fake_score(username: str, domain, **kw):
+            base = {
+                "domain": "humour",
+                "ratio_median": 1.0,
+                "ratio_trend": "stable",
+                "t_type_dominant": "T2",
+                "t_type_distribution": {"T2": 1.0},
+                "biography": "bio",
+                "followers": 12_000,
+            }
+            if username == "seed_one":
+                return {**base, "username": "seed_one", "score": 850.0}
+            return {**base, "username": username, "score": 100.0}
+
+        with patch.object(discovery, "score_profile", side_effect=fake_score), \
+             patch.object(discovery, "_notify_candidate") as notif, \
+             patch.object(discovery, "save_blacklist"), \
+             patch.object(discovery, "save_candidates"):
+            discovery.explore_network(
+                self.DOMAIN,
+                blacklist=blacklist,
+                watchlist=[],
+                candidates=candidates,
+                client=client,
+                session=session,
+            )
+
+        # Seul le seed franchit le seuil — il est dans candidates et notifié.
+        self.assertEqual(session.candidates_found, 1)
+        cand_users = [c["username"] for c in candidates["candidates"]]
+        self.assertEqual(cand_users, ["seed_one"])
+        notif.assert_called_once()
+        # session.profiles_today = 2 (seed + other)
+        self.assertEqual(session.profiles_today, 2)
 
     def test_low_score_blacklisted_but_not_candidate(self) -> None:
         client = self._make_following_client(["meh"])
@@ -1789,7 +1899,7 @@ class ExploreNetworkUpsertsDatabaseTest(unittest.TestCase):
                 "domain": "humour",
                 "platform": "instagram",
                 "followers": 5_000,
-                "score": 250.0,  # < CANDIDATE_SCORE_THRESHOLD (500)
+                "score": 250.0,  # < CANDIDATE_SCORE_THRESHOLD (= DISCOVERY_NOTIFY_THRESHOLD)
                 "score_reels": 250.0,
                 "score_posts": 0.0,
                 "reel_weight": 1.0,
@@ -1826,14 +1936,15 @@ class ExploreNetworkUpsertsDatabaseTest(unittest.TestCase):
                 session=discovery.DiscoverySession(mock=False),
             )
 
-        # Les 2 profils sont upsertés (tier C, archivés), même sans notif.
-        self.assertEqual(set(db["profiles"].keys()), {"a", "b"})
+        # Mod B 2026-05 : le seed est aussi auto-scoré → 3 profils upsertés
+        # (seed_one + a + b), tous tier C archivés (score 250 < 400).
+        self.assertEqual(set(db["profiles"].keys()), {"seed_one", "a", "b"})
         self.assertEqual(db["profiles"]["a"]["tier"], "C")
         self.assertTrue(db["profiles"]["a"]["archived"])
         # Pas de notif sous 500.
         notif_mock.assert_not_called()
         # Et save_db a bien été appelé (à chaque upsert hors mock).
-        self.assertGreaterEqual(save_db_mock.call_count, 2)
+        self.assertGreaterEqual(save_db_mock.call_count, 3)
 
 
 class PrintScoreSummaryTest(unittest.TestCase):
@@ -1899,7 +2010,7 @@ class ClassifyRecentCommentsTest(unittest.TestCase):
         return discovery._classify_recent_comments(
             client,
             [self._row("M1")],
-            niche="humour",
+            niches=["humour"],
             log=log,
             sleep_between_posts=False,
         ), log
@@ -2023,6 +2134,166 @@ class ClassifyRecentCommentsTest(unittest.TestCase):
         # On doit voir le log "fallback" puis le log "tous ≤ 10 chars".
         self.assertTrue(any("max_likes=0" in m for m in log_msgs))
         self.assertTrue(any("≤ 10 chars" in m for m in log_msgs))
+
+
+class SeedSchemaHelpersTest(unittest.TestCase):
+    """Couvre les helpers ``_seed_username`` et ``_seed_niches`` (schéma 2026-05)."""
+
+    DOMAIN_NEW = {
+        "name": "humour",
+        "niches": ["humour"],
+        "seeds": [
+            {"username": "raikkonenaf", "niches": ["humour", "sketch", "imitation"]},
+            "legacy_user",  # rétro-compat string brute
+        ],
+    }
+    DOMAIN_LEGACY = {
+        "name": "humour",
+        "niche": "humour",  # ancien champ string
+        "seeds": ["a", "b"],
+    }
+
+    def test_seed_username_from_dict(self) -> None:
+        self.assertEqual(
+            discovery._seed_username({"username": "@raikkonenaf", "niches": ["humour"]}),
+            "raikkonenaf",
+        )
+
+    def test_seed_username_from_string(self) -> None:
+        self.assertEqual(discovery._seed_username("@user_legacy"), "user_legacy")
+
+    def test_seed_username_handles_garbage(self) -> None:
+        self.assertEqual(discovery._seed_username(None), "")
+        self.assertEqual(discovery._seed_username({}), "")
+        self.assertEqual(discovery._seed_username({"username": ""}), "")
+        # ``lstrip("@").strip()`` (ordre du brief) — strip simple, pas
+        # idempotent contre des espaces avant l'@. En prod les seeds sont
+        # bien formés, ce cas marginal n'est pas couvert.
+        self.assertEqual(discovery._seed_username({"username": "@bob  "}), "bob")
+        self.assertEqual(discovery._seed_username("  bob"), "bob")
+
+    def test_seed_niches_dict_seed_priority(self) -> None:
+        seed = {"username": "raikkonenaf", "niches": ["humour", "sketch", "imitation"]}
+        self.assertEqual(
+            discovery._seed_niches(seed, self.DOMAIN_NEW),
+            ["humour", "sketch", "imitation"],
+        )
+
+    def test_seed_niches_string_seed_falls_back_to_domain_niches(self) -> None:
+        # Seed string : pas de niches propres → on retombe sur ``domain["niches"]``.
+        self.assertEqual(
+            discovery._seed_niches("legacy_user", self.DOMAIN_NEW),
+            ["humour"],
+        )
+
+    def test_seed_niches_falls_back_to_legacy_niche_string(self) -> None:
+        # Domain ancien schéma (``niche`` string) → retour [niche].
+        self.assertEqual(
+            discovery._seed_niches("a", self.DOMAIN_LEGACY),
+            ["humour"],
+        )
+
+    def test_seed_niches_falls_back_to_domain_name(self) -> None:
+        # Ni ``niches`` ni ``niche`` → on prend le nom du domaine.
+        self.assertEqual(
+            discovery._seed_niches("a", {"name": "gaming"}),
+            ["gaming"],
+        )
+
+    def test_seed_niches_ultimate_fallback_humour(self) -> None:
+        # Domain vide → fallback ``["humour"]``.
+        self.assertEqual(discovery._seed_niches("a", {}), ["humour"])
+
+
+class ScoreProfileNichesSchemaTest(unittest.TestCase):
+    """Vérifie que ``score_profile`` retourne ``niches`` (liste) + ``niche`` (rétrocompat)."""
+
+    @staticmethod
+    def _user(follower_count: int = 10_000) -> SimpleNamespace:
+        return SimpleNamespace(
+            pk="111",
+            username="user",
+            full_name="Test",
+            follower_count=follower_count,
+            following_count=500,
+            media_count=20,
+            is_private=False,
+            biography="bio",
+        )
+
+    @staticmethod
+    def _media(pk: str = "M") -> SimpleNamespace:
+        return SimpleNamespace(
+            pk=pk,
+            taken_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            view_count=10_000,
+            play_count=10_000,
+            like_count=500,
+            comment_count=30,
+            product_type="clips",
+            is_pinned=False,
+        )
+
+    def _client(self) -> MagicMock:
+        client = MagicMock()
+        client.user_id_from_username.return_value = "111"
+        client.user_info.return_value = self._user()
+        client.user_medias.return_value = [self._media(f"M{i}") for i in range(5)]
+        client.media_comments.return_value = [
+            SimpleNamespace(text="commentaire assez long pour passer", like_count=5),
+        ]
+        client.media_info.return_value = SimpleNamespace(play_count=10_000, view_count=10_000)
+        return client
+
+    def test_returns_niches_list_from_new_schema(self) -> None:
+        domain = {
+            "name": "humour",
+            "niches": ["humour", "sketch", "imitation"],
+        }
+        with patch("discovery.polite_sleep", return_value=None), \
+             patch("modules.classifier.CommentClassifier") as MockCls:
+            MockCls.return_value.classify.return_value = {
+                "type": "T2", "confidence": 0.8,
+            }
+            result = discovery.score_profile(
+                "user", domain, blacklist={"profiles": []}, client=self._client()
+            )
+
+        self.assertIsNotNone(result)
+        # Schéma 2026-05 : ``niches`` (liste) est l'unique source de vérité.
+        self.assertEqual(result["niches"], ["humour", "sketch", "imitation"])
+        # Le champ string ``niche`` n'est plus produit.
+        self.assertNotIn("niche", result)
+
+    def test_falls_back_to_legacy_niche_string(self) -> None:
+        domain = {"name": "humour", "niche": "humour"}  # ancien schéma
+        with patch("discovery.polite_sleep", return_value=None), \
+             patch("modules.classifier.CommentClassifier") as MockCls:
+            MockCls.return_value.classify.return_value = {
+                "type": "T2", "confidence": 0.8,
+            }
+            result = discovery.score_profile(
+                "user", domain, blacklist={"profiles": []}, client=self._client()
+            )
+
+        self.assertEqual(result["niches"], ["humour"])
+        self.assertNotIn("niche", result)
+
+    def test_invalid_niche_filtered_via_validate_niches(self) -> None:
+        """Une niche hors ``VALID_NICHES`` doit être filtrée par ``validate_niches``."""
+        domain = {"name": "humour", "niches": ["INVALID", "humour", "sketch"]}
+        with patch("discovery.polite_sleep", return_value=None), \
+             patch("modules.classifier.CommentClassifier") as MockCls:
+            MockCls.return_value.classify.return_value = {
+                "type": "T2", "confidence": 0.8,
+            }
+            result = discovery.score_profile(
+                "user", domain, blacklist={"profiles": []}, client=self._client()
+            )
+
+        # ``INVALID`` est rejeté par ``validate_niches`` et logué en WARNING.
+        self.assertEqual(result["niches"], ["humour", "sketch"])
+        self.assertNotIn("niche", result)
 
 
 if __name__ == "__main__":

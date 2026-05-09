@@ -21,7 +21,7 @@ Le fichier ``data/database.json`` a la structure suivante::
         "<username>": {
           "platform": "instagram",
           "followers": 48000,
-          "niche": "humour",
+          "niches": ["humour", "sketch"],
           "tier": "B",
           "validated": false,
           "t_type_original": "T2",
@@ -142,6 +142,76 @@ def _parse_iso(raw: str | None) -> datetime | None:
 def _normalize_username(username: str) -> str:
     """Strip ``@`` éventuel + lowercase. Cohérent avec ``discovery.score_profile``."""
     return str(username or "").lstrip("@").strip().lower()
+
+
+# ---------------------------------------------------------------------------
+# Helpers de schéma niches (lazy migration ``niche`` string → ``niches`` liste)
+# ---------------------------------------------------------------------------
+
+
+def _clean_niches_list(raw: Any) -> list[str]:
+    """Coerce ``raw`` en ``list[str]`` propre (strings non vides, strippées).
+
+    Tolère les inputs bruyants (None, items non-string, espaces) mais ne
+    fabrique **rien** : si la liste résultante est vide, elle reste vide —
+    le caller décide du comportement (fallback ou non).
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            cleaned = item.strip()
+            if cleaned:
+                out.append(cleaned)
+    return out
+
+
+def _coerce_incoming_niches(score_result: dict[str, Any]) -> list[str]:
+    """Lit les niches d'un ``score_result`` selon le brief 2026-05 :
+
+    1. Si ``score_result["niches"]`` (liste) est présent → écrit tel quel.
+    2. Sinon si ``score_result["niche"]`` (string) est présent → converti
+       en ``[niche]`` (lazy migration côté input).
+    3. Sinon → liste vide (le caller décide).
+
+    On accepte ``"niches"`` comme un dict / scalaire mal formé en faisant
+    semblant qu'il est absent (c'est plus tolérant que de lever).
+    """
+    niches_raw = score_result.get("niches")
+    if isinstance(niches_raw, list):
+        return _clean_niches_list(niches_raw)
+    legacy_niche = score_result.get("niche")
+    if isinstance(legacy_niche, str) and legacy_niche.strip():
+        return [legacy_niche.strip()]
+    return []
+
+
+def _migrate_profile_niches_in_place(
+    profile: dict[str, Any], *, incoming: list[str]
+) -> None:
+    """Lazy migration des niches d'un profil **existant** dans la DB.
+
+    Règles (cf. brief Mod C 2026-05) :
+
+    - Si le profil a déjà ``niches`` (liste) : on rafraîchit avec
+      ``incoming`` (priorité au scoring le plus récent).
+    - Si le profil n'a que l'ancien champ ``niche`` (string) : on le
+      promote en ``niches=[niche]`` *avant* de rafraîchir.
+    - Le champ ``niche`` (string) est **toujours supprimé** après
+      migration — pas de doublon en base.
+    - Si ``incoming`` est non vide il prime sur la migration ; si
+      ``incoming`` est vide on conserve les niches existantes (ne rien
+      écraser silencieusement).
+    """
+    legacy_niche = profile.pop("niche", None)
+    if "niches" not in profile and isinstance(legacy_niche, str) and legacy_niche.strip():
+        profile["niches"] = [legacy_niche.strip()]
+
+    if incoming:
+        profile["niches"] = list(incoming)
+    else:
+        profile.setdefault("niches", [])
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +356,21 @@ def upsert_profile(
     next_rescore = compute_next_rescore_at(tier, anchor=last_scored_dt)
     archived = tier == "C"
 
+    # ------------------------------------------------------------------
+    # Niches (schéma 2026-05) — règles de lazy migration
+    # ------------------------------------------------------------------
+    # 1. ``score_result["niches"]`` (liste) → écrit tel quel.
+    # 2. ``score_result["niche"]`` (string) sans ``niches`` → converti en
+    #    ``[niche]`` avant persistance.
+    # 3. Profil existant qui n'a que ``niche`` (string) → migré en
+    #    ``["niches": [niche]]`` au prochain upsert.
+    # 4. Le champ string ``niche`` est **supprimé** côté profil après
+    #    migration (pas de doublon en base).
+    #
+    # Pas de migration de masse : la promotion ne touche un profil qu'au
+    # moment où l'on passe sur lui dans l'upsert.
+    niches: list[str] = _coerce_incoming_niches(score_result)
+
     profiles: dict[str, Any] = db["profiles"]
     existing = profiles.get(username)
 
@@ -293,7 +378,8 @@ def upsert_profile(
         profile: dict[str, Any] = {
             "platform": str(score_result.get("platform") or "instagram"),
             "followers": int(score_result.get("followers") or 0),
-            "niche": str(score_result.get("domain") or ""),
+            # Schéma 2026-05 : ``niches`` (liste) seulement, pas de ``niche``.
+            "niches": list(niches),
             "tier": tier,
             "validated": False,
             "t_type_original": score_result.get("t_type_dominant"),
@@ -318,8 +404,8 @@ def upsert_profile(
             if score_result.get("followers") is not None
             else profile.get("followers", 0)
         )
-        if score_result.get("domain"):
-            profile["niche"] = str(score_result["domain"])
+        # Lazy migration du profil existant + refresh avec le scoring courant.
+        _migrate_profile_niches_in_place(profile, incoming=niches)
         profile["tier"] = tier
         profile["last_scored_at"] = last_scored_at
         profile["next_rescore_at"] = next_rescore

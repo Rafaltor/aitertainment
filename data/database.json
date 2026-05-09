@@ -3,15 +3,14 @@
     "promising": {
       "platform": "instagram",
       "followers": 12000,
-      "niche": "humour",
       "tier": "A",
       "validated": false,
       "t_type_original": "T2",
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-08T14:21:48",
-      "last_scored_at": "2026-05-08T22:52:22",
-      "next_rescore_at": "2026-05-15T22:52:22",
+      "last_scored_at": "2026-05-09T11:23:12",
+      "next_rescore_at": "2026-05-16T11:23:12",
       "archived": false,
       "scores_history": [
         {
@@ -298,20 +297,277 @@
           "t_type_distribution": {
             "T2": 1.0
           }
+        },
+        {
+          "date": "2026-05-09T08:58:39",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:01:58",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:10:38",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:15:27",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:24:37",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:27:36",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:38:01",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:38:01",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:42:53",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:47:20",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:48:28",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:00:54",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:16:14",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:31:33",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:49:44",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:50:48",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T11:23:12",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
         }
+      ],
+      "niches": [
+        "humour"
       ]
     },
     "meh": {
       "platform": "instagram",
       "followers": 9000,
-      "niche": "humour",
       "tier": "C",
       "validated": false,
       "t_type_original": "T1",
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-08T14:21:48",
-      "last_scored_at": "2026-05-08T22:52:22",
+      "last_scored_at": "2026-05-09T11:23:12",
       "next_rescore_at": null,
       "archived": true,
       "scores_history": [
@@ -599,20 +855,412 @@
           "t_type_distribution": {
             "T1": 1.0
           }
+        },
+        {
+          "date": "2026-05-09T08:58:39",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:01:58",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:10:38",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:15:27",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:24:37",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:27:36",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:38:01",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:38:01",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:42:53",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:42:53",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:47:20",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:47:20",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:48:28",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:48:28",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:00:54",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:00:54",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:16:14",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:16:14",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:31:33",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:31:33",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:49:44",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:49:44",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:50:48",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:50:48",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T11:23:12",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T11:23:12",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
         }
+      ],
+      "niches": [
+        "humour"
       ]
     },
     "charton_arthur": {
       "platform": "instagram",
       "followers": 1248,
-      "niche": "humour",
       "tier": "C",
       "validated": false,
       "t_type_original": null,
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-08T22:07:06+00:00",
-      "last_scored_at": "2026-05-08T22:07:06+00:00",
+      "last_scored_at": "2026-05-09T11:02:09+00:00",
       "next_rescore_at": null,
       "archived": true,
       "scores_history": [
@@ -628,7 +1276,28 @@
           "posting_rhythm": 0.0,
           "t_type_dominant": null,
           "t_type_distribution": {}
+        },
+        {
+          "date": "2026-05-09T11:02:09+00:00",
+          "score": 378.8940724515471,
+          "score_reels": 325.5733923935892,
+          "score_posts": 392.22424246603657,
+          "reel_ratio_median": 1.0408653846153846,
+          "reel_ratio_p90": 0.0,
+          "reel_engagement_median": 0.007211538461538462,
+          "reel_trend": "stable",
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 0.6545454545454544,
+            "T1": 0.34545454545454546
+          }
         }
+      ],
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
       ]
     },
     "marrant_clips": {
@@ -755,6 +1424,461 @@
             "T3b": 0.33333333333333337,
             "T2": 0.33333333333333337,
             "T1": 0.33333333333333337
+          }
+        }
+      ]
+    },
+    "raikkonenaf": {
+      "platform": "instagram",
+      "followers": 49629,
+      "niche": "humour",
+      "tier": "B",
+      "validated": true,
+      "t_type_original": "T2",
+      "t_type_final": "T2",
+      "added_via": "manual",
+      "added_at": "2026-05-09T08:21:16+00:00",
+      "last_scored_at": "2026-05-09T08:21:16+00:00",
+      "next_rescore_at": "2026-06-08T08:21:16",
+      "archived": false,
+      "scores_history": [
+        {
+          "date": "2026-05-09T08:21:16+00:00",
+          "score": 574.3868206671533,
+          "score_reels": 589.7581600261753,
+          "score_posts": 543.6441419491091,
+          "reel_ratio_median": 2.1737895182252314,
+          "reel_ratio_p90": 29.450361683693004,
+          "reel_engagement_median": 0.05605593503798183,
+          "reel_trend": "declining",
+          "posting_rhythm": 1.944593708766708,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        }
+      ]
+    },
+    "seed_one": {
+      "platform": "instagram",
+      "followers": 12000,
+      "tier": "A",
+      "validated": false,
+      "t_type_original": "T2",
+      "t_type_final": null,
+      "added_via": "discovery",
+      "added_at": "2026-05-09T09:42:53",
+      "last_scored_at": "2026-05-09T11:23:12",
+      "next_rescore_at": "2026-05-16T11:23:12",
+      "archived": false,
+      "scores_history": [
+        {
+          "date": "2026-05-09T09:42:53",
+          "score": 850.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:47:20",
+          "score": 850.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:48:28",
+          "score": 850.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:00:54",
+          "score": 850.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:16:14",
+          "score": 850.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:31:33",
+          "score": 850.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:49:44",
+          "score": 850.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:50:48",
+          "score": 850.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T11:23:12",
+          "score": 850.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        }
+      ],
+      "niches": [
+        "humour"
+      ]
+    },
+    "other": {
+      "platform": "instagram",
+      "followers": 12000,
+      "tier": "C",
+      "validated": false,
+      "t_type_original": "T2",
+      "t_type_final": null,
+      "added_via": "discovery",
+      "added_at": "2026-05-09T09:42:53",
+      "last_scored_at": "2026-05-09T11:23:12",
+      "next_rescore_at": null,
+      "archived": true,
+      "scores_history": [
+        {
+          "date": "2026-05-09T09:42:53",
+          "score": 100.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:47:20",
+          "score": 100.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T09:48:28",
+          "score": 100.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:00:54",
+          "score": 100.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:16:14",
+          "score": 100.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:31:33",
+          "score": 100.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:49:44",
+          "score": 100.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:50:48",
+          "score": 100.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T11:23:12",
+          "score": 100.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        }
+      ],
+      "niches": [
+        "humour"
+      ]
+    },
+    "recrutestagiaire": {
+      "platform": "instagram",
+      "followers": 1370,
+      "niches": [
+        "humour"
+      ],
+      "tier": "B",
+      "validated": true,
+      "t_type_original": "T2",
+      "t_type_final": "T2",
+      "added_via": "discovery",
+      "added_at": "2026-05-09T10:39:38+00:00",
+      "last_scored_at": "2026-05-09T10:48:41+00:00",
+      "next_rescore_at": "2026-06-08T10:48:41",
+      "archived": false,
+      "scores_history": [
+        {
+          "date": "2026-05-09T10:39:38+00:00",
+          "score": 679.8315979110064,
+          "score_reels": 577.2367253624665,
+          "score_posts": 731.1290341852762,
+          "reel_ratio_median": 2.294890510948905,
+          "reel_ratio_p90": 0.0,
+          "reel_engagement_median": 0.052554744525547446,
+          "reel_trend": "stable",
+          "posting_rhythm": 2.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T10:48:41+00:00",
+          "score": 680.0923786040468,
+          "score_reels": 578.0190674415878,
+          "score_posts": 731.1290341852762,
+          "reel_ratio_median": 2.31970802919708,
+          "reel_ratio_p90": 0.0,
+          "reel_engagement_median": 0.052554744525547446,
+          "reel_trend": "stable",
+          "posting_rhythm": 2.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        }
+      ]
+    },
+    "alexandreskrt": {
+      "platform": "instagram",
+      "followers": 28190,
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "tier": "B",
+      "validated": false,
+      "t_type_original": "T2",
+      "t_type_final": null,
+      "added_via": "discovery",
+      "added_at": "2026-05-09T11:08:53+00:00",
+      "last_scored_at": "2026-05-09T11:08:53+00:00",
+      "next_rescore_at": "2026-06-08T11:08:53",
+      "archived": false,
+      "scores_history": [
+        {
+          "date": "2026-05-09T11:08:53+00:00",
+          "score": 440.20702781065086,
+          "score_reels": 630.0287720330746,
+          "score_posts": 392.7515917550449,
+          "reel_ratio_median": 3.0846399432422844,
+          "reel_ratio_p90": 0.0,
+          "reel_engagement_median": 0.11152891096133381,
+          "reel_trend": "stable",
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        }
+      ]
+    },
+    "realo.23": {
+      "platform": "instagram",
+      "followers": 26171,
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "tier": "B",
+      "validated": false,
+      "t_type_original": "T1",
+      "t_type_final": null,
+      "added_via": "discovery",
+      "added_at": "2026-05-09T11:20:43+00:00",
+      "last_scored_at": "2026-05-09T11:20:43+00:00",
+      "next_rescore_at": "2026-06-08T11:20:43",
+      "archived": false,
+      "scores_history": [
+        {
+          "date": "2026-05-09T11:20:43+00:00",
+          "score": 499.95937076356745,
+          "score_reels": 517.2659474535646,
+          "score_posts": 478.3261499010709,
+          "reel_ratio_median": 4.506247373046502,
+          "reel_ratio_p90": 5.011386649344694,
+          "reel_engagement_median": 0.12395399487982882,
+          "reel_trend": "stable",
+          "posting_rhythm": 0.02543275870016703,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
           }
         }
       ]

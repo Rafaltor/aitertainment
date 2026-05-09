@@ -1,34 +1,45 @@
-"""prepare_dataset.py — convertit ``training_comments.json`` en datasets Alpaca.
+"""prepare_dataset.py — convertit ``training_comments.json`` en deux JSONL.
 
 ============================================================================
 Objectif
 ============================================================================
 
-Lire ``data/training_comments.json`` (produit par ``dataset_builder.py``) et
-produire **deux fichiers** prêts à charger dans Unsloth / QLoRA pour un
-fine-tuning :
+Lire ``data/training_comments.json`` et produire **deux fichiers JSONL**
+prêts à charger par Unsloth / QLoRA :
 
-* ``scripts/data/generator_dataset.json`` — entraîne le modèle à **générer**
-  un commentaire crédible étant donné le contexte du Reel (T-type, niche,
-  caption, hashtags, audio).
-* ``scripts/data/classifier_dataset.json`` — entraîne le modèle à
-  **étiqueter** un commentaire avec son T-type étant donné un peu de
-  contexte créateur + métriques.
+* ``data/dataset_classifier.jsonl`` — labellise un commentaire avec son
+  T-type étant donné le contexte créateur + métriques.
+* ``data/dataset_generator.jsonl`` — génère un commentaire crédible étant
+  donné le T-type commentateur, niches, caption, hashtags, audio.
 
-Les deux datasets utilisent le **format Alpaca** (``instruction`` /
-``input`` / ``output``), qui est nativement supporté par Unsloth via
-``load_dataset(..., format="alpaca")`` et compatible avec la plupart des
-loaders QLoRA. Pour le générateur on aurait pu sortir du ShareGPT, mais
-Alpaca est plus simple à dériver à partir de notre schéma actuel et reste
-convertible en ShareGPT côté training si besoin.
+Chaque ligne est un objet JSON au format Alpaca
+(``{instruction, input, output}``), encodé sur **une seule ligne** (pas de
+pretty-print) — c'est le format consommé directement par
+``datasets.load_dataset("json", ...)``.
 
 ============================================================================
-Cardinalité
+Schéma d'entrée
 ============================================================================
 
-Pour **chaque entrée** (= un Reel) on dérive **autant de paires** que de
-commentaires dans ``top_comments``. Si ``top_comments`` est vide, l'entrée
-est ignorée (on ne peut ni apprendre à générer, ni étiqueter).
+Le script consomme un schéma **plat** : chaque entrée du training représente
+**un commentaire** + son contexte vidéo, avec les champs au top-level :
+
+::
+
+    {
+      "text": "mdr trop vrai",
+      "t_type": "T2",                  # label du commentaire
+      "t_type_profile": "T2",          # persona du commentateur (watchlist)
+      "niches": ["humour", "sketch"],  # ou "niche": "humour" en rétro-compat
+      "views": 500000,
+      "comment_to_like_ratio": 0.283,
+      "caption": "moment culte F1",
+      "hashtags": ["F1", "monaco"],    # liste OU string
+      "audio_id": "AUD123"
+    }
+
+La racine du fichier accepte indifféremment ``{"entries": [...]}`` (format
+``dataset_builder.py``) ou une liste brute ``[...]``.
 
 ============================================================================
 CLI
@@ -36,9 +47,9 @@ CLI
 
 ::
 
-    python scripts/prepare_dataset.py            # exécution normale
-    python scripts/prepare_dataset.py --mock     # 10 entrées fictives
-    python scripts/prepare_dataset.py --stats    # uniquement les compteurs
+    python scripts/prepare_dataset.py
+    python scripts/prepare_dataset.py --training-path /tmp/training.json
+    python scripts/prepare_dataset.py --output-dir /tmp/datasets
 """
 
 from __future__ import annotations
@@ -46,9 +57,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+import tempfile
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -57,41 +69,54 @@ from typing import Any
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TRAINING_PATH = _PROJECT_ROOT / "data" / "training_comments.json"
-DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "scripts" / "data"
-DEFAULT_GENERATOR_PATH = DEFAULT_OUTPUT_DIR / "generator_dataset.json"
-DEFAULT_CLASSIFIER_PATH = DEFAULT_OUTPUT_DIR / "classifier_dataset.json"
+DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "data"
+CLASSIFIER_FILENAME = "dataset_classifier.jsonl"
+GENERATOR_FILENAME = "dataset_generator.jsonl"
 
-# Seuils minimaux pour considérer un dataset "prêt" pour un fine-tuning utile.
-# Sous 200 paires, QLoRA n'a pas assez de signal pour apprendre un registre
-# (cf. retours d'expérience Unsloth — 200 = plancher absolu, 1000+ = confort).
-MIN_PAIRS_READY = 200
+# T-types valides — un commentaire avec un label hors set est filtré (sinon
+# le classifier apprend à prédire des classes fantômes).
+VALID_TTYPES: frozenset[str] = frozenset(
+    {"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"}
+)
 
+CLASSIFIER_INSTRUCTION = (
+    "Classifie ce commentaire Instagram selon le type d'engagement."
+)
 GENERATOR_INSTRUCTION = (
     "Tu es un utilisateur Instagram. Génère un commentaire naturel et "
     "humain pour ce Reel."
 )
-CLASSIFIER_INSTRUCTION = (
-    "Classifie ce commentaire Instagram selon les types T1→T5."
-)
 
-# T-types valides côté label classifier — un commentaire sans label exploitable
-# est filtré (sinon le modèle apprend à prédire ``""``).
-_VALID_TTYPES: frozenset[str] = frozenset(
-    {"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"}
-)
-
-_LOG = logging.getLogger("aitertainment.prepare_dataset")
+_LOG = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# IO helpers
+# Lecture du training
 # ---------------------------------------------------------------------------
 
 
-def _read_training(path: Path) -> list[dict[str, Any]]:
-    """Charge ``training_comments.json`` ; retourne ``entries`` (jamais ``None``)."""
+def load_training(path: Path) -> list[dict]:
+    """Charge ``training_comments.json`` ; retourne la liste ``entries[]``.
+
+    Lève une exception **claire** :
+
+    * ``FileNotFoundError`` si le fichier n'existe pas (laissé tel quel —
+      le caller décide quoi faire ; ``main()`` retourne exit 1).
+    * ``ValueError`` si le contenu n'est pas du JSON ou n'a pas la racine
+      attendue.
+
+    La racine peut être :
+
+    * ``{"entries": [...]}`` (format produit par ``dataset_builder.py``).
+    * ``[...]`` (liste brute — utile pour les datasets externes).
+
+    Les éléments non-``dict`` sont silencieusement filtrés (best-effort,
+    on ne casse pas le pipeline pour une ligne corrompue).
+    """
     if not path.exists():
-        return []
+        raise FileNotFoundError(
+            f"Fichier training_comments.json introuvable : {path}"
+        )
     raw = path.read_text(encoding="utf-8").strip()
     if not raw:
         return []
@@ -99,32 +124,21 @@ def _read_training(path: Path) -> list[dict[str, Any]]:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
         raise ValueError(f"JSON invalide dans {path} : {e}") from e
-    if not isinstance(data, dict):
-        raise ValueError(f"racine JSON doit être un objet ({type(data).__name__})")
-    entries = data.get("entries")
-    if not isinstance(entries, list):
-        raise ValueError(f'"entries" doit être une liste dans {path}')
-    return [e for e in entries if isinstance(e, dict)]
 
-
-def _atomic_write_json(path: Path, payload: list[dict[str, Any]]) -> None:
-    """Écrit ``payload`` sur disque de façon atomique (tmp + replace).
-
-    Écrit une **liste** au top-level (vs un dict) — c'est la convention Alpaca
-    attendue par ``datasets.load_dataset("json", ...)``.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        delete=False,
-        dir=str(path.parent),
-        suffix=".tmp",
-    ) as fh:
-        json.dump(payload, fh, ensure_ascii=False, indent=2)
-        fh.write("\n")
-        tmp_path = Path(fh.name)
-    tmp_path.replace(path)
+    if isinstance(data, dict):
+        entries = data.get("entries")
+        if not isinstance(entries, list):
+            raise ValueError(
+                f'"entries" doit être une liste dans {path} '
+                f"(reçu : {type(entries).__name__})"
+            )
+        return [e for e in entries if isinstance(e, dict)]
+    if isinstance(data, list):
+        return [e for e in data if isinstance(e, dict)]
+    raise ValueError(
+        f"racine JSON doit être un objet ou une liste dans {path} "
+        f"(reçu : {type(data).__name__})"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -132,219 +146,253 @@ def _atomic_write_json(path: Path, payload: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _fmt_hashtags(hashtags: Any) -> str:
-    """Liste de hashtags → ``#a #b #c`` (ou ``(aucun)``)."""
-    if not hashtags:
-        return "(aucun)"
-    if isinstance(hashtags, str):
-        return hashtags.strip() or "(aucun)"
-    parts = [str(h).lstrip("#").strip() for h in hashtags if str(h).strip()]
-    return " ".join(f"#{p}" for p in parts) if parts else "(aucun)"
+def niches_str(entry: dict) -> str:
+    """Retourne les niches jointes par ``", "``.
+
+    Priorité :
+
+    1. ``entry["niches"]`` (liste) — schéma 2026-05.
+    2. ``entry["niche"]`` (string) — rétro-compat.
+    3. ``"humour"`` — fallback ultime, jamais vide.
+
+    Les items vides / non-string sont filtrés. Si après filtrage la liste
+    est vide, on retombe sur l'étape suivante (puis sur ``"humour"``).
+    Garantit donc une string **non vide** en sortie — le placeholder
+    ``{niches}`` apparaît sinon vide dans le prompt et perturbe le LLM.
+    """
+    raw = entry.get("niches")
+    if isinstance(raw, list):
+        clean = [
+            n.strip() for n in raw
+            if isinstance(n, str) and n.strip()
+        ]
+        if clean:
+            return ", ".join(clean)
+    legacy = entry.get("niche")
+    if isinstance(legacy, str) and legacy.strip():
+        return legacy.strip()
+    return "humour"
 
 
-def _fmt_optional(value: Any, *, default: str = "(inconnu)") -> str:
-    """Stringifie ``value`` ou retourne ``default`` si ``None`` / vide."""
+def _coerce_int(value: Any, default: int = 0) -> int:
+    """Convertit en ``int`` ; ``default`` si ``None`` / invalide."""
     if value is None:
         return default
-    s = str(value).strip()
-    return s if s else default
-
-
-def _fmt_ratio(value: Any) -> str:
-    """Formate un ratio float en 3 décimales ; ``(inconnu)`` si ``None``."""
-    if value is None:
-        return "(inconnu)"
     try:
-        return f"{float(value):.3f}"
+        return int(value)
     except (TypeError, ValueError):
-        return "(inconnu)"
+        return default
+
+
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    """Convertit en ``float`` ; ``default`` si ``None`` / invalide."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _format_hashtags(value: Any) -> str:
+    """Liste de hashtags → ``"a, b, c"`` ; string passée telle quelle ;
+    ``""`` si absent / ``None``.
+
+    On coerce les items non-string via ``str()`` pour éviter les
+    ``TypeError`` à la jointure si le caller passe par exemple ``[1, 2]``.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(str(h) for h in value)
+    if isinstance(value, str):
+        return value
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
-# Construction des paires Alpaca
+# Écriture atomique JSONL
 # ---------------------------------------------------------------------------
 
 
-def build_generator_pair(
-    entry: dict[str, Any], comment: dict[str, Any]
-) -> dict[str, str] | None:
-    """Construit une paire Alpaca **generator** ``(instruction, input, output)``.
+def _atomic_write_jsonl(path: Path, lines: list[str]) -> None:
+    """Écrit ``lines`` (chacune déjà JSON-encodée) en JSONL atomiquement.
 
-    Retourne ``None`` si la paire est inexploitable (commentaire vide, pas
-    de T-type — sans contexte le modèle apprendrait à générer du bruit).
+    Pattern : ``tempfile`` dans le **même dossier** (donc même filesystem
+    → ``os.replace`` atomique) puis ``os.replace(tmp, path)``. En cas
+    d'erreur d'écriture, on tente de supprimer le tmp pour ne pas laisser
+    de fichier orphelin.
+
+    Si ``lines`` est vide, on écrit un fichier vide — c'est volontaire :
+    on veut toujours produire les deux fichiers de sortie pour que les
+    pipelines downstream (DVC, Make…) voient un artefact stable.
     """
-    text = str(comment.get("text") or "").strip()
-    if not text:
-        return None
-
-    gen_in = entry.get("generator_input") or {}
-    # Priorité au t_type du commentaire (self-contained), repli sur l'entry.
-    t_type = str(comment.get("t_type") or gen_in.get("t_type") or "").strip()
-    if not t_type:
-        return None
-    niche = str(
-        comment.get("niche") or gen_in.get("niche") or ""
-    ).strip() or "(non précisée)"
-
-    caption = _fmt_optional(gen_in.get("caption"), default="(vide)")
-    hashtags = _fmt_hashtags(gen_in.get("hashtags"))
-    audio = _fmt_optional(gen_in.get("audio_id"), default="(aucun)")
-
-    input_block = (
-        f"T-type: {t_type}\n"
-        f"Niche: {niche}\n"
-        f"Caption: {caption}\n"
-        f"Hashtags: {hashtags}\n"
-        f"Audio: {audio}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
     )
-    return {
-        "instruction": GENERATOR_INSTRUCTION,
-        "input": input_block,
-        "output": text,
-    }
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            for line in lines:
+                fh.write(line)
+                fh.write("\n")
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
-def build_classifier_pair(
-    entry: dict[str, Any], comment: dict[str, Any]
-) -> dict[str, str] | None:
-    """Construit une paire Alpaca **classifier** ``(instruction, input, output)``.
+# ---------------------------------------------------------------------------
+# Génération des datasets
+# ---------------------------------------------------------------------------
 
-    Retourne ``None`` si :
 
-    * texte du commentaire vide, OU
-    * label T-type absent / non reconnu (cf. ``_VALID_TTYPES``).
+def generate_classifier_dataset(
+    entries: list[dict], output_path: Path
+) -> int:
+    """Écrit ``dataset_classifier.jsonl``. Retourne ``nb`` lignes écrites.
 
-    On filtre les T-types invalides parce que le classifier doit apprendre
-    une distribution sur un set fini ; un label inconnu pollue l'objectif.
+    Format de chaque ligne (``json.dumps``, sans pretty-print) ::
+
+        {
+          "instruction": "Classifie ce commentaire Instagram ...",
+          "input": "Commentaire: ...\\nNiches du contenu: ...\\n"
+                   "Vues: ...\\nRatio comments/likes: ...",
+          "output": "T2"
+        }
+
+    Filtres stricts (entrée ignorée si) :
+
+    * ``text`` absent ou vide après ``strip()``.
+    * ``t_type`` absent ou pas dans ``VALID_TTYPES``.
+
+    Coercitions silencieuses :
+
+    * ``views`` → ``int(entry.get("views", 0))``, ``0`` sur invalide.
+    * ``ratio`` → ``float(entry.get("comment_to_like_ratio", 0.0))``,
+      ``0.0`` sur invalide. Formaté avec **4 décimales** dans l'input.
     """
-    text = str(comment.get("text") or "").strip()
-    if not text:
-        return None
-
-    gen_in = entry.get("generator_input") or {}
-    t_type = str(comment.get("t_type") or gen_in.get("t_type") or "").strip()
-    if t_type not in _VALID_TTYPES:
-        return None
-
-    niche = str(
-        comment.get("niche") or gen_in.get("niche") or ""
-    ).strip() or "(non précisée)"
-    ctx = entry.get("classifier_context") or {}
-    views = _fmt_optional(ctx.get("views"))
-    ratio = _fmt_ratio(ctx.get("comment_to_like_ratio"))
-
-    input_block = (
-        f"Commentaire: {text}\n"
-        f"Niche: {niche}\n"
-        f"Vues: {views}\n"
-        f"Ratio comments/likes: {ratio}"
-    )
-    return {
-        "instruction": CLASSIFIER_INSTRUCTION,
-        "input": input_block,
-        "output": t_type,
-    }
-
-
-def build_datasets(
-    entries: list[dict[str, Any]],
-) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    """Pour chaque entrée, dérive ``len(top_comments)`` paires par dataset.
-
-    Retourne ``(generator_pairs, classifier_pairs)``. Les paires invalides
-    (texte vide, T-type manquant) sont silencieusement filtrées — c'est
-    l'attendu : on ne lève pas, on garde le best-effort.
-    """
-    gen_pairs: list[dict[str, str]] = []
-    cls_pairs: list[dict[str, str]] = []
+    lines: list[str] = []
+    skipped_text = 0
+    skipped_ttype = 0
     for entry in entries:
-        comments = entry.get("top_comments") or []
-        if not isinstance(comments, list):
+        if not isinstance(entry, dict):
             continue
-        for c in comments:
-            if not isinstance(c, dict):
-                continue
-            g = build_generator_pair(entry, c)
-            if g is not None:
-                gen_pairs.append(g)
-            cl = build_classifier_pair(entry, c)
-            if cl is not None:
-                cls_pairs.append(cl)
-    return gen_pairs, cls_pairs
+        text = str(entry.get("text") or "").strip()
+        if not text:
+            skipped_text += 1
+            continue
+        t_type = str(entry.get("t_type") or "").strip()
+        if t_type not in VALID_TTYPES:
+            skipped_ttype += 1
+            continue
 
-
-# ---------------------------------------------------------------------------
-# Données fictives (--mock)
-# ---------------------------------------------------------------------------
-
-
-def _mock_entries(count: int = 10) -> list[dict[str, Any]]:
-    """Construit ``count`` entrées synthétiques au schéma exact du builder.
-
-    Distribution approximative T2/T2b/T3b/T4/T5 pour exercer le filtre des
-    T-types valides, plus 1 entrée "T1" gardée car elle reste un label
-    valide pour le classifier (mais on évitera de l'utiliser pour le
-    generator en prod — cf. brief Watcher).
-    """
-    rotation = ["T2", "T2b", "T3b", "T4", "T5", "T1"]
-    niches = ["humour", "f1", "cuisine", "gaming", "tech", "lifestyle"]
-    captions = [
-        "moment culte",
-        "tu vas adorer",
-        "ne pas reproduire",
-        "GG la team",
-        "le passage à 0:08",
-        "explication en 1 minute",
-    ]
-    sample_comments = [
-        "mdr trop vrai",
-        "j'en peux plus",
-        "le passage 0:08",
-        "ah ouais quand même",
-        "techniquement parfait",
-        "bravo le débutant",
-        "très subtil",
-        "on attend la suite",
-        "GG",
-        "no comment",
-    ]
-    out: list[dict[str, Any]] = []
-    for i in range(count):
-        t_type = rotation[i % len(rotation)]
-        niche = niches[i % len(niches)]
-        out.append(
-            {
-                "media_id": f"MOCK_{i:03d}",
-                "username": f"mock_creator_{i}",
-                "reel_url": f"https://www.instagram.com/reel/MOCK_{i:03d}/",
-                "collected_at": "2026-05-08T12:00:00",
-                "generator_input": {
-                    "t_type": t_type,
-                    "niche": niche,
-                    "caption": captions[i % len(captions)],
-                    "hashtags": [niche, f"tag{i}"],
-                    "audio_id": f"AUD{i:03d}",
-                },
-                "classifier_context": {
-                    "views": 50_000 + i * 12_345,
-                    "likes": 1_000 + i * 137,
-                    "comment_count": 50 + i * 9,
-                    "shares": None,
-                    "comment_to_like_ratio": round(0.05 + (i % 10) * 0.012, 3),
-                    "share_to_like_ratio": None,
-                },
-                "top_comments": [
-                    {
-                        "text": sample_comments[(i + j) % len(sample_comments)],
-                        "likes": 100 - j * 17,
-                        "t_type": t_type,
-                        "niche": niche,
-                    }
-                    for j in range(3)
-                ],
-            }
+        views = _coerce_int(entry.get("views", 0), default=0)
+        ratio = _coerce_float(
+            entry.get("comment_to_like_ratio", 0.0), default=0.0
         )
-    return out
+        n_str = niches_str(entry)
+
+        input_block = (
+            f"Commentaire: {text}\n"
+            f"Niches du contenu: {n_str}\n"
+            f"Vues: {views}\n"
+            f"Ratio comments/likes: {ratio:.4f}"
+        )
+        record = {
+            "instruction": CLASSIFIER_INSTRUCTION,
+            "input": input_block,
+            "output": t_type,
+        }
+        lines.append(json.dumps(record, ensure_ascii=False))
+
+    _atomic_write_jsonl(output_path, lines)
+    if skipped_text or skipped_ttype:
+        _LOG.debug(
+            "classifier: %d ligne(s) écrites (skip text=%d, t_type=%d)",
+            len(lines), skipped_text, skipped_ttype,
+        )
+    return len(lines)
+
+
+def generate_generator_dataset(
+    entries: list[dict], output_path: Path
+) -> int:
+    """Écrit ``dataset_generator.jsonl``. Retourne ``nb`` lignes écrites.
+
+    Format de chaque ligne ::
+
+        {
+          "instruction": "Tu es un utilisateur Instagram. Génère un ...",
+          "input": "T-type commentateur: ...\\nNiches: ...\\nCaption: ...\\n"
+                   "Hashtags: ...\\nAudio: ...",
+          "output": "<texte du commentaire>"
+        }
+
+    Règles :
+
+    * ``t_type_profile`` : ``entry.get("t_type_profile")`` puis
+      ``entry.get("t_type")`` en fallback ; ``"(inconnu)"`` si les deux
+      sont absents / non-string / vides après strip.
+    * ``caption`` : ``entry.get("caption")`` ou ``""``.
+    * ``hashtags`` : ``", ".join(...)`` si liste, ``str(...)`` si string,
+      ``""`` si absent / ``None``.
+    * ``audio_id`` : ``str(entry.get("audio_id") or "")``.
+    * ``comment_text`` : ``entry.get("text") or ""`` ; entrée **ignorée**
+      si vide après strip.
+    """
+    lines: list[str] = []
+    skipped_text = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        comment_text = str(entry.get("text") or "").strip()
+        if not comment_text:
+            skipped_text += 1
+            continue
+
+        # t_type_profile : priorité au champ explicite, fallback sur t_type.
+        profile_raw = entry.get("t_type_profile")
+        if isinstance(profile_raw, str) and profile_raw.strip():
+            t_type_profile = profile_raw.strip()
+        else:
+            ttype_raw = entry.get("t_type")
+            if isinstance(ttype_raw, str) and ttype_raw.strip():
+                t_type_profile = ttype_raw.strip()
+            else:
+                t_type_profile = "(inconnu)"
+
+        n_str = niches_str(entry)
+        caption = str(entry.get("caption") or "")
+        hashtags = _format_hashtags(entry.get("hashtags"))
+        audio_id = str(entry.get("audio_id") or "")
+
+        input_block = (
+            f"T-type commentateur: {t_type_profile}\n"
+            f"Niches: {n_str}\n"
+            f"Caption: {caption}\n"
+            f"Hashtags: {hashtags}\n"
+            f"Audio: {audio_id}"
+        )
+        record = {
+            "instruction": GENERATOR_INSTRUCTION,
+            "input": input_block,
+            "output": comment_text,
+        }
+        lines.append(json.dumps(record, ensure_ascii=False))
+
+    _atomic_write_jsonl(output_path, lines)
+    if skipped_text:
+        _LOG.debug(
+            "generator: %d ligne(s) écrites (skip text=%d)",
+            len(lines), skipped_text,
+        )
+    return len(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -352,116 +400,95 @@ def _mock_entries(count: int = 10) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _print_stats(
-    *,
-    total_entries: int,
-    generator_count: int,
-    classifier_count: int,
-    out: Any = None,
-) -> None:
-    """Affiche les compteurs + indication ``Prêt pour fine-tuning si …``."""
-    target = out or sys.stdout
-    print(f"Total entrées training_comments.json : {total_entries}", file=target)
-    print(f"→ Generator dataset : {generator_count} paires", file=target)
-    print(f"→ Classifier dataset : {classifier_count} paires", file=target)
-    if generator_count > MIN_PAIRS_READY and classifier_count > MIN_PAIRS_READY:
-        print(
-            f"Prêt pour fine-tuning (seuil minimal : {MIN_PAIRS_READY} par dataset)",
-            file=target,
-        )
-    else:
-        missing_gen = max(0, MIN_PAIRS_READY + 1 - generator_count)
-        missing_cls = max(0, MIN_PAIRS_READY + 1 - classifier_count)
-        print(
-            "Pas encore prêt — il manque "
-            f"{missing_gen} paires generator / {missing_cls} paires classifier "
-            f"(seuil : > {MIN_PAIRS_READY} par dataset)",
-            file=target,
-        )
+def main(argv: list[str] | None = None) -> int:
+    """Point d'entrée CLI. Retourne ``0`` si succès, ``1`` sur erreur.
 
+    Erreurs catchées :
 
-def run(
-    *,
-    mock: bool = False,
-    stats_only: bool = False,
-    training_path: Path | None = None,
-    generator_path: Path | None = None,
-    classifier_path: Path | None = None,
-) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    """Point d'entrée orchestrant lecture → conversion → écriture.
-
-    Retourne ``(generator_pairs, classifier_pairs)`` pour faciliter les
-    tests. En mode ``--stats``, n'écrit rien sur disque mais affiche tout
-    de même les compteurs (utile pour piloter l'avancement de la collecte).
-    En mode ``--mock``, source les entrées depuis ``_mock_entries(10)`` —
-    aucune lecture disque.
+    * ``FileNotFoundError`` : training absent → log + exit 1, **aucun**
+      fichier de sortie créé.
+    * ``ValueError`` : JSON malformé → log + exit 1.
+    * ``OSError`` : échec d'écriture (permissions, disque plein…) → log
+      + exit 1. Le fichier déjà écrit avant l'erreur reste en place
+      (pas de rollback inter-fichiers — on ne peut pas garantir ça
+      sans sacrifier l'atomicité par-fichier).
     """
-    if mock:
-        entries = _mock_entries(10)
-    else:
-        path = training_path or DEFAULT_TRAINING_PATH
-        entries = _read_training(path)
-
-    generator_pairs, classifier_pairs = build_datasets(entries)
-
-    _print_stats(
-        total_entries=len(entries),
-        generator_count=len(generator_pairs),
-        classifier_count=len(classifier_pairs),
-    )
-
-    if not stats_only:
-        gen_p = generator_path or DEFAULT_GENERATOR_PATH
-        cls_p = classifier_path or DEFAULT_CLASSIFIER_PATH
-        _atomic_write_json(gen_p, generator_pairs)
-        _atomic_write_json(cls_p, classifier_pairs)
-        print(f"✓ {gen_p}", file=sys.stdout)
-        print(f"✓ {cls_p}", file=sys.stdout)
-
-    return generator_pairs, classifier_pairs
-
-
-def _main_cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Convertit data/training_comments.json en datasets Alpaca "
-            "(generator + classifier) pour fine-tuning Unsloth/QLoRA."
+            "Convertit data/training_comments.json en deux JSONL "
+            "(classifier + generator) prêts pour Unsloth/QLoRA."
         )
     )
     parser.add_argument(
-        "--mock",
-        action="store_true",
-        help="Génère 10 entrées fictives au lieu de lire training_comments.json.",
+        "--training-path",
+        type=Path,
+        default=DEFAULT_TRAINING_PATH,
+        help=(
+            f"Chemin du training_comments.json source "
+            f"(défaut : {DEFAULT_TRAINING_PATH})."
+        ),
     )
     parser.add_argument(
-        "--stats",
-        action="store_true",
-        help="Affiche les compteurs sans rien écrire sur disque.",
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help=(
+            f"Dossier où écrire les deux JSONL "
+            f"(défaut : {DEFAULT_OUTPUT_DIR})."
+        ),
     )
     args = parser.parse_args(argv)
 
+    if not logging.getLogger().handlers:
+        # Configure un handler basique uniquement si l'app cliente
+        # n'en a pas déjà installé un (évite la double-log dans les
+        # tests qui setUp leur propre logging).
+        logging.basicConfig(
+            level=logging.INFO, format="%(message)s"
+        )
+
     try:
-        run(mock=args.mock, stats_only=args.stats)
-    except (OSError, ValueError) as e:
-        _LOG.error("prepare_dataset a échoué : %s", e)
-        print(f"Erreur : {e}", file=sys.stderr)
+        entries = load_training(args.training_path)
+    except FileNotFoundError as e:
+        _LOG.error("%s", e)
         return 1
+    except ValueError as e:
+        _LOG.error("training_comments.json malformé : %s", e)
+        return 1
+    except OSError as e:
+        _LOG.error("Erreur de lecture %s : %s", args.training_path, e)
+        return 1
+
+    classifier_path = args.output_dir / CLASSIFIER_FILENAME
+    generator_path = args.output_dir / GENERATOR_FILENAME
+
+    try:
+        n_cls = generate_classifier_dataset(entries, classifier_path)
+        n_gen = generate_generator_dataset(entries, generator_path)
+    except OSError as e:
+        _LOG.error("Erreur d'écriture des datasets : %s", e)
+        return 1
+
+    _LOG.info("Classifier : %d entrées écrites → %s", n_cls, classifier_path)
+    _LOG.info("Generator : %d entrées écrites → %s", n_gen, generator_path)
     return 0
 
 
 __all__ = [
+    "CLASSIFIER_FILENAME",
     "CLASSIFIER_INSTRUCTION",
-    "DEFAULT_CLASSIFIER_PATH",
-    "DEFAULT_GENERATOR_PATH",
+    "DEFAULT_OUTPUT_DIR",
     "DEFAULT_TRAINING_PATH",
+    "GENERATOR_FILENAME",
     "GENERATOR_INSTRUCTION",
-    "MIN_PAIRS_READY",
-    "build_classifier_pair",
-    "build_datasets",
-    "build_generator_pair",
-    "run",
+    "VALID_TTYPES",
+    "generate_classifier_dataset",
+    "generate_generator_dataset",
+    "load_training",
+    "main",
+    "niches_str",
 ]
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(_main_cli())
+    sys.exit(main())

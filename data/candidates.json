@@ -96,6 +96,73 @@
       "scored_at": "2026-05-08T23:14:02+00:00",
       "validated": false,
       "discovered_at": "2026-05-08T23:14:02+00:00"
+    },
+    {
+      "username": "raikkonenaf",
+      "domain": "humour",
+      "platform": "instagram",
+      "followers": 49629,
+      "media_count": 211,
+      "score": 574.3868206671533,
+      "score_reels": 589.7581600261753,
+      "score_posts": 543.6441419491091,
+      "reel_weight": 0.6666666666666666,
+      "post_weight": 0.33333333333333337,
+      "reel_ratio_median": 2.1737895182252314,
+      "reel_ratio_p90": 29.450361683693004,
+      "reel_engagement_median": 0.05605593503798183,
+      "reel_trend": "declining",
+      "post_ratio_median": 0.0534767978399726,
+      "post_engagement_median": 0.054927562513852786,
+      "posting_rhythm": 1.944593708766708,
+      "t_type_dominant": "T2",
+      "t_type_distribution": {
+        "T2": 1.0
+      },
+      "biography": "🕺C’est pas vrai hein",
+      "media_sampled": 15,
+      "reels_count": 8,
+      "posts_count": 4,
+      "reels_sampled": 8,
+      "scored_at": "2026-05-09T08:21:16+00:00",
+      "validated": false,
+      "discovered_at": "2026-05-09T08:21:16+00:00"
+    },
+    {
+      "username": "recrutestagiaire",
+      "domain": "humour",
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "platform": "instagram",
+      "followers": 1370,
+      "media_count": 38,
+      "score": 679.8315979110064,
+      "score_reels": 577.2367253624665,
+      "score_posts": 731.1290341852762,
+      "reel_weight": 0.3333333333333333,
+      "post_weight": 0.6666666666666667,
+      "reel_ratio_median": 2.294890510948905,
+      "reel_ratio_p90": 0.0,
+      "reel_engagement_median": 0.052554744525547446,
+      "reel_trend": "stable",
+      "post_ratio_median": 0.15255474452554746,
+      "post_engagement_median": 0.15802919708029195,
+      "posting_rhythm": 2.0,
+      "t_type_dominant": "T2",
+      "t_type_distribution": {
+        "T2": 1.0
+      },
+      "biography": "″𝙍𝙚𝙘𝙝𝙚𝙧𝙘𝙝𝙚 𝙎𝙞𝙩𝙪𝙖𝙩𝙞𝙤𝙣 𝙎𝙩𝙖𝙗𝙡𝙚″ \nOffre d’emploi bientôt disponible…",
+      "media_sampled": 15,
+      "reels_count": 2,
+      "posts_count": 4,
+      "reels_sampled": 2,
+      "scored_at": "2026-05-09T10:39:38+00:00",
+      "validated": false,
+      "discovered_at": "2026-05-09T10:39:38+00:00"
     }
   ]
 }

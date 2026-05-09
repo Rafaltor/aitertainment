@@ -425,11 +425,17 @@ def _telegram_post(
         _LOG.warning("Telegram %s : JSON invalide (status=%s)", method, r.status_code)
         return None
     if r.status_code != 200 or not data.get("ok"):
+        # On loggue le **body brut** (tronqué à 500 chars pour ne pas
+        # spammer les logs sur des erreurs verbeuses style ``description``
+        # + ``parameters``). Le ``description`` reste utile en accès rapide
+        # mais Telegram peut renvoyer des indices critiques uniquement dans
+        # le corps complet (ex. ``parameters.retry_after``, champs
+        # ``error_code`` détaillés, etc.).
         _LOG.warning(
-            "Telegram %s non-ok (status=%s, description=%s)",
+            "Telegram %s non-ok : status=%s body=%s",
             method,
             r.status_code,
-            data.get("description"),
+            r.text[:500],
         )
     return data
 
@@ -496,6 +502,15 @@ def notify_candidate(
     # boutons (text + callback ou URL) pour pouvoir corréler rapidement
     # avec l'absence visuelle côté Telegram.
     _log_reply_markup_debug(username, reply_markup)
+
+    # Trace DEBUG du payload complet : utile quand Telegram refuse le push
+    # (parse_mode HTML invalide, callback_data > 64 octets, reply_markup
+    # mal sérialisé…). Désactivé par défaut (niveau DEBUG), ne pollue donc
+    # pas les logs de prod.
+    _LOG.debug(
+        "notify_candidate payload: %s",
+        json.dumps(payload, ensure_ascii=False),
+    )
 
     response = _telegram_post("sendMessage", payload, token=t)
     if response and response.get("ok"):
@@ -684,9 +699,19 @@ def add_to_watchlist(
         if isinstance(c, dict) and str(c.get("username") or "").lower() == target:
             return False  # déjà dans la watchlist
 
-    domain_name = str(candidate.get("domain") or "")
-    domain = _domain_meta(domain_name, seeds_path=seeds_path) or {}
-    niche = str(domain.get("niche") or domain_name or "")
+    # Niches (schéma 2026-05) : on lit en priorité la liste portée par le
+    # candidate (sortie ``score_profile``) ; à défaut on retombe sur l'ancien
+    # champ string ``niche``, et en dernier recours sur ``"humour"``. On ne
+    # lit **plus** ``domain.get("niche")`` : la source de vérité est désormais
+    # le candidate lui-même (qui propage ``_seed_niches`` du seed parent).
+    niches_raw = candidate.get("niches") or [candidate.get("niche") or "humour"]
+    niches: list[str] = [
+        str(n).strip()
+        for n in (niches_raw or [])
+        if isinstance(n, str) and str(n).strip()
+    ]
+    if not niches:
+        niches = ["humour"]
 
     # engagement_baseline : Reel-first (cible AItertainment), sinon Post,
     # sinon ancien champ ``engagement_median`` (rétro-compat).
@@ -705,7 +730,12 @@ def add_to_watchlist(
         {
             "username": target,
             "platform": str(candidate.get("platform") or "instagram"),
-            "niche": niche,
+            # Source de vérité 2026-05 + alias string pour les callers legacy
+            # (``watcher.py`` lit encore ``creator["niche"]`` dans plusieurs
+            # endroits — on conserve ce champ tant que la migration n'est
+            # pas terminée).
+            "niches": list(niches),
+            "niche": niches[0],
             "t_type": t_type_final,
             "engagement_baseline": eng_baseline,
             "last_post_id": None,

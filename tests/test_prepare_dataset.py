@@ -1,251 +1,248 @@
-"""Tests pour ``scripts.prepare_dataset``."""
+"""Tests pour ``scripts.prepare_dataset`` (refonte JSONL 2026-05).
+
+Couvre les 4 surfaces publiques exposées par le module :
+
+* ``niches_str(entry)``           — résolution de la string niches.
+* ``generate_classifier_dataset`` — sortie JSONL du classifier.
+* ``generate_generator_dataset``  — sortie JSONL du generator.
+* ``main([...])``                 — orchestration CLI / exit codes.
+"""
 
 from __future__ import annotations
 
-import io
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
 from scripts.prepare_dataset import (
+    CLASSIFIER_FILENAME,
     CLASSIFIER_INSTRUCTION,
+    GENERATOR_FILENAME,
     GENERATOR_INSTRUCTION,
-    MIN_PAIRS_READY,
-    _atomic_write_json,
-    _fmt_hashtags,
-    _fmt_optional,
-    _fmt_ratio,
-    _mock_entries,
-    _print_stats,
-    _read_training,
-    build_classifier_pair,
-    build_datasets,
-    build_generator_pair,
-    run,
+    generate_classifier_dataset,
+    generate_generator_dataset,
+    main,
+    niches_str,
 )
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-def _entry(**overrides) -> dict:
-    """Construit une entrée valide complète (le builder produit ce schéma)."""
+def _read_jsonl(path: Path) -> list[dict]:
+    """Lit un JSONL (1 objet par ligne, lignes vides ignorées)."""
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if raw.strip():
+            out.append(json.loads(raw))
+    return out
+
+
+def _valid_classifier_entry(**overrides) -> dict:
+    """Entrée plate avec tous les champs requis pour le classifier."""
     base = {
-        "media_id": "ABC123",
-        "username": "raikkonenaf",
-        "reel_url": "https://www.instagram.com/reel/ABC123/",
-        "collected_at": "2026-05-08T12:00:00",
-        "generator_input": {
-            "t_type": "T2",
-            "niche": "humour",
-            "caption": "moment culte F1",
-            "hashtags": ["F1", "monaco"],
-            "audio_id": "AUD123",
-        },
-        "classifier_context": {
-            "views": 500000,
-            "likes": 12000,
-            "comment_count": 3400,
-            "shares": None,
-            "comment_to_like_ratio": 0.283,
-            "share_to_like_ratio": None,
-        },
-        "top_comments": [
-            {"text": "mdr trop vrai", "likes": 42, "t_type": "T2", "niche": "humour"},
-            {"text": "le passage 0:08", "likes": 30, "t_type": "T2", "niche": "humour"},
-            {"text": "no comment", "likes": 18, "t_type": "T2", "niche": "humour"},
-        ],
+        "text": "mdr trop vrai",
+        "t_type": "T2",
+        "niches": ["humour", "sketch"],
+        "views": 500_000,
+        "comment_to_like_ratio": 0.2834,
+    }
+    base.update(overrides)
+    return base
+
+
+def _valid_generator_entry(**overrides) -> dict:
+    """Entrée plate avec tous les champs requis pour le generator."""
+    base = {
+        "text": "le passage 0:08",
+        "t_type": "T2",
+        "t_type_profile": "T3b",
+        "niches": ["humour", "sketch"],
+        "caption": "moment culte F1",
+        "hashtags": ["F1", "monaco"],
+        "audio_id": "AUD123",
     }
     base.update(overrides)
     return base
 
 
 # ---------------------------------------------------------------------------
-# Helpers de formatage
+# niches_str
 # ---------------------------------------------------------------------------
 
 
-class FormatHelpersTest(unittest.TestCase):
-    def test_fmt_hashtags_list(self) -> None:
-        self.assertEqual(_fmt_hashtags(["F1", "monaco"]), "#F1 #monaco")
+class NichesStrTest(unittest.TestCase):
+    """Cas couverts par le brief (4 cas) + edge cases dérivés."""
 
-    def test_fmt_hashtags_strips_existing_hash(self) -> None:
-        self.assertEqual(_fmt_hashtags(["#F1", "  monaco "]), "#F1 #monaco")
+    def test_list_joined_with_comma(self) -> None:
+        # Cas 1 : liste ["humour", "sketch"] → "humour, sketch".
+        self.assertEqual(
+            niches_str({"niches": ["humour", "sketch"]}),
+            "humour, sketch",
+        )
 
-    def test_fmt_hashtags_empty_or_none(self) -> None:
-        self.assertEqual(_fmt_hashtags([]), "(aucun)")
-        self.assertEqual(_fmt_hashtags(None), "(aucun)")
-        self.assertEqual(_fmt_hashtags(["", "  "]), "(aucun)")
+    def test_string_passed_through(self) -> None:
+        # Cas 2 : string "humour" → "humour" (rétro-compat ancien schéma).
+        self.assertEqual(niches_str({"niche": "humour"}), "humour")
 
-    def test_fmt_hashtags_string_passthrough(self) -> None:
-        self.assertEqual(_fmt_hashtags("#a #b"), "#a #b")
+    def test_empty_entry_falls_back_to_humour(self) -> None:
+        # Cas 3 : entrée vide → fallback "humour".
+        self.assertEqual(niches_str({}), "humour")
 
-    def test_fmt_optional(self) -> None:
-        self.assertEqual(_fmt_optional("AUD42"), "AUD42")
-        self.assertEqual(_fmt_optional(None), "(inconnu)")
-        self.assertEqual(_fmt_optional("", default="(vide)"), "(vide)")
-        self.assertEqual(_fmt_optional(0), "0")
-
-    def test_fmt_ratio(self) -> None:
-        self.assertEqual(_fmt_ratio(0.283), "0.283")
-        self.assertEqual(_fmt_ratio(None), "(inconnu)")
-        self.assertEqual(_fmt_ratio("not_a_number"), "(inconnu)")
-        self.assertEqual(_fmt_ratio(0), "0.000")
-
-
-# ---------------------------------------------------------------------------
-# build_generator_pair
-# ---------------------------------------------------------------------------
-
-
-class BuildGeneratorPairTest(unittest.TestCase):
-    def test_full_entry_produces_complete_input(self) -> None:
-        entry = _entry()
-        pair = build_generator_pair(entry, entry["top_comments"][0])
-        self.assertIsNotNone(pair)
-        self.assertEqual(pair["instruction"], GENERATOR_INSTRUCTION)
-        self.assertEqual(pair["output"], "mdr trop vrai")
-        # Toutes les features sont injectées dans l'input
-        self.assertIn("T-type: T2", pair["input"])
-        self.assertIn("Niche: humour", pair["input"])
-        self.assertIn("Caption: moment culte F1", pair["input"])
-        self.assertIn("Hashtags: #F1 #monaco", pair["input"])
-        self.assertIn("Audio: AUD123", pair["input"])
-
-    def test_missing_caption_audio_falls_back_to_placeholders(self) -> None:
-        entry = _entry()
-        entry["generator_input"]["caption"] = None
-        entry["generator_input"]["audio_id"] = None
-        entry["generator_input"]["hashtags"] = []
-        pair = build_generator_pair(entry, entry["top_comments"][0])
-        self.assertIsNotNone(pair)
-        self.assertIn("Caption: (vide)", pair["input"])
-        self.assertIn("Hashtags: (aucun)", pair["input"])
-        self.assertIn("Audio: (aucun)", pair["input"])
-
-    def test_empty_text_returns_none(self) -> None:
-        entry = _entry()
-        comment = {"text": "  ", "likes": 0, "t_type": "T2", "niche": "humour"}
-        self.assertIsNone(build_generator_pair(entry, comment))
-
-    def test_missing_ttype_returns_none(self) -> None:
-        entry = _entry()
-        entry["generator_input"]["t_type"] = ""
-        comment = {"text": "ok", "likes": 1, "t_type": "", "niche": "humour"}
-        self.assertIsNone(build_generator_pair(entry, comment))
-
-    def test_comment_ttype_overrides_entry_ttype(self) -> None:
-        """Le t_type du commentaire prime — chaque commentaire est self-contained."""
-        entry = _entry()
-        entry["generator_input"]["t_type"] = "T2"
-        # Manually labelled differently (cas humain validateur)
-        comment = {"text": "ok", "likes": 5, "t_type": "T3b", "niche": "humour"}
-        pair = build_generator_pair(entry, comment)
-        self.assertIsNotNone(pair)
-        self.assertIn("T-type: T3b", pair["input"])
-
-
-# ---------------------------------------------------------------------------
-# build_classifier_pair
-# ---------------------------------------------------------------------------
-
-
-class BuildClassifierPairTest(unittest.TestCase):
-    def test_full_entry_produces_complete_pair(self) -> None:
-        entry = _entry()
-        pair = build_classifier_pair(entry, entry["top_comments"][0])
-        self.assertIsNotNone(pair)
-        self.assertEqual(pair["instruction"], CLASSIFIER_INSTRUCTION)
-        self.assertEqual(pair["output"], "T2")  # le label
-        self.assertIn("Commentaire: mdr trop vrai", pair["input"])
-        self.assertIn("Niche: humour", pair["input"])
-        self.assertIn("Vues: 500000", pair["input"])
-        self.assertIn("Ratio comments/likes: 0.283", pair["input"])
-
-    def test_invalid_ttype_filtered(self) -> None:
-        entry = _entry()
-        comment = {"text": "ok", "likes": 5, "t_type": "TX", "niche": "humour"}
-        self.assertIsNone(build_classifier_pair(entry, comment))
-
-    def test_missing_metrics_use_unknown_placeholder(self) -> None:
-        entry = _entry()
-        entry["classifier_context"] = {
-            "views": None,
-            "likes": None,
-            "comment_count": None,
-            "shares": None,
-            "comment_to_like_ratio": None,
-            "share_to_like_ratio": None,
-        }
-        pair = build_classifier_pair(entry, entry["top_comments"][0])
-        self.assertIsNotNone(pair)
-        self.assertIn("Vues: (inconnu)", pair["input"])
-        self.assertIn("Ratio comments/likes: (inconnu)", pair["input"])
-
-    def test_empty_text_returns_none(self) -> None:
-        self.assertIsNone(
-            build_classifier_pair(_entry(), {"text": "", "t_type": "T2", "niche": "x"})
+    def test_list_with_empty_items_filtered(self) -> None:
+        # Cas 4 : liste avec items vides → filtrés avant jointure.
+        self.assertEqual(
+            niches_str({"niches": ["humour", "", "sketch"]}),
+            "humour, sketch",
         )
 
 
 # ---------------------------------------------------------------------------
-# build_datasets : agrégation
+# generate_classifier_dataset
 # ---------------------------------------------------------------------------
 
 
-class BuildDatasetsTest(unittest.TestCase):
-    def test_three_comments_produce_three_pairs_in_each(self) -> None:
-        entries = [_entry()]
-        gen, cls = build_datasets(entries)
-        self.assertEqual(len(gen), 3)
-        self.assertEqual(len(cls), 3)
-        # Toutes les paires generator partagent la même instruction.
-        for p in gen:
-            self.assertEqual(p["instruction"], GENERATOR_INSTRUCTION)
-        for p in cls:
-            self.assertEqual(p["instruction"], CLASSIFIER_INSTRUCTION)
+class ClassifierDatasetTest(unittest.TestCase):
+    """5 cas du brief — chaque cas écrit un fichier réel et le relit."""
 
-    def test_empty_top_comments_skipped(self) -> None:
-        entry = _entry()
-        entry["top_comments"] = []
-        gen, cls = build_datasets([entry])
-        self.assertEqual(gen, [])
-        self.assertEqual(cls, [])
+    def setUp(self) -> None:
+        self.tmpdir = Path(tempfile.mkdtemp())
+        self.out_path = self.tmpdir / "dataset_classifier.jsonl"
+        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
 
-    def test_invalid_ttype_kept_in_generator_dropped_in_classifier(self) -> None:
-        """Asymétrie voulue : un T-type non standard reste exploitable pour le
-        generator (on connaît au moins le label fourni à l'inférence) mais pas
-        pour le classifier (label hors set fini)."""
-        entry = _entry()
-        entry["generator_input"]["t_type"] = "TX"
-        for c in entry["top_comments"]:
-            c["t_type"] = "TX"
-        gen, cls = build_datasets([entry])
-        self.assertEqual(len(gen), 3)
-        self.assertEqual(cls, [])
+    def test_valid_entry_produces_complete_jsonl_line(self) -> None:
+        entry = _valid_classifier_entry()
+        n = generate_classifier_dataset([entry], self.out_path)
+        self.assertEqual(n, 1)
+        rows = _read_jsonl(self.out_path)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["instruction"], CLASSIFIER_INSTRUCTION)
+        self.assertEqual(row["output"], "T2")
+        # Tous les champs sont présents dans l'input.
+        self.assertIn("Commentaire: mdr trop vrai", row["input"])
+        self.assertIn("Niches du contenu: humour, sketch", row["input"])
+        self.assertIn("Vues: 500000", row["input"])
+        # Ratio formaté en 4 décimales (cf. brief).
+        self.assertIn("Ratio comments/likes: 0.2834", row["input"])
 
-    def test_non_dict_comments_filtered(self) -> None:
-        entry = _entry()
-        entry["top_comments"] = ["pas un dict", None, {"text": "ok", "t_type": "T2", "niche": "x"}]
-        gen, cls = build_datasets([entry])
-        self.assertEqual(len(gen), 1)
-        self.assertEqual(len(cls), 1)
+    def test_empty_text_is_skipped(self) -> None:
+        entry = _valid_classifier_entry(text="   ")
+        n = generate_classifier_dataset([entry], self.out_path)
+        self.assertEqual(n, 0)
+        # Le fichier est créé (vide) — pour que les pipelines downstream
+        # voient un artefact stable.
+        self.assertEqual(_read_jsonl(self.out_path), [])
+
+    def test_invalid_ttype_t9_is_skipped(self) -> None:
+        entry = _valid_classifier_entry(t_type="T9")
+        n = generate_classifier_dataset([entry], self.out_path)
+        self.assertEqual(n, 0)
+        self.assertEqual(_read_jsonl(self.out_path), [])
+
+    def test_missing_views_and_ratio_default_to_zero(self) -> None:
+        entry = _valid_classifier_entry()
+        del entry["views"]
+        del entry["comment_to_like_ratio"]
+        n = generate_classifier_dataset([entry], self.out_path)
+        self.assertEqual(n, 1)
+        rows = _read_jsonl(self.out_path)
+        self.assertIn("Vues: 0", rows[0]["input"])
+        # 0.0 formaté en 4 décimales.
+        self.assertIn("Ratio comments/likes: 0.0000", rows[0]["input"])
+
+    def test_three_entries_one_invalid_writes_two_lines(self) -> None:
+        entries = [
+            _valid_classifier_entry(text="ligne 1"),
+            _valid_classifier_entry(text="", t_type="T2"),  # invalide : text vide
+            _valid_classifier_entry(text="ligne 3"),
+        ]
+        n = generate_classifier_dataset(entries, self.out_path)
+        self.assertEqual(n, 2)
+        rows = _read_jsonl(self.out_path)
+        outputs = [r["output"] for r in rows]
+        self.assertEqual(outputs, ["T2", "T2"])
+        captures = [r["input"] for r in rows]
+        self.assertIn("ligne 1", captures[0])
+        self.assertIn("ligne 3", captures[1])
 
 
 # ---------------------------------------------------------------------------
-# IO + run() bout en bout
+# generate_generator_dataset
 # ---------------------------------------------------------------------------
 
 
-class RunIntegrationTest(unittest.TestCase):
+class GeneratorDatasetTest(unittest.TestCase):
+    """5 cas du brief — vérifie l'input prompt et le fallback t_type."""
+
+    def setUp(self) -> None:
+        self.tmpdir = Path(tempfile.mkdtemp())
+        self.out_path = self.tmpdir / "dataset_generator.jsonl"
+        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
+
+    def test_t_type_profile_is_used_when_present(self) -> None:
+        # Cas 1 : t_type_profile présent → priorité absolue.
+        entry = _valid_generator_entry(t_type_profile="T3b", t_type="T2")
+        n = generate_generator_dataset([entry], self.out_path)
+        self.assertEqual(n, 1)
+        rows = _read_jsonl(self.out_path)
+        self.assertEqual(rows[0]["instruction"], GENERATOR_INSTRUCTION)
+        self.assertEqual(rows[0]["output"], "le passage 0:08")
+        self.assertIn("T-type commentateur: T3b", rows[0]["input"])
+        # ``t_type`` ne doit PAS écraser ``t_type_profile``.
+        self.assertNotIn("T-type commentateur: T2", rows[0]["input"])
+
+    def test_t_type_profile_missing_falls_back_to_t_type(self) -> None:
+        # Cas 2 : pas de t_type_profile → fallback sur t_type.
+        entry = _valid_generator_entry(t_type="T4")
+        del entry["t_type_profile"]
+        generate_generator_dataset([entry], self.out_path)
+        rows = _read_jsonl(self.out_path)
+        self.assertIn("T-type commentateur: T4", rows[0]["input"])
+
+    def test_hashtags_list_joined_by_comma(self) -> None:
+        # Cas 3 : hashtags liste → jointure par virgule (pas de '#').
+        entry = _valid_generator_entry(hashtags=["F1", "monaco"])
+        generate_generator_dataset([entry], self.out_path)
+        rows = _read_jsonl(self.out_path)
+        self.assertIn("Hashtags: F1, monaco", rows[0]["input"])
+
+    def test_hashtags_string_passed_through(self) -> None:
+        # Cas 4 : hashtags string → tel quel (pas de retraitement).
+        entry = _valid_generator_entry(hashtags="#F1 #monaco")
+        generate_generator_dataset([entry], self.out_path)
+        rows = _read_jsonl(self.out_path)
+        self.assertIn("Hashtags: #F1 #monaco", rows[0]["input"])
+
+    def test_empty_text_is_skipped(self) -> None:
+        # Cas 5 : commentaire vide → entrée ignorée.
+        entry = _valid_generator_entry(text="   ")
+        n = generate_generator_dataset([entry], self.out_path)
+        self.assertEqual(n, 0)
+        self.assertEqual(_read_jsonl(self.out_path), [])
+
+
+# ---------------------------------------------------------------------------
+# main() — CLI / exit codes
+# ---------------------------------------------------------------------------
+
+
+class MainTest(unittest.TestCase):
+    """3 cas du brief — orchestration bout-en-bout via la CLI."""
+
     def setUp(self) -> None:
         self.tmpdir = Path(tempfile.mkdtemp())
         self.training_path = self.tmpdir / "training_comments.json"
-        self.gen_path = self.tmpdir / "generator_dataset.json"
-        self.cls_path = self.tmpdir / "classifier_dataset.json"
+        self.output_dir = self.tmpdir / "out"
+        self.classifier_out = self.output_dir / CLASSIFIER_FILENAME
+        self.generator_out = self.output_dir / GENERATOR_FILENAME
+        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
 
     def _write_training(self, entries: list[dict]) -> None:
         self.training_path.write_text(
@@ -253,125 +250,73 @@ class RunIntegrationTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_run_writes_two_files(self) -> None:
-        self._write_training([_entry()])
-        gen, cls = run(
-            training_path=self.training_path,
-            generator_path=self.gen_path,
-            classifier_path=self.cls_path,
+    def _argv(self) -> list[str]:
+        return [
+            "--training-path", str(self.training_path),
+            "--output-dir", str(self.output_dir),
+        ]
+
+    def test_empty_training_yields_zero_lines_in_both_files_exit_zero(self) -> None:
+        self._write_training([])
+        rc = main(self._argv())
+        self.assertEqual(rc, 0)
+        # Les deux fichiers sont créés (vides) — artefact stable downstream.
+        self.assertTrue(self.classifier_out.exists())
+        self.assertTrue(self.generator_out.exists())
+        self.assertEqual(_read_jsonl(self.classifier_out), [])
+        self.assertEqual(_read_jsonl(self.generator_out), [])
+
+    def test_two_valid_entries_produce_two_lines_in_each_file(self) -> None:
+        # Schéma plat unifié : chaque entrée a tous les champs des deux datasets.
+        entries = [
+            {
+                "text": "mdr trop vrai",
+                "t_type": "T2",
+                "t_type_profile": "T2",
+                "niches": ["humour"],
+                "views": 1000,
+                "comment_to_like_ratio": 0.1,
+                "caption": "cap 1",
+                "hashtags": ["a"],
+                "audio_id": "AUD1",
+            },
+            {
+                "text": "le passage 0:08",
+                "t_type": "T3b",
+                "t_type_profile": "T3b",
+                "niches": ["humour", "sketch"],
+                "views": 2000,
+                "comment_to_like_ratio": 0.2,
+                "caption": "cap 2",
+                "hashtags": ["b", "c"],
+                "audio_id": "AUD2",
+            },
+        ]
+        self._write_training(entries)
+        rc = main(self._argv())
+        self.assertEqual(rc, 0)
+
+        cls_rows = _read_jsonl(self.classifier_out)
+        gen_rows = _read_jsonl(self.generator_out)
+        self.assertEqual(len(cls_rows), 2)
+        self.assertEqual(len(gen_rows), 2)
+        # Sanity check : labels classifier corrects.
+        self.assertEqual([r["output"] for r in cls_rows], ["T2", "T3b"])
+        # Sanity check : outputs generator = textes des commentaires.
+        self.assertEqual(
+            [r["output"] for r in gen_rows],
+            ["mdr trop vrai", "le passage 0:08"],
         )
-        self.assertEqual(len(gen), 3)
-        self.assertEqual(len(cls), 3)
-        self.assertTrue(self.gen_path.exists())
-        self.assertTrue(self.cls_path.exists())
-        # Le top-level est une LISTE (Alpaca convention pour datasets HF).
-        gen_disk = json.loads(self.gen_path.read_text(encoding="utf-8"))
-        cls_disk = json.loads(self.cls_path.read_text(encoding="utf-8"))
-        self.assertIsInstance(gen_disk, list)
-        self.assertIsInstance(cls_disk, list)
-        self.assertEqual(gen_disk[0]["output"], "mdr trop vrai")
-        self.assertEqual(cls_disk[0]["output"], "T2")
 
-    def test_stats_only_does_not_write(self) -> None:
-        self._write_training([_entry()])
-        run(
-            stats_only=True,
-            training_path=self.training_path,
-            generator_path=self.gen_path,
-            classifier_path=self.cls_path,
-        )
-        self.assertFalse(self.gen_path.exists())
-        self.assertFalse(self.cls_path.exists())
-
-    def test_run_mock_does_not_read_disk(self) -> None:
-        """``--mock`` doit produire 30 paires (10 entrées × 3 commentaires).
-
-        Une seule entrée mock est de t_type ``T1`` (i=5 dans la rotation) ;
-        ``T1`` est dans le set valide → le classifier garde tout aussi.
-        """
-        # Pas de fichier d'entrée — _read_training ne doit pas être appelé.
-        gen, cls = run(
-            mock=True,
-            stats_only=True,
-            training_path=self.tmpdir / "does_not_exist.json",
-        )
-        self.assertEqual(len(gen), 30)
-        self.assertEqual(len(cls), 30)
-
-    def test_run_missing_input_file_returns_empty(self) -> None:
-        # Pas de fichier → entries=[] silencieusement (best-effort).
-        gen, cls = run(
-            training_path=self.tmpdir / "absent.json",
-            generator_path=self.gen_path,
-            classifier_path=self.cls_path,
-        )
-        self.assertEqual(gen, [])
-        self.assertEqual(cls, [])
-        # Les deux fichiers de sortie sont quand même créés (vides).
-        self.assertEqual(json.loads(self.gen_path.read_text(encoding="utf-8")), [])
-        self.assertEqual(json.loads(self.cls_path.read_text(encoding="utf-8")), [])
-
-    def test_atomic_write_creates_parent_dir(self) -> None:
-        nested = self.tmpdir / "a" / "b" / "c.json"
-        _atomic_write_json(nested, [{"k": "v"}])
-        self.assertTrue(nested.exists())
-        self.assertEqual(json.loads(nested.read_text(encoding="utf-8")), [{"k": "v"}])
-
-    def test_read_training_invalid_json_raises(self) -> None:
-        self.training_path.write_text("not json", encoding="utf-8")
-        with self.assertRaises(ValueError):
-            _read_training(self.training_path)
-
-    def test_read_training_root_not_dict_raises(self) -> None:
-        self.training_path.write_text("[]", encoding="utf-8")
-        with self.assertRaises(ValueError):
-            _read_training(self.training_path)
-
-
-# ---------------------------------------------------------------------------
-# Stats / seuil de readiness
-# ---------------------------------------------------------------------------
-
-
-class PrintStatsTest(unittest.TestCase):
-    def test_below_threshold_says_not_ready(self) -> None:
-        buf = io.StringIO()
-        _print_stats(total_entries=5, generator_count=10, classifier_count=10, out=buf)
-        msg = buf.getvalue()
-        self.assertIn("Pas encore prêt", msg)
-        self.assertIn("Total entrées training_comments.json : 5", msg)
-        self.assertIn("Generator dataset : 10 paires", msg)
-
-    def test_above_threshold_says_ready(self) -> None:
-        buf = io.StringIO()
-        _print_stats(
-            total_entries=300,
-            generator_count=MIN_PAIRS_READY + 1,
-            classifier_count=MIN_PAIRS_READY + 1,
-            out=buf,
-        )
-        msg = buf.getvalue()
-        self.assertIn("Prêt pour fine-tuning", msg)
-
-
-# ---------------------------------------------------------------------------
-# Mock entries : structure cohérente avec le builder
-# ---------------------------------------------------------------------------
-
-
-class MockEntriesTest(unittest.TestCase):
-    def test_count_and_structure(self) -> None:
-        entries = _mock_entries(10)
-        self.assertEqual(len(entries), 10)
-        for e in entries:
-            self.assertIn("generator_input", e)
-            self.assertIn("classifier_context", e)
-            self.assertIn("top_comments", e)
-            self.assertEqual(len(e["top_comments"]), 3)
-            for c in e["top_comments"]:
-                self.assertIn("text", c)
-                self.assertIn("t_type", c)
-                self.assertIn("niche", c)
+    def test_missing_training_file_returns_exit_one_no_files_created(self) -> None:
+        # On ne crée PAS self.training_path — il doit être absent.
+        self.assertFalse(self.training_path.exists())
+        rc = main(self._argv())
+        self.assertEqual(rc, 1)
+        # Aucun fichier de sortie ne doit avoir été créé : on bail-out
+        # avant l'étape d'écriture.
+        self.assertFalse(self.classifier_out.exists())
+        self.assertFalse(self.generator_out.exists())
 
 
 if __name__ == "__main__":

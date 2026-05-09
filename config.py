@@ -1,5 +1,6 @@
 """Configuration chargée depuis l'environnement et un fichier .env local."""
 
+import logging
 import os
 from pathlib import Path
 
@@ -84,3 +85,98 @@ OLLAMA_URL = (
     or "http://localhost:11434/api/generate"
 ).strip()
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b").strip()
+
+
+# ----------------------------------------------------------------------------
+# Niches éditoriales — vocabulaire fermé pour la classification de profils
+# ----------------------------------------------------------------------------
+#
+# Cette liste est volontairement **fermée** (pas d'override env) pour deux
+# raisons :
+#
+# 1. Les niches sont des **labels d'apprentissage** : si Discovery commence à
+#    en inventer (« humour_noir_paris » ou autre), les datasets de fine-tuning
+#    se fragmentent et les T-types par niche perdent leur stabilité.
+# 2. Les valeurs sont co-référencées par les seeds (``data/seeds.json``), les
+#    profils en base (``data/database.json:niche``), et les prompts du
+#    classifier (``modules/classifier.py``). Une dérive doit être un acte
+#    explicite (modifier ce code), pas une coquille dans un fichier de config.
+#
+# Ordre = thématique (humour → lifestyle → savoir → mode → sport → niches
+# spécifiques). Pas alphabétique pour faciliter la lecture humaine.
+VALID_NICHES: frozenset[str] = frozenset({
+    # Humour
+    "humour", "sketch", "stand_up", "imitation", "réaction", "brainrot",
+    "trend", "prank", "POV", "relatable", "dark_humor", "cringe", "absurde",
+    # Lifestyle / personnel
+    "lifestyle", "vlog", "parentalité", "couple", "routine", "travel",
+    # Savoir / tech
+    "ai", "vulgarisation", "review_tech", "dev",
+    # Mode / beauté
+    "makeup", "skincare", "fashion", "thrift",
+    # Sport
+    "fitness", "sport_pro",
+    # Pop culture / divertissement
+    "gaming", "musique", "danse", "animaux",
+    # Verticales sérieuses
+    "education", "finance", "psychologie",
+    # Cuisine
+    "cuisine", "food_review",
+    # Méta-formats
+    "viral", "storytelling", "faceless", "collab",
+})
+
+
+_NICHE_LOG = logging.getLogger("aitertainment.config.niches")
+
+
+def validate_niches(niches: list[str]) -> list[str]:
+    """Filtre ``niches`` pour ne garder que les labels présents dans ``VALID_NICHES``.
+
+    Comportement :
+
+    * Tout label inconnu est **logué** en ``WARNING`` via le logger standard
+      ``aitertainment.config.niches`` (un warning par label inconnu, pour
+      rendre la grep-trace exploitable côté ops).
+    * La liste retournée préserve l'ordre d'entrée et déduplique
+      silencieusement (utile : seeds.json contient parfois deux fois la même
+      niche par copy-paste).
+    * **Jamais vide** : si tout est filtré (ou si l'entrée est vide / non
+      itérable), on retourne ``["humour"]`` — c'est la niche par défaut du
+      projet, présente dans ``VALID_NICHES``, et qui correspond au domaine
+      principal de Discovery.
+
+    Tolère ``None`` et les types non-string en entrée sans lever (chaque
+    élément est passé par ``str(...)``) — on est appelés depuis du JSON
+    brut, où une niche absente peut être ``None`` ou un nombre par accident.
+    """
+    if not isinstance(niches, list):
+        _NICHE_LOG.warning(
+            "validate_niches : entrée non-liste (%s) — fallback sur ['humour'].",
+            type(niches).__name__,
+        )
+        return ["humour"]
+
+    seen: set[str] = set()
+    kept: list[str] = []
+    for raw in niches:
+        if raw is None:
+            continue
+        label = str(raw).strip()
+        if not label:
+            continue
+        if label not in VALID_NICHES:
+            _NICHE_LOG.warning(
+                "validate_niches : niche inconnue rejetée %r (utilise une "
+                "valeur de VALID_NICHES).",
+                label,
+            )
+            continue
+        if label in seen:
+            continue
+        seen.add(label)
+        kept.append(label)
+
+    if not kept:
+        return ["humour"]
+    return kept

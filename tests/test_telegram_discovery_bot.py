@@ -18,6 +18,10 @@ SAMPLE_CANDIDATE = {
     "username": "promising_creator",
     "domain": "humour",
     "platform": "instagram",
+    # Schéma 2026-05 : ``niches`` (liste) + alias rétrocompat ``niche``.
+    # ``score_profile`` produit ces deux champs depuis ``_seed_niches``.
+    "niches": ["humour", "sketch"],
+    "niche": "humour",
     "followers": 12_000,
     "score": 742.0,
     "score_reels": 780.0,
@@ -257,7 +261,11 @@ class HandleCallbackTest(unittest.TestCase):
         creator = wl["creators"][0]
         self.assertEqual(creator["username"], "promising_creator")
         self.assertEqual(creator["t_type"], "T2")
-        self.assertEqual(creator["niche"], "humour-zoomer")  # tiré de seeds.json
+        # Schéma 2026-05 : ``niches`` (liste) lue depuis le candidate, plus
+        # depuis seeds.json. Alias ``niche`` = ``niches[0]`` pour les callers
+        # legacy (watcher.py).
+        self.assertEqual(creator["niches"], ["humour", "sketch"])
+        self.assertEqual(creator["niche"], "humour")
         self.assertIsNone(creator["last_post_id"])
         # engagement_baseline tiré de reel_engagement_median en priorité
         self.assertAlmostEqual(creator["engagement_baseline"], 0.06, places=4)
@@ -763,6 +771,94 @@ class HandleEvolutionCallbackTest(unittest.TestCase):
             db_path=self.db_path,
         )
         self.assertIn("pas encore en base", result)
+
+
+class AddToWatchlistNichesSchemaTest(unittest.TestCase):
+    """Schéma 2026-05 : ``add_to_watchlist`` lit les niches du candidate."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.wl_path = Path(self.tmp.name) / "watchlist.json"
+        self.wl_path.write_text(json.dumps({"creators": []}), encoding="utf-8")
+        # ``add_to_watchlist`` retient ``seeds_path`` dans sa signature pour
+        # rétro-compat — on lui passe un chemin existant minimal.
+        self.seeds_path = Path(self.tmp.name) / "seeds.json"
+        _write_seeds(self.seeds_path)
+
+    def _read_creator(self) -> dict[str, Any]:
+        wl = json.loads(self.wl_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(wl["creators"]), 1)
+        return wl["creators"][0]
+
+    def test_priority_to_candidate_niches_list(self) -> None:
+        cand = {**SAMPLE_CANDIDATE, "niches": ["humour", "sketch", "imitation"]}
+        added = bot.add_to_watchlist(
+            cand,
+            t_type_final="T2",
+            watchlist_path=self.wl_path,
+            seeds_path=self.seeds_path,
+        )
+        self.assertTrue(added)
+        creator = self._read_creator()
+        self.assertEqual(creator["niches"], ["humour", "sketch", "imitation"])
+        self.assertEqual(creator["niche"], "humour")  # alias = niches[0]
+
+    def test_falls_back_to_candidate_niche_string(self) -> None:
+        # Candidate sans ``niches`` mais avec l'ancien champ ``niche`` string.
+        cand = {**SAMPLE_CANDIDATE, "niche": "gaming"}
+        cand.pop("niches", None)
+        added = bot.add_to_watchlist(
+            cand,
+            t_type_final="T2",
+            watchlist_path=self.wl_path,
+            seeds_path=self.seeds_path,
+        )
+        self.assertTrue(added)
+        creator = self._read_creator()
+        self.assertEqual(creator["niches"], ["gaming"])
+        self.assertEqual(creator["niche"], "gaming")
+
+    def test_ultimate_fallback_humour(self) -> None:
+        # Candidate qui n'a NI niches NI niche → fallback ``["humour"]``.
+        cand = {k: v for k, v in SAMPLE_CANDIDATE.items() if k not in ("niches", "niche")}
+        added = bot.add_to_watchlist(
+            cand,
+            t_type_final="T2",
+            watchlist_path=self.wl_path,
+            seeds_path=self.seeds_path,
+        )
+        self.assertTrue(added)
+        creator = self._read_creator()
+        self.assertEqual(creator["niches"], ["humour"])
+        self.assertEqual(creator["niche"], "humour")
+
+    def test_filters_empty_strings_in_niches_list(self) -> None:
+        cand = {**SAMPLE_CANDIDATE, "niches": ["", "humour", "  ", "sketch"]}
+        bot.add_to_watchlist(
+            cand,
+            t_type_final="T2",
+            watchlist_path=self.wl_path,
+            seeds_path=self.seeds_path,
+        )
+        creator = self._read_creator()
+        # Strings vides / whitespace filtrées.
+        self.assertEqual(creator["niches"], ["humour", "sketch"])
+
+    def test_does_not_read_domain_meta_for_niche(self) -> None:
+        """Régression : la niche ne doit plus venir de seeds.json."""
+        cand = {**SAMPLE_CANDIDATE, "niches": ["humour", "réaction"]}
+        with patch.object(bot, "_domain_meta") as mock_dm:
+            bot.add_to_watchlist(
+                cand,
+                t_type_final="T2",
+                watchlist_path=self.wl_path,
+                seeds_path=self.seeds_path,
+            )
+        # ``_domain_meta`` n'est plus appelé pour résoudre la niche.
+        mock_dm.assert_not_called()
+        creator = self._read_creator()
+        self.assertEqual(creator["niches"], ["humour", "réaction"])
 
 
 if __name__ == "__main__":

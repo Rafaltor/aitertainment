@@ -612,7 +612,16 @@ def collect_training_data(
         )
         return []
 
-    niche = str(profile.get("niche") or "")
+    # Niches (schéma 2026-05) : on lit la liste ; le caller dataset_builder
+    # n'utilise qu'**une seule** niche par entrée (champ string ``niche``
+    # consommé en aval par classifier / generator) — on prend la primaire
+    # ``niches[0]``. Migration lazy : si le profil n'a que l'ancien champ
+    # ``niche`` (string), on l'utilise tel quel.
+    niches_raw = profile.get("niches") or [profile.get("niche") or ""]
+    niche = next(
+        (str(n).strip() for n in niches_raw if isinstance(n, str) and str(n).strip()),
+        "",
+    )
     t_type = profile.get("t_type_final") or profile.get("t_type_original")
 
     try:

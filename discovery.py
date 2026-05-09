@@ -56,7 +56,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import requests
 from instagrapi.exceptions import (
     ClientThrottledError,
     LoginRequired,
@@ -160,12 +159,25 @@ SCORE_TREND_W = SCORE_REEL_TREND_W
 SCORE_T_TYPE_W = SCORE_REEL_T_TYPE_W
 SCORE_FREQ_W = SCORE_REEL_FREQ_W
 
-CANDIDATE_SCORE_THRESHOLD = 500.0
-
-# Seuil distinct (plus bas) au-dessus duquel ``score_and_persist`` envoie une
-# notif Telegram. Tout score est de toute façon upserté dans ``database.json``.
+# Seuil **unifié** entre les deux chemins de scoring (résout l'ancien bug où
+# ``explore_network`` blacklistait sans notif les profils 350 < score < 500
+# alors que ``--score`` les notifiait correctement) :
+#
+# - score > seuil → record_candidate + notif Telegram (Bot #2 Discovery).
+# - score ≤ seuil → blacklist ("rejected", jamais reproposé).
+#
+# Tout score reste upserté dans ``database.json`` indépendamment du seuil —
+# seul le ratio candidat/blacklist + la notif sont gouvernés ici.
+#
 # Source de vérité : ``config.DISCOVERY_NOTIFY_THRESHOLD`` (overridable .env).
 DISCOVERY_NOTIFY_THRESHOLD = float(config.DISCOVERY_NOTIFY_THRESHOLD)
+
+# Alias historique : ``_score_one_in_domain`` continuait d'utiliser ce nom
+# avec une valeur hardcodée à 500. On l'aligne désormais sur
+# ``DISCOVERY_NOTIFY_THRESHOLD`` pour que les deux chemins (CLI ``--score``
+# via ``score_and_persist`` et ``explore_network`` via ``_score_one_in_domain``)
+# prennent les mêmes décisions notif/blacklist.
+CANDIDATE_SCORE_THRESHOLD = DISCOVERY_NOTIFY_THRESHOLD
 
 # Profils explorés par seed (suffisant pour découvrir 50 candidats sans
 # attaquer le rate limit instagrapi sur user_following).
@@ -742,7 +754,7 @@ def _classify_recent_comments(
     client: Any,
     chronological_rows: list[dict[str, Any]],
     *,
-    niche: str,
+    niches: list[str] | str,
     log: logging.Logger,
     sleep_between_posts: bool = True,
 ) -> tuple[dict[str, float], str | None]:
@@ -855,7 +867,7 @@ def _classify_recent_comments(
                 )
         else:
             try:
-                result = classifier.classify(texts, niche=niche)
+                result = classifier.classify(texts, niches=niches)
                 ttype = str(result.get("type") or "")
                 conf = float(result.get("confidence") or 0.0)
                 if ttype:
@@ -1422,11 +1434,20 @@ def score_profile(
     else:
         needed = COMMENTS_MEDIA_SAMPLE - len(reels)
         media_for_classification = reels + posts[-needed:]
-    niche = str(domain.get("niche") or domain.get("name") or "")
+    # Niches (liste) : depuis le nouveau schéma seeds.json (``domain["niches"]``)
+    # avec rétro-compat pour l'ancien champ string ``domain["niche"]``. La
+    # liste est validée contre ``config.VALID_NICHES`` — ``validate_niches``
+    # garantit ``len(niches) >= 1`` (fallback ``["humour"]``).
+    niches = (
+        list(domain.get("niches") or [])
+        or [str(domain.get("niche") or domain.get("name") or "humour")]
+    )
+    niches = config.validate_niches(niches)
+    # Le classifier accepte la liste complète (schéma 2026-05).
     distribution, dominant = _classify_recent_comments(
         client,
         media_for_classification,
-        niche=niche,
+        niches=niches,
         log=log,
     )
 
@@ -1479,6 +1500,12 @@ def score_profile(
     return {
         "username": u,
         "domain": str(domain.get("name") or ""),
+        # Schéma 2026-05 : ``niches`` (liste validée contre ``VALID_NICHES``)
+        # est désormais l'**unique** source de vérité — le champ string
+        # ``niche`` n'est plus produit. Les callers downstream (database,
+        # dataset_builder, telegram bot) lisent ``niches`` en priorité avec
+        # un fallback rétro-compat sur l'ancien champ.
+        "niches": list(niches),
         "platform": "instagram",
         "followers": follower_count,
         "media_count": media_count,
@@ -1684,81 +1711,48 @@ def _notify_candidate(
     log: logging.Logger,
     *,
     mock: bool = False,
-) -> None:
-    """Envoie une alerte au Bot Telegram #2 (best-effort).
+) -> dict[str, Any] | None:
+    """Envoie une alerte au Bot Telegram #2 — **avec boutons inline**.
 
-    Ne lève jamais — un échec réseau est juste loggé en warning.
+    Délègue au vrai ``telegram_discovery_bot.notify_candidate`` (qui construit
+    le ``reply_markup`` ✅ ❌ ✏️ 👁 📈 attendu par le validateur). L'import
+    est tardif pour éviter le cycle ``discovery → telegram_discovery_bot →
+    discovery``.
+
+    Auparavant, cette fonction faisait directement un ``requests.post`` vers
+    ``sendMessage`` sans ``reply_markup`` — d'où les notifications "sans
+    boutons" rapportées par le validateur quand la notif venait de
+    ``explore_network`` (alors que ``score_and_persist`` passait déjà par
+    le bot et avait les boutons).
+
+    Retourne la réponse Telegram (``dict``) ou ``None`` en mock / config
+    manquante / erreur. Ne lève jamais.
     """
+    username = result.get("username")
     if mock:
         log.info(
             "[mock] notif candidate skip — @%s score=%.0f",
-            result.get("username"),
+            username,
             result.get("score") or 0.0,
         )
-        return
+        return None
 
-    token = (config.TELEGRAM_DISCOVERY_TOKEN or "").strip()
-    chat_id = (config.TELEGRAM_DISCOVERY_CHAT_ID or "").strip()
-    if not token or not chat_id:
-        log.info(
-            "Bot Discovery non configuré — candidat @%s loggé seulement.",
-            result.get("username"),
-        )
-        return
-
-    distrib = result.get("t_type_distribution") or {}
-    distrib_str = ", ".join(
-        f"{k}={v:.2f}" for k, v in sorted(distrib.items(), key=lambda kv: -kv[1])
-    ) or "n/a"
-    bio = (result.get("biography") or "").strip()
-    if len(bio) > 160:
-        bio = bio[:157] + "..."
-
-    reels_n = int(result.get("reels_count") or 0)
-    posts_n = int(result.get("posts_count") or 0)
-    reel_w = float(result.get("reel_weight") or 0.0)
-    post_w = float(result.get("post_weight") or 0.0)
-    reel_ratio = result.get("reel_ratio_median")
-    post_ratio = result.get("post_ratio_median")
-    reel_trend = result.get("reel_trend")
-
-    metric_lines: list[str] = []
-    if reels_n:
-        metric_lines.append(
-            f"🎞 Reels {reels_n} (w={reel_w:.2f}) · ratio_med={float(reel_ratio or 0):.2f}x"
-            + (f" · trend={reel_trend}" if reel_trend else "")
-        )
-    if posts_n:
-        metric_lines.append(
-            f"🖼 Posts {posts_n} (w={post_w:.2f}) · "
-            f"likes/follow={float(post_ratio or 0):.3f}"
-        )
-    metrics_block = ("\n" + "\n".join(metric_lines)) if metric_lines else ""
-
-    text = (
-        "🔎 *Nouveau candidat Discovery*\n"
-        f"👤 @{result.get('username')} ({result.get('domain')})\n"
-        f"👥 {result.get('followers')} followers · "
-        f"score *{result.get('score', 0):.0f}/1000*"
-        f"{metrics_block}\n"
-        f"🎭 dominant={result.get('t_type_dominant')} ({distrib_str})\n"
-        f"📝 {bio}"
-    )
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
-        r = requests.post(
-            url,
-            json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-            timeout=10,
+        from telegram_discovery_bot import (  # tardif : évite cycle
+            notify_candidate as _bot_notify,
         )
-        if r.status_code != 200:
-            log.warning(
-                "Telegram Discovery non-200 (%s) pour @%s",
-                r.status_code,
-                result.get("username"),
-            )
-    except requests.RequestException as e:
-        log.warning("Telegram Discovery erreur (%s) pour @%s", e, result.get("username"))
+    except ImportError as e:
+        log.warning(
+            "telegram_discovery_bot indisponible (%s) — candidat @%s loggé seulement.",
+            e, username,
+        )
+        return None
+
+    try:
+        return _bot_notify(result, mock=mock)
+    except Exception as e:  # noqa: BLE001 — best-effort, on ne veut JAMAIS planter explore_network
+        log.warning("notify_candidate a échoué (%s) pour @%s.", e, username)
+        return None
 
 
 # =============================================================================
@@ -1905,6 +1899,55 @@ def _seed_followings(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Helpers de schéma — seeds.json (rétro-compat string ⇄ dict enrichi)
+# ---------------------------------------------------------------------------
+#
+# Depuis 2026-05, ``seeds.json`` autorise deux formes pour chaque seed :
+#
+# * Forme historique (string) : ``"raikkonenaf"``
+# * Forme enrichie (dict)     : ``{"username": "raikkonenaf", "niches": ["humour", "sketch", "imitation"]}``
+#
+# Les helpers suivants sont les **seuls points** par lesquels on doit accéder
+# au username / niches d'un seed — toute autre lecture directe (``str(s)``,
+# ``s["username"]``, ``s["niches"]``) doit passer par eux pour rester
+# transparente au schéma.
+
+
+def _seed_username(seed: Any) -> str:
+    """Retourne le username propre depuis un seed string ou dict.
+
+    Tolère tous les cas dégénérés : ``None``, dict sans clé ``username``,
+    chaîne avec ``@`` initial ou espaces parasites. Retourne ``""`` si
+    rien d'exploitable — le caller doit filtrer.
+    """
+    if isinstance(seed, dict):
+        return str(seed.get("username") or "").lstrip("@").strip()
+    return str(seed or "").lstrip("@").strip()
+
+
+def _seed_niches(seed: Any, domain: dict[str, Any]) -> list[str]:
+    """Retourne les niches du seed, avec fallback en cascade :
+
+    1. ``seed["niches"]`` si seed est un dict avec une liste non vide.
+    2. ``domain["niches"]`` (nouvelle clé liste, prioritaire).
+    3. ``domain["niche"]`` (ancienne clé string, rétro-compat).
+    4. ``domain["name"]`` (nom du domaine, ex : ``"humour"``).
+    5. ``"humour"`` en dernier recours (ne devrait jamais arriver).
+
+    Le résultat est **toujours** une liste avec au moins un élément. Pas
+    de validation contre ``VALID_NICHES`` ici — c'est la responsabilité
+    de ``score_profile`` (cf. helper ``validate_niches`` de ``config``).
+    """
+    if isinstance(seed, dict) and seed.get("niches"):
+        return list(seed["niches"])
+    domain_niches = domain.get("niches") or []
+    if domain_niches:
+        return list(domain_niches)
+    fallback = str(domain.get("niche") or domain.get("name") or "humour")
+    return [fallback]
+
+
 def explore_network(
     domain: dict[str, Any],
     *,
@@ -1969,12 +2012,11 @@ def explore_network(
     seeds_input = seeds_override if seeds_override is not None else (
         domain.get("seeds") or []
     )
-    seeds: list[str] = [
-        str(s).lstrip("@").strip()
-        for s in seeds_input
-        if str(s or "").strip()
-    ]
-    if not seeds:
+    # On conserve l'objet seed brut (string ou dict) pour pouvoir lire ses
+    # niches enrichies plus bas via ``_seed_niches``. Le filtre
+    # ``_seed_username(s)`` élimine les entrées vides / mal formées.
+    seed_objects: list[Any] = [s for s in seeds_input if _seed_username(s)]
+    if not seed_objects:
         log.info("Domaine %s : aucun seed — skip.", domain_name)
         return
 
@@ -1989,113 +2031,220 @@ def explore_network(
     log.info(
         "Domaine %s : %d seeds, watchlist=%d, blacklist=%d.",
         domain_name,
-        len(seeds),
+        len(seed_objects),
         len(watchlist_set),
         len(blacklist.get("profiles", [])),
     )
 
-    for seed in seeds:
-        # Quota global avant chaque seed
-        _maybe_reset_day(session, _local_now())
-        if session.profiles_today >= MAX_PROFILES_PER_DAY:
-            log.info(
-                "Quota quotidien atteint (%d) — arrêt domaine %s.",
-                MAX_PROFILES_PER_DAY,
-                domain_name,
-            )
+    for seed_obj in seed_objects:
+        seed_user = _seed_username(seed_obj)
+        seed_niches = _seed_niches(seed_obj, domain)
+        # Domain enrichi pour ce seed : ``score_profile`` lit ``domain["niches"]``
+        # → on injecte celles du seed (plus précises que celles du domain root).
+        seed_domain = {**domain, "niches": list(seed_niches)}
+        seed_lower = seed_user.lower()
+
+        # 1) Score du seed lui-même AVANT d'aller chercher ses followings.
+        #    Réutilise exactement le même chemin de code que pour un following
+        #    (cf. ``_score_one_in_domain``) — pas de duplication.
+        seed_state = _score_one_in_domain(
+            seed_lower,
+            domain=seed_domain,
+            domain_name=domain_name,
+            parent_seed=None,  # is_seed=True
+            blacklist=blacklist,
+            candidates=candidates,
+            db=db,
+            watchlist_set=watchlist_set,
+            client=client,
+            session=session,
+            blacklist_path=blacklist_path,
+            candidates_path=candidates_path,
+            db_path=db_path,
+            log=log,
+        )
+        if seed_state == "quota":
             return
 
+        # 2) Followings du seed.
         if session.mock:
-            following = _mock_followings_for(seed)
+            following = _mock_followings_for(seed_user)
         else:
-            following = _seed_followings(client, seed, log=log)
+            following = _seed_followings(client, seed_user, log=log)
 
         for username in following:
             uname = username.lstrip("@").strip().lower()
-            if not uname or uname == seed.lower():
+            if not uname or uname == seed_lower:
                 continue
 
-            _maybe_reset_day(session, _local_now())
-            if session.profiles_today >= MAX_PROFILES_PER_DAY:
-                log.info(
-                    "Quota quotidien atteint (%d) — arrêt seed %s.",
-                    MAX_PROFILES_PER_DAY,
-                    seed,
-                )
+            state = _score_one_in_domain(
+                uname,
+                domain=seed_domain,
+                domain_name=domain_name,
+                parent_seed=seed_user,
+                blacklist=blacklist,
+                candidates=candidates,
+                db=db,
+                watchlist_set=watchlist_set,
+                client=client,
+                session=session,
+                blacklist_path=blacklist_path,
+                candidates_path=candidates_path,
+                db_path=db_path,
+                log=log,
+            )
+            if state == "quota":
                 return
 
-            _wait_for_active_window(session, log)
-            _maybe_take_burst_break(session, log)
 
-            if uname in watchlist_set:
-                log.info("@%s déjà dans watchlist — skip.", uname)
-                continue
-            if _is_blacklisted(uname, blacklist):
-                continue
+def _score_one_in_domain(
+    uname: str,
+    *,
+    domain: dict[str, Any],
+    domain_name: str,
+    parent_seed: str | None,
+    blacklist: dict[str, Any],
+    candidates: dict[str, Any],
+    db: dict[str, Any],
+    watchlist_set: set[str],
+    client: Any | None,
+    session: DiscoverySession,
+    blacklist_path: Path | None,
+    candidates_path: Path | None,
+    db_path: Path | None,
+    log: logging.Logger,
+) -> str:
+    """Score & persiste **un** username dans le contexte d'un domaine.
 
-            log.info("Scoring @%s (depuis seed @%s, domaine %s)...", uname, seed, domain_name)
+    Cette fonction encapsule **tout** le pipeline per-profil :
 
-            try:
-                if session.mock:
-                    result = _mock_score_profile(uname, domain)
-                else:
-                    result = score_profile(
-                        uname, domain, blacklist=blacklist, client=client
-                    )
-            except DiscoverySessionLost:
-                # Stop net : le caller (run_discovery) appellera recovery.
-                raise
+    1. Quota quotidien (``MAX_PROFILES_PER_DAY``).
+    2. Fenêtre d'activité (nuit / déjeuner) + pause de burst.
+    3. Filtres : watchlist + blacklist (déjà-vus).
+    4. ``score_profile`` (ou ``_mock_score_profile`` en mode mock).
+    5. ``upsert_profile`` (toujours si le scoring a abouti).
+    6. ``_record_candidate`` + ``_notify_candidate`` si score > seuil.
+    7. ``_record_seen`` (blacklist : *tout* profil scoré, jamais reproposé).
+    8. ``polite_sleep`` entre profils (sauf mock).
 
-            session.profiles_today += 1
-            score_val = (result or {}).get("score")
-            score_passes = (
-                result is not None
-                and float(result.get("score") or 0.0) > CANDIDATE_SCORE_THRESHOLD
+    ``parent_seed=None`` indique que ``uname`` **est** le seed lui-même
+    (auto-scoring). Les messages de log sont adaptés en conséquence.
+
+    Retourne :
+        - ``"quota"``  : quota quotidien atteint, le caller doit ``return``.
+        - ``"skipped"`` : profil filtré (watchlist / blacklist), aucun scoring.
+        - ``"scored"``  : scoring tenté (succès ou ``None`` = inéligible).
+
+    Lève ``DiscoverySessionLost`` si la session Instagram est perdue — la
+    recovery est déléguée au caller (``run_discovery``).
+    """
+    is_seed = parent_seed is None
+
+    _maybe_reset_day(session, _local_now())
+    if session.profiles_today >= MAX_PROFILES_PER_DAY:
+        log.info(
+            "Quota quotidien atteint (%d) — arrêt domaine %s.",
+            MAX_PROFILES_PER_DAY,
+            domain_name,
+        )
+        return "quota"
+
+    _wait_for_active_window(session, log)
+    _maybe_take_burst_break(session, log)
+
+    if uname in watchlist_set:
+        if is_seed:
+            log.info("Seed @%s déjà vu — skip auto-score.", uname)
+        else:
+            log.info("@%s déjà dans watchlist — skip.", uname)
+        return "skipped"
+    if _is_blacklisted(uname, blacklist):
+        if is_seed:
+            log.info("Seed @%s déjà vu — skip auto-score.", uname)
+        return "skipped"
+
+    if is_seed:
+        log.info("Scoring seed @%s lui-même (domaine %s)...", uname, domain_name)
+    else:
+        log.info(
+            "Scoring @%s (depuis seed @%s, domaine %s)...",
+            uname,
+            parent_seed,
+            domain_name,
+        )
+
+    try:
+        if session.mock:
+            result = _mock_score_profile(uname, domain)
+        else:
+            result = score_profile(
+                uname, domain, blacklist=blacklist, client=client
             )
+    except DiscoverySessionLost:
+        # Stop net : le caller (run_discovery) appellera recovery.
+        raise
 
-            # Persistance database : **tout** scoring réussi est upserté
-            # (contrairement à la blacklist / candidates qui sont conditionnels).
-            if result is not None:
-                try:
-                    upsert_profile(db, result, added_via="discovery")
-                    if not session.mock:
-                        save_db(db, path=db_path)
-                except DatabaseIOError as e:
-                    log.warning(
-                        "upsert_profile @%s a échoué (%s) — on continue.",
-                        uname,
-                        e,
-                    )
+    session.profiles_today += 1
+    score_val = (result or {}).get("score")
+    score_passes = (
+        result is not None
+        and float(result.get("score") or 0.0) > CANDIDATE_SCORE_THRESHOLD
+    )
 
-            if score_passes:
-                _record_candidate(
-                    candidates,
-                    result,  # type: ignore[arg-type]
-                    mock=session.mock,
-                    candidates_path=candidates_path,
-                )
-                _notify_candidate(result, log, mock=session.mock)  # type: ignore[arg-type]
-                session.candidates_found += 1
-                outcome = "candidate"
-            else:
-                outcome = "rejected" if result is not None else "ineligible"
-
-            _record_seen(
-                blacklist,
-                uname,
-                outcome=outcome,
-                domain_name=domain_name,
-                score=score_val,
-                mock=session.mock,
-                blacklist_path=blacklist_path,
-            )
-            session.blacklisted_count += 1
-
+    # Persistance database : **tout** scoring réussi est upserté
+    # (contrairement à la blacklist / candidates qui sont conditionnels).
+    if result is not None:
+        try:
+            upsert_profile(db, result, added_via="discovery")
             if not session.mock:
-                polite_sleep(
-                    min_s=DISCOVERY_BETWEEN_PROFILES_MIN_S,
-                    max_s=DISCOVERY_BETWEEN_PROFILES_MAX_S,
-                )
+                save_db(db, path=db_path)
+        except DatabaseIOError as e:
+            log.warning(
+                "upsert_profile @%s a échoué (%s) — on continue.",
+                uname,
+                e,
+            )
+
+    if score_passes:
+        _record_candidate(
+            candidates,
+            result,  # type: ignore[arg-type]
+            mock=session.mock,
+            candidates_path=candidates_path,
+        )
+        # Trace explicite avant/après notif : le validateur a signalé des
+        # boutons absents → on veut pouvoir corréler dans les logs un
+        # candidat scoré avec la réponse exacte de Telegram (ou son
+        # absence).
+        score_for_log = float((result or {}).get("score") or 0.0)
+        log.info(
+            "_score_one_in_domain : tentative notify @%s score=%.1f",
+            uname, score_for_log,
+        )
+        response = _notify_candidate(result, log, mock=session.mock)  # type: ignore[arg-type]
+        log.info("_score_one_in_domain : notify retour=%s", response)
+        session.candidates_found += 1
+        outcome = "candidate"
+    else:
+        outcome = "rejected" if result is not None else "ineligible"
+
+    _record_seen(
+        blacklist,
+        uname,
+        outcome=outcome,
+        domain_name=domain_name,
+        score=score_val,
+        mock=session.mock,
+        blacklist_path=blacklist_path,
+    )
+    session.blacklisted_count += 1
+
+    if not session.mock:
+        polite_sleep(
+            min_s=DISCOVERY_BETWEEN_PROFILES_MIN_S,
+            max_s=DISCOVERY_BETWEEN_PROFILES_MAX_S,
+        )
+    return "scored"
 
 
 # =============================================================================
@@ -2122,9 +2271,17 @@ def _mock_score_profile(username: str, domain: dict[str, Any]) -> dict[str, Any]
     total = reels_n + posts_n or 1
     reel_w = reels_n / total
     post_w = 1.0 - reel_w
+    # Niches : aligne le mock sur le schéma de ``score_profile`` — liste
+    # validée, **sans** champ string ``niche`` (supprimé en 2026-05).
+    mock_niches = (
+        list(domain.get("niches") or [])
+        or [str(domain.get("niche") or domain.get("name") or "humour")]
+    )
+    mock_niches = config.validate_niches(mock_niches)
     return {
         "username": username,
         "domain": domain.get("name"),
+        "niches": list(mock_niches),
         "platform": "instagram",
         "followers": 5_000 + (h * 17) % 50_000,
         "score": float(score),
@@ -2204,7 +2361,7 @@ def run_discovery(
         chosen: dict[str, Any] | None = None
         for d in domains:
             for s in d.get("seeds") or []:
-                if str(s).lstrip("@").strip().lower() == seed_clean:
+                if _seed_username(s).lower() == seed_clean:
                     chosen = d
                     break
             if chosen:

@@ -362,10 +362,36 @@ def _normalize_entry(entry: Any, *, index: int) -> dict[str, Any]:
         )
     platform = platform.strip().lower()
 
-    niche = entry.get("niche", "")
-    if not isinstance(niche, str):
-        raise WatchlistError(f"creators[{index}].niche doit être une chaîne")
-    niche = niche.strip()
+    # Schéma 2026-05 : ``niches`` (liste) est la source de vérité, ``niche``
+    # (string) reste exposé en alias pour les callers legacy. Migration lazy :
+    # une entrée historique avec uniquement ``"niche": "humour"`` reste valide
+    # et est promue à ``"niches": ["humour"]`` à la lecture.
+    niches_raw = entry.get("niches")
+    if niches_raw is not None:
+        if not isinstance(niches_raw, list):
+            raise WatchlistError(
+                f"creators[{index}].niches doit être une liste, "
+                f"reçu {type(niches_raw).__name__}"
+            )
+        niches: list[str] = []
+        for j, n in enumerate(niches_raw):
+            if not isinstance(n, str):
+                raise WatchlistError(
+                    f"creators[{index}].niches[{j}] doit être une chaîne, "
+                    f"reçu {type(n).__name__}"
+                )
+            cleaned = n.strip()
+            if cleaned:
+                niches.append(cleaned)
+    else:
+        niche_legacy = entry.get("niche", "")
+        if not isinstance(niche_legacy, str):
+            raise WatchlistError(f"creators[{index}].niche doit être une chaîne")
+        niche_legacy = niche_legacy.strip()
+        niches = [niche_legacy] if niche_legacy else []
+    # Alias string : ``niche = niches[0]`` (ou ``""`` si la liste est vide,
+    # autorisé pour rétro-compat avec les watchlists historiques).
+    niche = niches[0] if niches else ""
 
     t_type_raw = entry.get("t_type")
     t_type: str | None
@@ -410,6 +436,7 @@ def _normalize_entry(entry: Any, *, index: int) -> dict[str, Any]:
     out: dict[str, Any] = {
         "username": username,
         "platform": platform,
+        "niches": list(niches),
         "niche": niche,
         "t_type": t_type,
         "engagement_baseline": engagement_baseline,
@@ -556,15 +583,26 @@ def _generate_for_post(context: dict[str, Any]) -> list[str]:
     """Produit 3 commentaires depuis le ``context`` (pas de ``comments_sample``).
 
     Le contexte vidéo (caption, hashtags, audio_id) est passé directement à
-    ``generate_comments`` via le paramètre ``video_context`` — aucun scrape
-    de commentaires n'est fait par le Watcher (post frais, distribution non
-    stabilisée). Renvoie ``[]`` si ``t_type`` est ``T1`` ou ``T3a`` (le brief
-    les exclut de la génération).
+    ``generate_comments`` via le paramètre ``video_context``. Le ``t_type``
+    du créateur (sa **personnalité de commentateur**, validée humainement
+    en Discovery) sert à la fois à choisir le template T-type et à
+    renseigner ``t_type_profile`` dans le prompt — pas de classification
+    online en phase Watcher (post frais, distribution non stabilisée).
+
+    Renvoie ``[]`` si ``t_type`` est ``T1`` ou ``T3a`` (le brief les exclut
+    de la génération).
     """
     from modules.classifier import generate_comments  # import local : Ollama
 
     t_type = str(context.get("t_type") or "")
-    niche = str(context.get("niche") or "")
+    # Schéma 2026-05 : ``niches`` (liste) prioritaire avec rétro-compat sur
+    # l'ancien champ ``niche`` (string). Le caller (``run_watcher``) passe
+    # désormais ``creator["niches"]`` à la construction du context.
+    niches_raw = context.get("niches")
+    if isinstance(niches_raw, list) and niches_raw:
+        niches: list[str] | str = list(niches_raw)
+    else:
+        niches = str(context.get("niche") or "")
 
     if t_type in ("T1", "T3a") or t_type not in VALID_T_TYPES:
         return []
@@ -573,7 +611,8 @@ def _generate_for_post(context: dict[str, Any]) -> list[str]:
     return generate_comments(
         classification,
         [],  # pas de comments_sample en phase Watcher (post frais)
-        niche=niche,
+        niches=niches,
+        t_type_profile=t_type,
         video_context={
             "caption": context.get("caption"),
             "hashtags": context.get("hashtags"),
@@ -699,6 +738,12 @@ def _process_creator(
 
     context = {
         "t_type": t_type,
+        # Schéma 2026-05 : on propage la liste ``niches`` ; ``niche`` est
+        # conservé en alias rétro-compat (lu par d'éventuels callers de
+        # mock / debug encore sur l'ancien schéma).
+        "niches": creator.get("niches") or (
+            [creator["niche"]] if isinstance(creator.get("niche"), str) and creator["niche"] else []
+        ),
         "niche": creator.get("niche"),
         "caption": post.get("caption"),
         "hashtags": post.get("hashtags"),

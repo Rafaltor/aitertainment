@@ -40,6 +40,88 @@
           "niche": "humour"
         }
       ]
+    },
+    {
+      "media_id": "3831631823361566772",
+      "username": "raikkonenaf",
+      "reel_url": "https://www.instagram.com/reel/DUssNetjGg0/",
+      "collected_at": "2026-05-09T08:24:44",
+      "generator_input": {
+        "t_type": "T2",
+        "niche": "humour",
+        "caption": "🎵 @zkrmusik / @bigfreezecorleone667 - BETERBIEV",
+        "hashtags": [],
+        "audio_id": null
+      },
+      "classifier_context": {
+        "views": 0,
+        "likes": 11289,
+        "comment_count": 163,
+        "shares": null,
+        "comment_to_like_ratio": 0.0144,
+        "share_to_like_ratio": null
+      },
+      "top_comments": [
+        {
+          "text": "😂😂😂",
+          "likes": 1778,
+          "t_type": "T2",
+          "niche": "humour"
+        },
+        {
+          "text": "Sous fichier epstein",
+          "likes": 703,
+          "t_type": "T2",
+          "niche": "humour"
+        },
+        {
+          "text": "Y avait pas besoin d IA tu lui demander juste je pense qu'il fesait cet danse mdrr😂",
+          "likes": 192,
+          "t_type": "T2",
+          "niche": "humour"
+        }
+      ]
+    },
+    {
+      "media_id": "3830321184345215103",
+      "username": "raikkonenaf",
+      "reel_url": "https://www.instagram.com/reel/DUoCNLAjNB_/",
+      "collected_at": "2026-05-09T08:24:44",
+      "generator_input": {
+        "t_type": "T2",
+        "niche": "humour",
+        "caption": "⚠️ AI CONTENT FOR MUSIC PROMOTION \n\n🎵BOOBA - GARCIMORE",
+        "hashtags": [],
+        "audio_id": null
+      },
+      "classifier_context": {
+        "views": 0,
+        "likes": 346445,
+        "comment_count": 1063,
+        "shares": null,
+        "comment_to_like_ratio": 0.0031,
+        "share_to_like_ratio": null
+      },
+      "top_comments": [
+        {
+          "text": "C’est tellement bien fait on dirait vraiment le général",
+          "likes": 8975,
+          "t_type": "T2",
+          "niche": "humour"
+        },
+        {
+          "text": "Si par le plus grand des hasards Sarkozy tombe sur la video, il va sursauter 😂",
+          "likes": 1561,
+          "t_type": "T2",
+          "niche": "humour"
+        },
+        {
+          "text": "Its 100% Ai",
+          "likes": 532,
+          "t_type": "T2",
+          "niche": "humour"
+        }
+      ]
     }
   ]
 }

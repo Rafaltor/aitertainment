@@ -27,13 +27,13 @@ class MockScenarioPipelineTest(unittest.TestCase):
                 )
                 with patch("modules.classifier._http_post", side_effect=stub):
                     clf = CommentClassifier()
-                    out = clf.classify(bundle.comments, niche=bundle.niche)
+                    out = clf.classify(bundle.comments, niches=bundle.niche)
                 self.assertEqual(out["type"], bundle.expected_type)
 
                 if bundle.expect_score_above_075 and out["type"] not in ("T1", "T3a"):
                     with patch("modules.classifier._http_post", side_effect=stub):
                         gen = generate_comments(
-                            out, bundle.comments, niche=bundle.niche
+                            out, bundle.comments, niches=bundle.niche
                         )
                     self.assertEqual(len(gen), 3)
 

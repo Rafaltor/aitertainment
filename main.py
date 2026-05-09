@@ -93,7 +93,7 @@ def _process_stats_pipeline(
     with llm_ctx:
         try:
             clf = CommentClassifier()
-            classification = clf.classify(comments, niche=niche)
+            classification = clf.classify(comments, niches=niche)
         except ValueError as e:
             print(f"  [ERREUR] Ollama / classification : {e}")
             log.warning("CommentClassifier indisponible: %s", e)
@@ -114,7 +114,7 @@ def _process_stats_pipeline(
             print(f"  -> type {ctype} : pas de generate_comments() (positionnement).")
             log.info("Pas de generation (T1/T3a) pour %s", stats.creator_id)
         else:
-            suggestions = generate_comments(classification, comments, niche=niche)
+            suggestions = generate_comments(classification, comments, niches=niche)
             print(f"  -> {len(suggestions)} suggestion(s) generees.")
             log.info("Suggestions generees pour %s", stats.creator_id)
 
@@ -229,7 +229,7 @@ def run_mock_scenarios(*, send_telegram: bool = False) -> None:
             out: dict = {}
             with patch("modules.classifier._http_post", side_effect=stub):
                 clf = CommentClassifier()
-                out = clf.classify(bundle.comments, niche=bundle.niche)
+                out = clf.classify(bundle.comments, niches=bundle.niche)
                 got = str(out.get("type", ""))
                 if got != bundle.expected_type:
                     msg = (
@@ -250,7 +250,7 @@ def run_mock_scenarios(*, send_telegram: bool = False) -> None:
                         and got not in ("T1", "T3a")
                     ):
                         gen = generate_comments(
-                            out, bundle.comments, niche=bundle.niche
+                            out, bundle.comments, niches=bundle.niche
                         )
                         if len(gen) != 3:
                             failures.append(

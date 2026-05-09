@@ -19,6 +19,7 @@ def _score_result(
     score_reels: float = 600.0,
     score_posts: float = 350.0,
     domain: str = "humour",
+    niches: list[str] | None = None,
     followers: int = 48_000,
     t_type_dominant: str | None = "T2",
     scored_at: str | None = "2026-05-08T12:00:00",
@@ -30,9 +31,14 @@ def _score_result(
     t_type_distribution: dict[str, float] | None = None,
     platform: str = "instagram",
 ) -> dict[str, Any]:
-    return {
+    # Schéma 2026-05 : ``score_profile`` produit ``niches`` (liste) — on
+    # aligne la fixture pour refléter la production. Si un test veut
+    # explicitement tester le fallback string ``niche`` ou l'absence de
+    # niches, il peut passer ``niches=[]`` puis ajouter le champ voulu.
+    out: dict[str, Any] = {
         "username": username,
         "domain": domain,
+        "niches": list(niches) if niches is not None else ["humour"],
         "platform": platform,
         "followers": followers,
         "score": score,
@@ -47,6 +53,7 @@ def _score_result(
         "t_type_distribution": t_type_distribution or {"T2": 0.7, "T3b": 0.3},
         "scored_at": scored_at,
     }
+    return out
 
 
 class ComputeTierTest(unittest.TestCase):
@@ -144,7 +151,11 @@ class UpsertProfileTest(unittest.TestCase):
         self.assertIn("creator_a", db["profiles"])
         self.assertEqual(profile["platform"], "instagram")
         self.assertEqual(profile["followers"], 48_000)
-        self.assertEqual(profile["niche"], "humour")
+        # Schéma 2026-05 : ``niches`` (liste) à la place de ``niche`` (string).
+        # Avec un score_result legacy (juste ``domain``), la cascade de
+        # fallback produit ``["humour"]``.
+        self.assertEqual(profile["niches"], ["humour"])
+        self.assertNotIn("niche", profile)
         self.assertEqual(profile["tier"], "B")
         self.assertFalse(profile["validated"])
         self.assertEqual(profile["t_type_original"], "T2")
@@ -239,6 +250,137 @@ class UpsertProfileTest(unittest.TestCase):
         del bad["score"]
         with self.assertRaises(database.DatabaseIOError):
             database.upsert_profile(db, bad, added_via="discovery")
+
+    # ------------------------------------------------------------------
+    # Schéma niches 2026-05 — règles strictes (4 cas du brief)
+    # ------------------------------------------------------------------
+
+    def test_rule1_niches_list_from_score_result_is_persisted_as_is(self) -> None:
+        """Règle 1 : ``score_result["niches"]`` (liste) → écrit tel quel."""
+        db: dict[str, Any] = {"profiles": {}}
+        result = _score_result(niches=["humour", "sketch", "imitation"])
+        profile = database.upsert_profile(db, result, added_via="discovery")
+        self.assertEqual(profile["niches"], ["humour", "sketch", "imitation"])
+        self.assertNotIn("niche", profile)
+
+    def test_rule2_legacy_niche_string_in_score_result_converted_to_list(self) -> None:
+        """Règle 2 : ``score_result["niche"]`` (string) sans ``niches`` → ``[niche]``."""
+        db: dict[str, Any] = {"profiles": {}}
+        result = _score_result()
+        # Score_result d'une version intermédiaire : pas de ``niches``, juste
+        # le vieux champ string.
+        del result["niches"]
+        result["niche"] = "humour"
+        profile = database.upsert_profile(db, result, added_via="discovery")
+        self.assertEqual(profile["niches"], ["humour"])
+        # Pas de doublon : ``niche`` (string) absent du profil persistant.
+        self.assertNotIn("niche", profile)
+
+    def test_rule3_existing_profile_with_legacy_niche_is_migrated(self) -> None:
+        """Règle 3 : profil DB legacy avec ``niche`` (string) → migré au prochain upsert."""
+        db: dict[str, Any] = {
+            "profiles": {
+                "creator_a": {
+                    "platform": "instagram",
+                    "followers": 48_000,
+                    # Schéma legacy uniquement (pas de ``niches``).
+                    "niche": "humour",
+                    "tier": "B",
+                    "validated": True,
+                    "t_type_original": "T2",
+                    "t_type_final": "T2",
+                    "added_via": "seed",
+                    "added_at": "2026-04-01T00:00:00",
+                    "last_scored_at": "2026-04-01T00:00:00",
+                    "next_rescore_at": "2026-05-01T00:00:00",
+                    "archived": False,
+                    "scores_history": [],
+                }
+            }
+        }
+        # Note : ``_score_result()`` produit ``niches=["humour"]`` par défaut.
+        # On veut tester la migration **du profil existant**, pas l'override
+        # par ``incoming`` — on enlève donc les niches du score_result et on
+        # garde ``niche`` legacy pour qu'`incoming` soit `["humour"]` aussi.
+        result = _score_result()
+        del result["niches"]
+        result["niche"] = "humour"
+        profile = database.upsert_profile(db, result, added_via="rescore")
+        self.assertEqual(profile["niches"], ["humour"])
+        # Métadonnées préservées (validated, t_type_final, added_at, ...).
+        self.assertTrue(profile["validated"])
+        self.assertEqual(profile["t_type_final"], "T2")
+        self.assertEqual(profile["added_at"], "2026-04-01T00:00:00")
+
+    def test_rule4_niche_string_field_removed_after_migration(self) -> None:
+        """Règle 4 : le champ string ``niche`` est supprimé du profil après migration."""
+        db: dict[str, Any] = {
+            "profiles": {
+                "creator_a": {
+                    "niche": "humour",
+                    "niches": ["humour", "sketch"],  # cas double — possible si bug en amont
+                    "tier": "B",
+                    "validated": False,
+                    "t_type_original": "T2",
+                    "t_type_final": None,
+                    "added_via": "seed",
+                    "added_at": "2026-04-01T00:00:00",
+                    "last_scored_at": "2026-04-01T00:00:00",
+                    "next_rescore_at": "2026-05-01T00:00:00",
+                    "archived": False,
+                    "scores_history": [],
+                    "platform": "instagram",
+                    "followers": 48_000,
+                }
+            }
+        }
+        profile = database.upsert_profile(
+            db, _score_result(niches=["humour"]), added_via="rescore"
+        )
+        # Le champ ``niche`` (string) est supprimé même si ``niches`` était
+        # déjà présent (pas de doublon en base — un seul champ source de vérité).
+        self.assertNotIn("niche", profile)
+        self.assertEqual(profile["niches"], ["humour"])
+
+    def test_incoming_niches_refresh_existing_profile(self) -> None:
+        """Si le scoring le plus récent porte des niches différentes, on rafraîchit."""
+        db: dict[str, Any] = {"profiles": {}}
+        database.upsert_profile(
+            db, _score_result(niches=["humour"]), added_via="discovery"
+        )
+        profile = database.upsert_profile(
+            db,
+            _score_result(
+                niches=["humour", "sketch", "réaction"],
+                scored_at="2026-05-15T12:00:00",
+            ),
+            added_via="rescore",
+        )
+        self.assertEqual(profile["niches"], ["humour", "sketch", "réaction"])
+
+    def test_empty_incoming_niches_does_not_overwrite_existing(self) -> None:
+        """Si ``incoming`` est vide on **conserve** les niches existantes —
+        un upsert sans niches ne doit pas effacer la donnée précédente.
+        """
+        db: dict[str, Any] = {"profiles": {}}
+        database.upsert_profile(
+            db, _score_result(niches=["humour", "sketch"]), added_via="discovery"
+        )
+
+        # Score_result minimal sans aucun champ niche.
+        result = _score_result(scored_at="2026-05-15T12:00:00")
+        del result["niches"]
+        profile = database.upsert_profile(db, result, added_via="rescore")
+        self.assertEqual(profile["niches"], ["humour", "sketch"])
+
+    def test_clean_niches_list_strips_and_filters_garbage(self) -> None:
+        """Les items non-string / vides / whitespace dans ``niches`` sont filtrés."""
+        db: dict[str, Any] = {"profiles": {}}
+        # On bypass la fixture pour passer des niches volontairement bruyantes.
+        result = _score_result()
+        result["niches"] = ["  humour  ", "", None, 42, "sketch"]
+        profile = database.upsert_profile(db, result, added_via="discovery")
+        self.assertEqual(profile["niches"], ["humour", "sketch"])
 
     def test_missing_username_raises(self) -> None:
         db: dict[str, Any] = {"profiles": {}}

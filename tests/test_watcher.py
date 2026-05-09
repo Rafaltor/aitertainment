@@ -473,9 +473,11 @@ class GenerateForPostTest(unittest.TestCase):
     ) -> None:
         from watcher import _generate_for_post
 
+        # Schéma 2026-05 : ``niches`` (liste) priorité sur ``niche`` (string).
         ctx = {
             "t_type": "T2",
-            "niche": "humour",
+            "niches": ["humour", "sketch"],
+            "niche": "humour",  # alias rétro-compat
             "caption": "moment culte F1",
             "hashtags": ["F1", "monaco"],
             "audio_id": "AUD42",
@@ -487,28 +489,35 @@ class GenerateForPostTest(unittest.TestCase):
         kwargs = mock_gen.call_args.kwargs
         # comments_sample = [] (pas de scrape en phase Watcher).
         self.assertEqual(mock_gen.call_args.args[1], [])
-        self.assertEqual(kwargs["niche"], "humour")
+        # ``niches`` (liste) propagée — pas l'alias string.
+        self.assertEqual(kwargs["niches"], ["humour", "sketch"])
+        # ``t_type_profile`` égal au t_type du créateur (sa persona).
+        self.assertEqual(kwargs["t_type_profile"], "T2")
         self.assertEqual(
             kwargs["video_context"],
             {"caption": "moment culte F1", "hashtags": ["F1", "monaco"], "audio_id": "AUD42"},
         )
 
     @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
-    def test_falls_back_to_audio_field_when_no_audio_id(
+    def test_falls_back_to_niche_string_for_legacy_context(
         self, mock_gen: MagicMock
     ) -> None:
         from watcher import _generate_for_post
 
-        # Compatibilité ancienne clé ``audio`` (utilisée par certains paths).
-        _generate_for_post({"t_type": "T2", "niche": "x", "audio": "OLD_KEY"})
+        # Rétro-compat : context ancien schéma (uniquement ``niche`` string,
+        # sans ``niches`` liste).
+        _generate_for_post(
+            {"t_type": "T2", "niche": "humour", "audio": "OLD_KEY"}
+        )
         kwargs = mock_gen.call_args.kwargs
+        self.assertEqual(kwargs["niches"], "humour")
         self.assertEqual(kwargs["video_context"]["audio_id"], "OLD_KEY")
 
     @patch("modules.classifier.generate_comments")
     def test_t1_skips_generation(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
-        out = _generate_for_post({"t_type": "T1", "niche": "x"})
+        out = _generate_for_post({"t_type": "T1", "niches": ["x"]})
         self.assertEqual(out, [])
         mock_gen.assert_not_called()
 
@@ -516,9 +525,102 @@ class GenerateForPostTest(unittest.TestCase):
     def test_t3a_skips_generation(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
-        out = _generate_for_post({"t_type": "T3a", "niche": "x"})
+        out = _generate_for_post({"t_type": "T3a", "niches": ["x"]})
         self.assertEqual(out, [])
         mock_gen.assert_not_called()
+
+
+class WatchlistSchemaMigrationTest(unittest.TestCase):
+    """Schéma 2026-05 : ``_normalize_entry`` accepte ``niches`` (liste) et
+    migre lazy depuis ``niche`` (string) sans casser les watchlists historiques.
+    """
+
+    @staticmethod
+    def _entry(**overrides: object) -> dict[str, object]:
+        base: dict[str, object] = {
+            "username": "alice",
+            "platform": "instagram",
+            "t_type": "T2",
+            "engagement_baseline": 0.05,
+            "last_post_id": None,
+            "added_at": "2026-05-09T11:00:00+00:00",
+        }
+        base.update(overrides)
+        return base
+
+    def test_priority_to_niches_list(self) -> None:
+        from watcher import _normalize_entry
+
+        out = _normalize_entry(
+            self._entry(niches=["humour", "sketch", "imitation"]),
+            index=0,
+        )
+        self.assertEqual(out["niches"], ["humour", "sketch", "imitation"])
+        self.assertEqual(out["niche"], "humour")
+
+    def test_lazy_migration_from_legacy_niche_string(self) -> None:
+        """Watchlist historique avec uniquement ``niche`` (string) → ``niches=[niche]``."""
+        from watcher import _normalize_entry
+
+        out = _normalize_entry(self._entry(niche="streetwear"), index=0)
+        self.assertEqual(out["niches"], ["streetwear"])
+        self.assertEqual(out["niche"], "streetwear")
+
+    def test_legacy_empty_niche_remains_valid(self) -> None:
+        """Rétro-compat : ``niche=""`` historiquement autorisé reste valide."""
+        from watcher import _normalize_entry
+
+        out = _normalize_entry(self._entry(niche=""), index=0)
+        self.assertEqual(out["niches"], [])
+        self.assertEqual(out["niche"], "")
+
+    def test_niches_not_a_list_raises(self) -> None:
+        from watcher import WatchlistError, _normalize_entry
+
+        with self.assertRaises(WatchlistError) as ctx:
+            _normalize_entry(self._entry(niches="humour"), index=0)
+        self.assertIn("niches doit être une liste", str(ctx.exception))
+
+    def test_niches_with_non_string_item_raises(self) -> None:
+        from watcher import WatchlistError, _normalize_entry
+
+        with self.assertRaises(WatchlistError) as ctx:
+            _normalize_entry(self._entry(niches=["humour", 42]), index=0)
+        self.assertIn("niches[1]", str(ctx.exception))
+
+    def test_niches_filters_empty_strings(self) -> None:
+        from watcher import _normalize_entry
+
+        out = _normalize_entry(
+            self._entry(niches=["", "humour", "   ", "sketch"]),
+            index=0,
+        )
+        self.assertEqual(out["niches"], ["humour", "sketch"])
+
+    def test_niches_priority_overrides_legacy_niche(self) -> None:
+        """Si les deux champs sont présents, ``niches`` (liste) prime."""
+        from watcher import _normalize_entry
+
+        out = _normalize_entry(
+            self._entry(niches=["humour", "réaction"], niche="ignored_legacy"),
+            index=0,
+        )
+        self.assertEqual(out["niches"], ["humour", "réaction"])
+        self.assertEqual(out["niche"], "humour")  # alias = niches[0], pas l'ancien
+
+    def test_round_trip_save_load_preserves_niches(self) -> None:
+        from watcher import load_watchlist, save_watchlist
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "wl.json"
+            save_watchlist(
+                [self._entry(niches=["humour", "sketch"])],
+                path=p,
+            )
+            loaded = load_watchlist(path=p)
+            self.assertEqual(len(loaded), 1)
+            self.assertEqual(loaded[0]["niches"], ["humour", "sketch"])
+            self.assertEqual(loaded[0]["niche"], "humour")
 
 
 if __name__ == "__main__":
