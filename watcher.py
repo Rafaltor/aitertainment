@@ -83,6 +83,7 @@ _HASHTAG_RE = re.compile(r"#(\w+)")
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_WATCHLIST_PATH = _PROJECT_ROOT / "watchlist.json"
+VECTOR_STORE_PATH = Path("data/vector_store.json")
 
 VALID_T_TYPES = frozenset({"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"})
 VALID_PLATFORMS = frozenset({"instagram", "tiktok"})
@@ -563,6 +564,31 @@ def _telegram_md_escape(text: str) -> str:
     return "".join(out)
 
 
+def load_vector_store(path: Path | str | None = None) -> dict[str, dict[str, Any]]:
+    """Charge ``vector_store.json`` et indexe les entrées par username."""
+    p = Path(path) if path is not None else VECTOR_STORE_PATH
+    if not p.is_absolute():
+        p = _PROJECT_ROOT / p
+    if not p.exists():
+        return {}
+
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        entries = [entry for entry in data if isinstance(entry, dict)]
+    elif isinstance(data, dict):
+        raw_entries = data.get("entries") or data.get("profiles") or []
+        entries = [entry for entry in raw_entries if isinstance(entry, dict)]
+    else:
+        entries = []
+
+    out: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        username = str(entry.get("username") or "").lstrip("@").strip().lower()
+        if username:
+            out[username] = entry
+    return out
+
+
 def _build_classification_from_t_type(t_type: str) -> dict[str, Any]:
     """Classification synthétique depuis ``t_type`` (Discovery a déjà tranché).
 
@@ -579,7 +605,10 @@ def _build_classification_from_t_type(t_type: str) -> dict[str, Any]:
     }
 
 
-def _generate_for_post(context: dict[str, Any]) -> list[str]:
+def _generate_for_post(
+    context: dict[str, Any],
+    vector_store: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
     """Produit 3 commentaires depuis le ``context`` (pas de ``comments_sample``).
 
     Le contexte vidéo (caption, hashtags, audio_id) est passé directement à
@@ -594,6 +623,8 @@ def _generate_for_post(context: dict[str, Any]) -> list[str]:
     """
     from modules.classifier import generate_comments  # import local : Ollama
 
+    log = logging.getLogger("aitertainment.watcher")
+    vector_store = vector_store or {}
     t_type = str(context.get("t_type") or "")
     # Schéma 2026-05 : ``niches`` (liste) prioritaire avec rétro-compat sur
     # l'ancien champ ``niche`` (string). Le caller (``run_watcher``) passe
@@ -608,16 +639,38 @@ def _generate_for_post(context: dict[str, Any]) -> list[str]:
         return []
 
     classification = _build_classification_from_t_type(t_type)
-    return generate_comments(
-        classification,
-        [],  # pas de comments_sample en phase Watcher (post frais)
-        niches=niches,
-        t_type_profile=t_type,
-        video_context={
+    username = str(context.get("username") or "").lstrip("@").strip().lower()
+    vs_entry = vector_store.get(username, {})
+    named_axes = vs_entry.get("named_axes") or {}
+    if not isinstance(named_axes, dict):
+        named_axes = {}
+
+    gen_kwargs: dict[str, Any] = {
+        "niches": niches,
+        "t_type_profile": t_type,
+        "video_context": {
             "caption": context.get("caption"),
             "hashtags": context.get("hashtags"),
             "audio_id": context.get("audio") or context.get("audio_id"),
         },
+    }
+    if named_axes:
+        log.info(
+            "generate @%s : vecteur 32D disponible (%d axes)",
+            username or "?",
+            len(named_axes),
+        )
+        gen_kwargs["named_axes"] = named_axes
+    else:
+        log.info(
+            "generate @%s : pas de vecteur — génération sans profil créateur",
+            username or "?",
+        )
+
+    return generate_comments(
+        classification,
+        [],  # pas de comments_sample en phase Watcher (post frais)
+        **gen_kwargs,
     )
 
 
@@ -700,6 +753,7 @@ def _process_creator(
     *,
     mock: bool,
     log: logging.Logger,
+    vector_store: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[bool, bool]:
     """Traite un créateur.
 
@@ -753,7 +807,11 @@ def _process_creator(
     }
 
     try:
-        comments = _mock_generate(context) if mock else _generate_for_post(context)
+        comments = (
+            _mock_generate(context)
+            if mock
+            else _generate_for_post(context, vector_store=vector_store or {})
+        )
     except Exception as e:
         log.exception("@%s : génération de commentaires échouée (%s)", username, e)
         comments = []
@@ -807,11 +865,19 @@ def run_watcher(
 
     cycle = 0
     accounts_since_pause = 0  # compteur global, reset après pause longue
+    vector_store = load_vector_store(VECTOR_STORE_PATH)
+    log.info("vector_store chargé : %d comptes", len(vector_store))
+    last_vector_store_reload = datetime.utcnow()
 
     try:
         while True:
             cycle += 1
             log.info("--- Cycle %d ---", cycle)
+
+            if (datetime.utcnow() - last_vector_store_reload).total_seconds() > 21600:
+                vector_store = load_vector_store(VECTOR_STORE_PATH)
+                last_vector_store_reload = datetime.utcnow()
+                log.info("vector_store rechargé : %d comptes", len(vector_store))
 
             try:
                 creators = load_watchlist(watchlist_path)
@@ -828,7 +894,10 @@ def run_watcher(
                 # WatcherStopRequested (capture en dehors du for).
                 try:
                     changed, did_check = _process_creator(
-                        creator, mock=mock, log=log
+                        creator,
+                        mock=mock,
+                        log=log,
+                        vector_store=vector_store,
                     )
                 except _SessionLost as e:
                     log.warning(
@@ -919,8 +988,10 @@ __all__ = [
     "save_watchlist",
     "check_new_post",
     "get_poll_interval",
+    "load_vector_store",
     "notify_new_post",
     "run_watcher",
+    "VECTOR_STORE_PATH",
 ]
 
 

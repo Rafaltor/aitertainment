@@ -70,6 +70,7 @@ from typing import Any
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TRAINING_PATH = _PROJECT_ROOT / "data" / "training_comments.json"
 DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "data"
+VECTOR_STORE_PATH = Path("data/vector_store.json")
 CLASSIFIER_FILENAME = "dataset_classifier.jsonl"
 GENERATOR_FILENAME = "dataset_generator.jsonl"
 
@@ -192,6 +193,48 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+NAMED_AXES = (
+    "scripted_vs_raw",
+    "solo_vs_collab",
+    "fictional_vs_real",
+    "energy_level",
+    "production_quality",
+    "format_length",
+    "distance_parasociale",
+    "interaction_style",
+    "mainstream_vs_niche",
+    "safe_vs_edgy",
+)
+
+
+def load_vector_store(path: Path | str | None = None) -> dict[str, dict[str, Any]]:
+    """Charge ``vector_store.json`` et indexe les entrées par username."""
+    p = Path(path) if path is not None else VECTOR_STORE_PATH
+    if not p.is_absolute():
+        p = _PROJECT_ROOT / p
+    if not p.exists():
+        _LOG.info(
+            "vector_store.json absent — named_axes non inclus dans le dataset"
+        )
+        return {}
+
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        entries = [entry for entry in data if isinstance(entry, dict)]
+    elif isinstance(data, dict):
+        raw_entries = data.get("entries") or data.get("profiles") or []
+        entries = [entry for entry in raw_entries if isinstance(entry, dict)]
+    else:
+        entries = []
+
+    out: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        username = str(entry.get("username") or "").lstrip("@").strip().lower()
+        if username:
+            out[username] = entry
+    return out
 
 
 def _format_hashtags(value: Any) -> str:
@@ -320,10 +363,53 @@ def generate_classifier_dataset(
     return len(lines)
 
 
+def _named_axes_block(named_axes: dict[str, Any]) -> str:
+    values = []
+    for axis in NAMED_AXES:
+        values.append(f"{axis}={_coerce_float(named_axes.get(axis), 0.0):.2f}")
+    return (
+        "Profil créateur:\n"
+        f"  {values[0]} {values[1]}\n"
+        f"  {values[2]} {values[3]}\n"
+        f"  {values[4]} {values[5]}\n"
+        f"  {values[6]} {values[7]}\n"
+        f"  {values[8]} {values[9]}"
+    )
+
+
+def _generator_input_block(
+    *,
+    t_type_profile: str,
+    niches: str,
+    caption: str,
+    hashtags: str,
+    audio_id: str,
+    named_axes: dict[str, Any] | None,
+) -> tuple[str, bool]:
+    base_lines = [
+        f"T-type commentateur: {t_type_profile}",
+        f"Niches: {niches}",
+    ]
+    if named_axes:
+        base_lines.append(_named_axes_block(named_axes))
+    base_lines.extend(
+        [
+            f"Caption: {caption}",
+            f"Hashtags: {hashtags}",
+            f"Audio: {audio_id}",
+        ]
+    )
+    return "\n".join(base_lines), bool(named_axes)
+
+
 def generate_generator_dataset(
-    entries: list[dict], output_path: Path
-) -> int:
-    """Écrit ``dataset_generator.jsonl``. Retourne ``nb`` lignes écrites.
+    entries: list[dict],
+    output_path: Path,
+    vector_store: dict[str, dict[str, Any]] | None = None,
+) -> tuple[int, int]:
+    """Écrit ``dataset_generator.jsonl``.
+
+    Retourne ``(nb_lignes, nb_avec_vecteur)``.
 
     Format de chaque ligne ::
 
@@ -346,8 +432,10 @@ def generate_generator_dataset(
     * ``comment_text`` : ``entry.get("text") or ""`` ; entrée **ignorée**
       si vide après strip.
     """
+    vector_store = vector_store or {}
     lines: list[str] = []
     skipped_text = 0
+    with_vector = 0
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -372,17 +460,26 @@ def generate_generator_dataset(
         hashtags = _format_hashtags(entry.get("hashtags"))
         audio_id = str(entry.get("audio_id") or "")
 
-        input_block = (
-            f"T-type commentateur: {t_type_profile}\n"
-            f"Niches: {n_str}\n"
-            f"Caption: {caption}\n"
-            f"Hashtags: {hashtags}\n"
-            f"Audio: {audio_id}"
+        username = str(entry.get("username") or "").lstrip("@").strip().lower()
+        store_entry = vector_store.get(username, {})
+        named_axes = store_entry.get("named_axes")
+        axes_dict = named_axes if isinstance(named_axes, dict) and named_axes else None
+
+        input_block, has_vector = _generator_input_block(
+            t_type_profile=t_type_profile,
+            niches=n_str,
+            caption=caption,
+            hashtags=hashtags,
+            audio_id=audio_id,
+            named_axes=axes_dict,
         )
+        if has_vector:
+            with_vector += 1
         record = {
             "instruction": GENERATOR_INSTRUCTION,
             "input": input_block,
             "output": comment_text,
+            "has_vector": has_vector,
         }
         lines.append(json.dumps(record, ensure_ascii=False))
 
@@ -392,7 +489,7 @@ def generate_generator_dataset(
             "generator: %d ligne(s) écrites (skip text=%d)",
             len(lines), skipped_text,
         )
-    return len(lines)
+    return len(lines), with_vector
 
 
 # ---------------------------------------------------------------------------
@@ -462,15 +559,24 @@ def main(argv: list[str] | None = None) -> int:
     classifier_path = args.output_dir / CLASSIFIER_FILENAME
     generator_path = args.output_dir / GENERATOR_FILENAME
 
+    vector_store = load_vector_store(VECTOR_STORE_PATH)
+    _LOG.info("vector_store chargé : %d comptes", len(vector_store))
+
     try:
         n_cls = generate_classifier_dataset(entries, classifier_path)
-        n_gen = generate_generator_dataset(entries, generator_path)
+        n_gen, n_vec = generate_generator_dataset(
+            entries, generator_path, vector_store=vector_store
+        )
     except OSError as e:
         _LOG.error("Erreur d'écriture des datasets : %s", e)
         return 1
 
-    _LOG.info("Classifier : %d entrées écrites → %s", n_cls, classifier_path)
-    _LOG.info("Generator : %d entrées écrites → %s", n_gen, generator_path)
+    _LOG.info("Classifier : %d entrées", n_cls)
+    _LOG.info(
+        "Generator : %d entrées dont %d avec vecteur 32D",
+        n_gen,
+        n_vec,
+    )
     return 0
 
 
@@ -482,9 +588,11 @@ __all__ = [
     "GENERATOR_FILENAME",
     "GENERATOR_INSTRUCTION",
     "VALID_TTYPES",
+    "VECTOR_STORE_PATH",
     "generate_classifier_dataset",
     "generate_generator_dataset",
     "load_training",
+    "load_vector_store",
     "main",
     "niches_str",
 ]

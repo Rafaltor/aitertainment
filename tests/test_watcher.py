@@ -464,6 +464,90 @@ class RunWatcherProtectionsTest(unittest.TestCase):
         self.assertEqual(mock_check.call_count, 1)
 
 
+def _sample_named_axes() -> dict[str, float]:
+    return {
+        "scripted_vs_raw": 0.11,
+        "solo_vs_collab": 0.22,
+        "fictional_vs_real": 0.33,
+        "energy_level": 0.44,
+        "production_quality": 0.55,
+        "format_length": 0.66,
+        "distance_parasociale": 0.77,
+        "interaction_style": 0.88,
+        "mainstream_vs_niche": 0.99,
+        "safe_vs_edgy": 0.12,
+    }
+
+
+class GenerateWithVectorTest(unittest.TestCase):
+    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    def test_named_axes_from_vector_store_passed_to_generate_comments(
+        self, mock_gen: MagicMock
+    ) -> None:
+        from watcher import _generate_for_post
+
+        ctx = {
+            "t_type": "T2",
+            "niches": ["humour"],
+            "username": "creator1",
+        }
+        vector_store = {
+            "creator1": {
+                "username": "creator1",
+                "named_axes": _sample_named_axes(),
+            }
+        }
+        with self.assertLogs("aitertainment.watcher", level="INFO") as logs:
+            _generate_for_post(ctx, vector_store=vector_store)
+        kwargs = mock_gen.call_args.kwargs
+        self.assertEqual(kwargs["named_axes"], _sample_named_axes())
+        self.assertTrue(
+            any("vecteur 32D disponible" in msg for msg in logs.output)
+        )
+
+    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    def test_missing_username_omits_named_axes(self, mock_gen: MagicMock) -> None:
+        from watcher import _generate_for_post
+
+        vector_store = {
+            "creator1": {
+                "username": "creator1",
+                "named_axes": _sample_named_axes(),
+            }
+        }
+        with self.assertLogs("aitertainment.watcher", level="INFO") as logs:
+            _generate_for_post(
+                {"t_type": "T2", "niches": ["humour"], "username": "unknown"},
+                vector_store=vector_store,
+            )
+        kwargs = mock_gen.call_args.kwargs
+        self.assertNotIn("named_axes", kwargs)
+        self.assertTrue(any("pas de vecteur" in msg for msg in logs.output))
+
+    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    def test_empty_vector_store_keeps_legacy_call(self, mock_gen: MagicMock) -> None:
+        from watcher import _generate_for_post
+
+        _generate_for_post(
+            {"t_type": "T2", "niches": ["humour"], "username": "creator1"},
+            vector_store={},
+        )
+        self.assertNotIn("named_axes", mock_gen.call_args.kwargs)
+
+    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    def test_empty_named_axes_treated_as_missing(self, mock_gen: MagicMock) -> None:
+        from watcher import _generate_for_post
+
+        vector_store = {"creator1": {"username": "creator1", "named_axes": {}}}
+        with self.assertLogs("aitertainment.watcher", level="INFO") as logs:
+            _generate_for_post(
+                {"t_type": "T2", "niches": ["humour"], "username": "creator1"},
+                vector_store=vector_store,
+            )
+        self.assertNotIn("named_axes", mock_gen.call_args.kwargs)
+        self.assertTrue(any("pas de vecteur" in msg for msg in logs.output))
+
+
 class GenerateForPostTest(unittest.TestCase):
     """Vérifie le câblage Watcher → ``modules.classifier.generate_comments``."""
 

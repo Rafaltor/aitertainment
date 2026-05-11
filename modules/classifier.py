@@ -119,6 +119,19 @@ Exemples de vrais commentaires :
 
 GENERATE_FALLBACK_TTYPE = "T2"
 
+NAMED_AXES = (
+    "scripted_vs_raw",
+    "solo_vs_collab",
+    "fictional_vs_real",
+    "energy_level",
+    "production_quality",
+    "format_length",
+    "distance_parasociale",
+    "interaction_style",
+    "mainstream_vs_niche",
+    "safe_vs_edgy",
+)
+
 # Mots interdits explicités côté system prompt — listés ici aussi pour
 # permettre un check programmatique côté tests / debug (pas de filtrage
 # automatique côté code de prod : on fait confiance au modèle, on ne fait
@@ -402,6 +415,28 @@ def _normalize_video_context(
     }
 
 
+def _coerce_named_axis(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _format_named_axes_block(named_axes: dict[str, Any]) -> str:
+    values = [
+        f"{axis}={_coerce_named_axis(named_axes.get(axis)):.2f}"
+        for axis in NAMED_AXES
+    ]
+    return (
+        "Profil créateur:\n"
+        f"  {values[0]} {values[1]}\n"
+        f"  {values[2]} {values[3]}\n"
+        f"  {values[4]} {values[5]}\n"
+        f"  {values[6]} {values[7]}\n"
+        f"  {values[8]} {values[9]}"
+    )
+
+
 def _format_comments_sample(
     comments_sample: list[str], *, max_lines: int = 20
 ) -> str:
@@ -426,6 +461,7 @@ def generate_comments(
     niches: list[str] | str = "",
     t_type_profile: str | None = None,
     video_context: dict[str, Any] | None = None,
+    named_axes: dict[str, Any] | None = None,
 ) -> list[str]:
     """Produit 3 commentaires via Ollama, prompt **spécialisé par T-type**.
 
@@ -465,6 +501,14 @@ def generate_comments(
         hashtags=ctx["hashtags"],
         comments_sample=_format_comments_sample(comments_sample),
     )
+    axes = named_axes if isinstance(named_axes, dict) and named_axes else None
+    if axes:
+        profile_line = f"T-type commentateur : {profile_tt}"
+        prompt = prompt.replace(
+            profile_line,
+            f"{profile_line}\n{_format_named_axes_block(axes)}",
+            1,
+        )
 
     body: dict[str, Any] = {
         "model": config.OLLAMA_MODEL,

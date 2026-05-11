@@ -179,11 +179,9 @@ DISCOVERY_NOTIFY_THRESHOLD = float(config.DISCOVERY_NOTIFY_THRESHOLD)
 # prennent les mêmes décisions notif/blacklist.
 CANDIDATE_SCORE_THRESHOLD = DISCOVERY_NOTIFY_THRESHOLD
 
-# Note 2026-05 : la discovery via ``user_following`` (crawl par seed → ses
-# followings) a été supprimée. ``explore_network`` ne score plus que le seed
-# lui-même, puis le retire de ``seeds.json``. La nouvelle exploration de
-# réseau passe par d'autres signaux (cf. roadmap, ex. hashtags, audio,
-# similar_accounts) — pas de fetch de followings côté instagrapi.
+# Suggestions Instagram (``discover/*``) en source principale ; followings du
+# seed uniquement en fallback final via ``_fetch_followings``.
+FOLLOWING_FETCH_AMOUNT = 50
 
 # ----------------------------------------------------------------------------
 # Limites humaines simulées (Layer 0)
@@ -1489,14 +1487,6 @@ def score_profile(
     post_ratio_med = _post_ratio_median(posts, follower_count) if posts else 0.0
     post_eng_med = _engagement_median(posts, follower_count) if posts else 0.0
 
-    # 7. Classification T-type — on priorise les Reels (signal le plus pur sur
-    # la consommation actuelle), et on complète avec des Posts non-épinglés
-    # uniquement si on a moins de 3 Reels.
-    if len(reels) >= COMMENTS_MEDIA_SAMPLE:
-        media_for_classification = reels[-COMMENTS_MEDIA_SAMPLE:]
-    else:
-        needed = COMMENTS_MEDIA_SAMPLE - len(reels)
-        media_for_classification = reels + posts[-needed:]
     # Niches (liste) : depuis le nouveau schéma seeds.json (``domain["niches"]``)
     # avec rétro-compat pour l'ancien champ string ``domain["niche"]``. La
     # liste est validée contre ``config.VALID_NICHES`` — ``validate_niches``
@@ -1506,13 +1496,12 @@ def score_profile(
         or [str(domain.get("niche") or domain.get("name") or "humour")]
     )
     niches = config.validate_niches(niches)
-    # Le classifier accepte la liste complète (schéma 2026-05).
-    distribution, dominant = _classify_recent_comments(
-        client,
-        media_for_classification,
-        niches=niches,
-        log=log,
+    log.info(
+        "score_profile @%s : skip commentaires (collecte différée via collect_comments.py)",
+        u,
     )
+    distribution: dict[str, float] = {}
+    dominant: str | None = None
 
     # 8. SCORE_PROFIL unifié pondéré --------------------------------------
     score_reels = (
@@ -1899,16 +1888,181 @@ def _watchlist_usernames(
 # =============================================================================
 # Exploration réseau
 # =============================================================================
-#
-# Discovery 2026-05 : ``explore_network`` ne fetche **plus** les followings
-# Instagram. Le crawl par ``user_following`` a été retiré (rate-limit + qualité
-# du signal). On score uniquement le seed lui-même, puis on le retire de
-# ``seeds.json``. L'expansion réseau passera par d'autres mécanismes
-# (hashtags / audio / similar_accounts) à venir.
-#
-# Helper historique ``_seed_followings`` retiré ; les imports
-# ``PrivateAccount``/``PrivateError`` / ``RateLimitError`` /
-# ``ClientThrottledError`` restent utilisés ailleurs (cf. ``score_profile``).
+
+
+def _usernames_from_suggestion_payload(payload: Any) -> list[str]:
+    """Extrait les usernames d'une réponse discover/chaining/suggestions."""
+    if payload is None:
+        return []
+    if isinstance(payload, list):
+        candidates = payload
+    elif isinstance(payload, dict):
+        candidates = (
+            payload.get("users")
+            or payload.get("user_list")
+            or payload.get("items")
+            or []
+        )
+    else:
+        return []
+
+    out: list[str] = []
+    for item in candidates:
+        if item is None:
+            continue
+        if isinstance(item, dict):
+            uname = item.get("username")
+        else:
+            uname = getattr(item, "username", None)
+        if uname is None:
+            continue
+        text = str(uname).lstrip("@").strip()
+        if text:
+            out.append(text)
+    return out
+
+
+def _filter_suggestion_usernames(
+    usernames: list[str],
+    *,
+    max_results: int,
+) -> list[str]:
+    """Filtre les usernames vides et tronque à ``max_results``."""
+    out: list[str] = []
+    for uname in usernames:
+        if uname is None:
+            continue
+        text = str(uname).lstrip("@").strip()
+        if not text:
+            continue
+        out.append(text)
+        if len(out) >= max_results:
+            break
+    return out
+
+
+def _fetch_suggestion_details_usernames(client: Any, user_id: str) -> list[str]:
+    """Niveau 2 : ``fetch_suggestion_details`` (ou ``chaining`` en secours)."""
+    if not hasattr(client, "fetch_suggestion_details"):
+        raise AttributeError("fetch_suggestion_details indisponible")
+
+    try:
+        payload = client.fetch_suggestion_details(user_id)
+    except TypeError:
+        if not hasattr(client, "chaining"):
+            raise
+        chaining = client.chaining(user_id)
+        users = chaining.get("users") if isinstance(chaining, dict) else []
+        chained_ids = ",".join(
+            str(u.get("pk") or u.get("id") or "")
+            for u in users
+            if isinstance(u, dict) and (u.get("pk") or u.get("id"))
+        )
+        if not chained_ids:
+            return _usernames_from_suggestion_payload(chaining)
+        payload = client.fetch_suggestion_details(user_id, chained_ids)
+
+    return _usernames_from_suggestion_payload(payload)
+
+
+def _fetch_followings(username: str, client: Any) -> list[str]:
+    """Fallback final : followings du seed via ``user_following``."""
+    s = (username or "").lstrip("@").strip()
+    if not s or client is None:
+        return []
+
+    try:
+        seed_id = client.user_id_from_username(s)
+    except Exception as e:
+        _LOGGER.debug(
+            "_fetch_followings user_id_from_username: %s: %s",
+            type(e).__name__,
+            e,
+        )
+        return []
+
+    try:
+        following = client.user_following(
+            str(seed_id), amount=FOLLOWING_FETCH_AMOUNT
+        )
+    except Exception as e:
+        _LOGGER.debug(
+            "_fetch_followings user_following: %s: %s",
+            type(e).__name__,
+            e,
+        )
+        return []
+
+    out: list[str] = []
+    if isinstance(following, dict):
+        for _, ushort in following.items():
+            uname = str(getattr(ushort, "username", "") or "").strip()
+            if uname:
+                out.append(uname)
+    else:
+        for ushort in following or []:
+            uname = str(getattr(ushort, "username", "") or "").strip()
+            if uname:
+                out.append(uname)
+    return out
+
+
+def _fetch_suggestions(
+    username: str,
+    client: Any,
+    max_results: int = 30,
+) -> list[str]:
+    """Suggestions Instagram pour un seed, avec fallbacks progressifs.
+
+    1. ``discover_recommended_accounts_for_category_v1``
+    2. ``fetch_suggestion_details`` (``chaining`` si la signature l'exige)
+    3. ``_fetch_followings`` (followings du seed)
+
+    Ne lève jamais : retourne ``[]`` si tous les niveaux échouent.
+    """
+    log = _LOGGER
+    s = (username or "").lstrip("@").strip()
+    if not s or client is None:
+        return []
+
+    try:
+        user_id = client.user_id_from_username(s)
+    except Exception as e:
+        log.debug(
+            "_fetch_suggestions user_id_from_username: %s: %s",
+            type(e).__name__,
+            e,
+        )
+        return []
+
+    user_id_str = str(user_id)
+
+    try:
+        polite_sleep(min_s=1, max_s=1)
+        payload = client.discover_recommended_accounts_for_category_v1(user_id_str)
+        names = _usernames_from_suggestion_payload(payload)
+        if names:
+            return _filter_suggestion_usernames(names, max_results=max_results)
+    except Exception as e:
+        log.debug("_fetch_suggestions niveau 1: %s: %s", type(e).__name__, e)
+
+    try:
+        polite_sleep(min_s=1, max_s=1)
+        names = _fetch_suggestion_details_usernames(client, user_id_str)
+        if names:
+            return _filter_suggestion_usernames(names, max_results=max_results)
+    except Exception as e:
+        log.debug("_fetch_suggestions niveau 2: %s: %s", type(e).__name__, e)
+
+    try:
+        polite_sleep(min_s=1, max_s=1)
+        log.warning("suggestions non disponibles pour @%s — fallback followings", s)
+        names = _fetch_followings(s, client)
+        return _filter_suggestion_usernames(names, max_results=max_results)
+    except Exception as e:
+        log.debug("_fetch_suggestions niveau 3: %s: %s", type(e).__name__, e)
+
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -1975,22 +2129,18 @@ def explore_network(
     seeds_path: Path | None = None,
     seeds_override: list[str] | None = None,
 ) -> None:
-    """Discovery 2026-05 : score chaque seed d'un domaine, **un seul profil
-    par seed** (le seed lui-même), puis retire le seed de ``seeds.json``.
+    """Discovery : score le seed puis ses suggestions Instagram.
 
     Pour chaque seed (objet brut, string ou dict avec ``niches``) :
 
     1. ``_score_one_in_domain(seed)`` — auto-scoring du seed.
     2. Si le quota quotidien (``MAX_PROFILES_PER_DAY``) est atteint
        → ``return`` (le seed reste dans ``seeds.json`` pour la prochaine run).
-    3. Sinon : retirer le seed de ``seeds.json`` (sauf si ``seeds_override``
-       est fourni — dans ce cas on ne touche pas à seeds.json) et persister
-       atomiquement.
-    4. Passer au seed suivant.
-
-    **Plus de fetch de followings** (cf. note retrait 2026-05) :
-    ``user_following`` rate-limit + signal de qualité décevant. L'expansion
-    réseau passera par d'autres mécanismes (hashtags, audio, similar_accounts).
+    3. ``_fetch_suggestions(seed)`` puis scoring de chaque suggestion
+       (quota, ``seen_this_run``, blacklist/watchlist en mémoire).
+    4. Retirer le seed de ``seeds.json`` (sauf ``seeds_override`` ou mock)
+       et persister atomiquement.
+    5. Passer au seed suivant.
 
     Sets de filtrage :
         - ``blacklist_set`` : maintenu **mutable en mémoire**, mis à jour
@@ -2095,6 +2245,39 @@ def explore_network(
         )
         if seed_state == "quota":
             return
+
+        if session.mock:
+            suggestions: list[str] = []
+        else:
+            suggestions = _fetch_suggestions(
+                seed_user, client, max_results=30
+            )
+
+        for username in suggestions:
+            uname = username.lstrip("@").strip().lower()
+            if not uname or uname == seed_lower:
+                continue
+
+            state = _score_one_in_domain(
+                uname,
+                domain=seed_domain,
+                domain_name=domain_name,
+                parent_seed=seed_user,
+                blacklist=blacklist,
+                candidates=candidates,
+                db=db,
+                watchlist_set=watchlist_set,
+                blacklist_set=blacklist_set,
+                seen_this_run=seen_this_run,
+                client=client,
+                session=session,
+                blacklist_path=blacklist_path,
+                candidates_path=candidates_path,
+                db_path=db_path,
+                log=log,
+            )
+            if state == "quota":
+                return
 
         # Retrait du seed de seeds.json après exploration complète.
         # On ne touche pas seeds.json en mode ``seeds_override`` (CLI
@@ -2329,8 +2512,6 @@ def _mock_score_profile(username: str, domain: dict[str, Any]) -> dict[str, Any]
     if h < 200:
         return None  # ineligible simulé
     score = 200.0 + (h % 700)  # entre 200 et 899
-    targets = list(domain.get("t_types_target") or ["T2"])
-    dom_t = targets[0] if targets else "T2"
     # Distribution Reels/Posts factice (entre 100% reels et 50/50)
     reels_n = 6 + (h % 7)             # 6..12 reels
     posts_n = 12 - reels_n if reels_n < 12 else 0
@@ -2362,8 +2543,8 @@ def _mock_score_profile(username: str, domain: dict[str, Any]) -> dict[str, Any]
         "post_ratio_median": 0.05 if posts_n else None,
         "post_engagement_median": 0.04 if posts_n else None,
         "posting_rhythm": 0.7,
-        "t_type_dominant": dom_t,
-        "t_type_distribution": {dom_t: 1.0},
+        "t_type_dominant": None,
+        "t_type_distribution": {},
         "biography": f"mock bio {username}",
         "media_sampled": total,
         "reels_count": reels_n,

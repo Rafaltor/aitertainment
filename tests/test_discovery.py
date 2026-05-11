@@ -138,24 +138,11 @@ class ScoreProfileTest(unittest.TestCase):
         *,
         user: SimpleNamespace | None = None,
         medias: list[SimpleNamespace] | None = None,
-        comments_per_media: dict[str, list[str]] | None = None,
     ) -> MagicMock:
         client = MagicMock()
         client.user_id_from_username.return_value = "111"
         client.user_info.return_value = user or _make_user()
         client.user_medias.return_value = medias or []
-
-        comments_per_media = comments_per_media or {}
-
-        def _media_comments(media_id: str, amount: int = 50):
-            # Par défaut on fournit ``like_count=1`` non nul pour rester sur
-            # le chemin nominal (sans déclencher le fallback "max_likes=0").
-            # Les tests qui veulent vérifier le fallback construisent leur
-            # propre stub explicite (cf. ClassifyRecentCommentsTest).
-            texts = comments_per_media.get(str(media_id), [])
-            return [SimpleNamespace(text=t, like_count=1) for t in texts]
-
-        client.media_comments.side_effect = _media_comments
         return client
 
     def test_user_not_found_returns_none(self) -> None:
@@ -251,31 +238,17 @@ class ScoreProfileTest(unittest.TestCase):
                 )
             )
 
-        comments_map = {
-            "new3": ["lol mdr la blague", "gg le comique"],
-            "new2": ["t'es serieux", "haha incroyable"],
-            "new1": ["meme énergie", "drôle"],
-        }
         client = self._make_client(
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
-            comments_per_media=comments_map,
         )
 
-        with patch("modules.classifier.CommentClassifier") as cls:
-            cls.return_value.classify.return_value = {
-                "type": "T2",
-                "confidence": 0.9,
-                "patterns": [],
-                "tone": "humour tribal",
-                "brand_risk": "low",
-            }
-            result = discovery.score_profile(
-                "rising_creator",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                client=client,
-            )
+        result = discovery.score_profile(
+            "rising_creator",
+            self.DOMAIN,
+            blacklist={"profiles": []},
+            client=client,
+        )
 
         self.assertIsNotNone(result)
         assert result is not None  # type-narrow
@@ -289,13 +262,11 @@ class ScoreProfileTest(unittest.TestCase):
         self.assertAlmostEqual(result["post_weight"], 0.0, places=5)
         self.assertEqual(result["reel_trend"], "rising")
         self.assertIsNone(result["post_ratio_median"])
-        self.assertEqual(result["t_type_dominant"], "T2")
-        self.assertAlmostEqual(sum(result["t_type_distribution"].values()), 1.0, places=5)
+        self.assertIsNone(result["t_type_dominant"])
+        self.assertEqual(result["t_type_distribution"], {})
         self.assertGreaterEqual(result["score"], 0.0)
         self.assertLessEqual(result["score"], 1000.0)
-        # T-type T2 est dans les targets → bonus t_type_match plein régime
-        # rising → +150, ratio cap 30 mais ici 3x → 35, etc.
-        self.assertGreater(result["score"], 400.0)
+        self.assertGreater(result["score"], 300.0)
 
     def test_returns_none_when_no_medias(self) -> None:
         client = self._make_client(user=_make_user(media_count=10), medias=[])
@@ -805,116 +776,31 @@ class ScoreProfileTest(unittest.TestCase):
         # médiane vers 0 si pris en compte).
         self.assertAlmostEqual(result["post_ratio_median"], 0.09, places=4)
 
-    def test_classification_uses_only_recent_reels_when_three_or_more(self) -> None:
-        """≥ 3 Reels : on classifie sur les 3 plus récents, pas sur les Posts."""
-        followers = 10_000
-        medias = []
-        for i in range(3):
-            medias.append(
-                _make_media(
-                    pk=f"old_r{i}",
-                    views=10_000,
-                    likes=500,
-                    comments=40,
-                    days_ago=40 - i,
-                    product_type="clips",
-                )
-            )
-        for i in range(3):
-            medias.append(
-                _make_media(
-                    pk=f"recent_r{i}",
-                    views=20_000,
-                    likes=1_000,
-                    comments=80,
-                    days_ago=3 - i,
-                    product_type="clips",
-                )
-            )
-        for i in range(2):
-            medias.append(
-                _make_media(
-                    pk=f"p{i}",
-                    views=0,
-                    likes=300,
-                    comments=20,
-                    days_ago=1 - i,
-                    product_type="feed",
-                )
-            )
-        client = self._make_client(
-            user=_make_user(follower_count=followers, media_count=40),
-            medias=medias,
-            comments_per_media={f"recent_r{i}": ["lol"] for i in range(3)},
-        )
-        with patch("modules.classifier.CommentClassifier"):
-            discovery.score_profile(
-                "reels_priority",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                client=client,
-            )
-        scraped_pks = {
-            str(call.args[0]) for call in client.media_comments.call_args_list
-        }
-        self.assertEqual(scraped_pks, {"recent_r0", "recent_r1", "recent_r2"})
-
-    def test_classification_completes_with_posts_when_reels_below_three(self) -> None:
-        """1 Reel + ≥ 2 Posts : on complète avec les 2 Posts les plus récents."""
+    def test_score_profile_does_not_fetch_media_comments(self) -> None:
+        """Le scoring Discovery ne charge plus les commentaires individuels."""
         followers = 10_000
         medias = [
             _make_media(
-                pk="r_only",
+                pk=f"r{i}",
                 views=20_000,
-                likes=1_500,
-                comments=120,
-                days_ago=10,
+                likes=1_000,
+                comments=80,
+                days_ago=3 - i,
                 product_type="clips",
-            ),
-            _make_media(
-                pk="old_p",
-                views=0,
-                likes=400,
-                comments=30,
-                days_ago=60,
-                product_type="feed",
-            ),
-            _make_media(
-                pk="p_recent_0",
-                views=0,
-                likes=600,
-                comments=50,
-                days_ago=4,
-                product_type="feed",
-            ),
-            _make_media(
-                pk="p_recent_1",
-                views=0,
-                likes=800,
-                comments=70,
-                days_ago=2,
-                product_type="feed",
-            ),
+            )
+            for i in range(4)
         ]
         client = self._make_client(
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
-            comments_per_media={
-                "r_only": ["lol"], "p_recent_0": ["wow"], "p_recent_1": ["nice"],
-            },
         )
-        with patch("modules.classifier.CommentClassifier"):
-            discovery.score_profile(
-                "complete_with_posts",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                client=client,
-            )
-        scraped_pks = {
-            str(call.args[0]) for call in client.media_comments.call_args_list
-        }
-        # 1 reel + 2 posts les plus récents (jamais "old_p"). Cap classifieur = 3.
-        self.assertEqual(scraped_pks, {"r_only", "p_recent_0", "p_recent_1"})
+        discovery.score_profile(
+            "no_comment_fetch",
+            self.DOMAIN,
+            blacklist={"profiles": []},
+            client=client,
+        )
+        client.media_comments.assert_not_called()
 
     def test_posting_rhythm_in_result_dict(self) -> None:
         """``publish_frequency`` retiré ; clé renommée ``posting_rhythm``."""
@@ -1823,6 +1709,99 @@ class ExploreNetworkInMemorySetsTest(unittest.TestCase):
         self.assertEqual(discovery._blacklist_usernames(None), set())
         self.assertEqual(discovery._blacklist_usernames({}), set())
         self.assertEqual(discovery._blacklist_usernames({"profiles": []}), set())
+
+
+class FetchSuggestionsTest(unittest.TestCase):
+    """``_fetch_suggestions`` : cascade discover → suggestion_details → followings."""
+
+    def setUp(self) -> None:
+        self._sleep_patch = patch.object(discovery, "polite_sleep", lambda *a, **k: None)
+        self._sleep_patch.start()
+        self.addCleanup(self._sleep_patch.stop)
+
+    @staticmethod
+    def _client_with_user_id(user_id: str = "111") -> MagicMock:
+        client = MagicMock()
+        client.user_id_from_username.return_value = user_id
+        return client
+
+    def test_level_one_used_when_available(self) -> None:
+        client = self._client_with_user_id()
+        client.discover_recommended_accounts_for_category_v1.return_value = {
+            "users": [{"username": "alpha"}, {"username": "beta"}]
+        }
+
+        with patch.object(discovery, "_fetch_followings") as followings_mock:
+            result = discovery._fetch_suggestions("seed_one", client, max_results=30)
+
+        self.assertEqual(result, ["alpha", "beta"])
+        client.discover_recommended_accounts_for_category_v1.assert_called_once_with("111")
+        client.fetch_suggestion_details.assert_not_called()
+        followings_mock.assert_not_called()
+
+    def test_level_one_attribute_error_falls_back_to_level_two(self) -> None:
+        client = self._client_with_user_id()
+        client.discover_recommended_accounts_for_category_v1.side_effect = (
+            AttributeError("missing")
+        )
+        client.fetch_suggestion_details.return_value = {
+            "users": [{"username": "gamma"}]
+        }
+
+        with patch.object(discovery, "_fetch_followings") as followings_mock:
+            result = discovery._fetch_suggestions("seed_one", client, max_results=30)
+
+        self.assertEqual(result, ["gamma"])
+        client.fetch_suggestion_details.assert_called_once_with("111")
+        followings_mock.assert_not_called()
+
+    def test_level_one_and_two_fail_fall_back_to_followings_with_warning(self) -> None:
+        client = self._client_with_user_id()
+        client.discover_recommended_accounts_for_category_v1.return_value = {"users": []}
+        client.fetch_suggestion_details.side_effect = RuntimeError("down")
+
+        with patch.object(
+            discovery, "_fetch_followings", return_value=["follow_a", "follow_b"]
+        ) as followings_mock, self.assertLogs(
+            "aitertainment.discovery", level="WARNING"
+        ) as cm:
+            result = discovery._fetch_suggestions("seed_one", client, max_results=30)
+
+        self.assertEqual(result, ["follow_a", "follow_b"])
+        followings_mock.assert_called_once_with("seed_one", client)
+        self.assertTrue(
+            any(
+                "suggestions non disponibles pour @seed_one — fallback followings"
+                in m
+                for m in cm.output
+            ),
+            cm.output,
+        )
+
+    def test_result_truncated_to_max_results(self) -> None:
+        client = self._client_with_user_id()
+        client.discover_recommended_accounts_for_category_v1.return_value = {
+            "users": [{"username": f"u{i}"} for i in range(10)]
+        }
+
+        result = discovery._fetch_suggestions("seed_one", client, max_results=3)
+
+        self.assertEqual(result, ["u0", "u1", "u2"])
+
+    def test_empty_or_none_usernames_filtered(self) -> None:
+        client = self._client_with_user_id()
+        client.discover_recommended_accounts_for_category_v1.return_value = {
+            "users": [
+                {"username": "valid"},
+                {"username": ""},
+                {"username": None},
+                {"username": "  @other  "},
+            ]
+        }
+
+        result = discovery._fetch_suggestions("seed_one", client, max_results=30)
+
+        self.assertEqual(result, ["valid", "other"])
 
 
 class RunDiscoveryCliTest(unittest.TestCase):

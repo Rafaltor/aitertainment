@@ -218,6 +218,79 @@ class FormatCommentsSampleTest(unittest.TestCase):
         self.assertEqual(_format_comments_sample(["", "  ", None]), "(aucun commentaire disponible)")
 
 
+class GenerateWithNamedAxesTest(unittest.TestCase):
+    @staticmethod
+    def _capture_prompt(mock_post: MagicMock) -> str:
+        return mock_post.call_args.kwargs["json_body"]["prompt"]
+
+    @patch("modules.classifier._http_post")
+    def test_non_empty_named_axes_adds_creator_profile_block(
+        self, mock_post: MagicMock
+    ) -> None:
+        mock_post.return_value = _ollama_json_response(
+            {"comments": ["a", "b", "c"]}
+        )
+        cls = {"type": "T2", "confidence": 0.9, "patterns": [], "tone": "x", "brand_risk": "low"}
+        generate_comments(
+            cls,
+            [],
+            niches=["humour"],
+            t_type_profile="T2",
+            named_axes={"scripted_vs_raw": 0.5, "solo_vs_collab": 0.6},
+        )
+        prompt = self._capture_prompt(mock_post)
+        self.assertIn("Profil créateur:", prompt)
+        self.assertIn("scripted_vs_raw=0.50", prompt)
+
+    @patch("modules.classifier._http_post")
+    def test_empty_named_axes_leaves_prompt_unchanged(self, mock_post: MagicMock) -> None:
+        mock_post.return_value = _ollama_json_response(
+            {"comments": ["a", "b", "c"]}
+        )
+        cls = {"type": "T2", "confidence": 0.9, "patterns": [], "tone": "x", "brand_risk": "low"}
+        generate_comments(
+            cls,
+            [],
+            niches=["humour"],
+            t_type_profile="T2",
+            video_context={"caption": "x", "hashtags": []},
+        )
+        baseline = self._capture_prompt(mock_post)
+        mock_post.reset_mock()
+        mock_post.return_value = _ollama_json_response(
+            {"comments": ["a", "b", "c"]}
+        )
+        generate_comments(
+            cls,
+            [],
+            niches=["humour"],
+            t_type_profile="T2",
+            video_context={"caption": "x", "hashtags": []},
+            named_axes={},
+        )
+        self.assertEqual(self._capture_prompt(mock_post), baseline)
+        self.assertNotIn("Profil créateur:", baseline)
+
+    @patch("modules.classifier._http_post")
+    def test_named_axes_values_formatted_with_two_decimals(
+        self, mock_post: MagicMock
+    ) -> None:
+        mock_post.return_value = _ollama_json_response(
+            {"comments": ["a", "b", "c"]}
+        )
+        cls = {"type": "T2", "confidence": 0.9, "patterns": [], "tone": "x", "brand_risk": "low"}
+        generate_comments(
+            cls,
+            [],
+            niches=["humour"],
+            t_type_profile="T2",
+            named_axes={"scripted_vs_raw": 0.123456, "solo_vs_collab": 1},
+        )
+        prompt = self._capture_prompt(mock_post)
+        self.assertIn("scripted_vs_raw=0.12", prompt)
+        self.assertIn("solo_vs_collab=1.00", prompt)
+
+
 class GenerateCommentsTest(unittest.TestCase):
     """Tests fonctionnels de bout en bout (Ollama mocké)."""
 
