@@ -179,9 +179,11 @@ DISCOVERY_NOTIFY_THRESHOLD = float(config.DISCOVERY_NOTIFY_THRESHOLD)
 # prennent les mêmes décisions notif/blacklist.
 CANDIDATE_SCORE_THRESHOLD = DISCOVERY_NOTIFY_THRESHOLD
 
-# Profils explorés par seed (suffisant pour découvrir 50 candidats sans
-# attaquer le rate limit instagrapi sur user_following).
-FOLLOWING_FETCH_AMOUNT = 50
+# Note 2026-05 : la discovery via ``user_following`` (crawl par seed → ses
+# followings) a été supprimée. ``explore_network`` ne score plus que le seed
+# lui-même, puis le retire de ``seeds.json``. La nouvelle exploration de
+# réseau passe par d'autres signaux (cf. roadmap, ex. hashtags, audio,
+# similar_accounts) — pas de fetch de followings côté instagrapi.
 
 # ----------------------------------------------------------------------------
 # Limites humaines simulées (Layer 0)
@@ -283,6 +285,67 @@ def load_seeds(path: str | Path | None = None) -> dict[str, Any]:
         raise DiscoveryIOError(f'"domains" doit être une liste dans {p}')
     _LOGGER.debug("Seeds chargés : %d domaine(s) depuis %s", len(domains), p.name)
     return data
+
+
+def save_seeds(seeds_data: dict[str, Any], path: str | Path | None = None) -> None:
+    """Écrit ``seeds.json`` de façon atomique.
+
+    Symétrique de ``load_seeds`` : valide la forme racine
+    (``{"domains": [...]}``), conserve l'intégralité de l'objet (clés
+    additionnelles éventuelles) puis remplace le fichier via tmp+rename.
+
+    Lève ``DiscoveryIOError`` si le payload n'a pas la forme attendue —
+    c'est volontaire : on préfère **planter visiblement** plutôt que
+    persister un seeds.json corrompu (perte de plusieurs heures de
+    curation manuelle).
+    """
+    if not isinstance(seeds_data, dict):
+        raise DiscoveryIOError(
+            f"seeds_data doit être un dict, reçu {type(seeds_data).__name__}"
+        )
+    domains = seeds_data.get("domains")
+    if not isinstance(domains, list):
+        raise DiscoveryIOError('"domains" doit être une liste non absente')
+    p = Path(path) if path else DEFAULT_SEEDS_PATH
+    _atomic_write_json(p, seeds_data)
+    _LOGGER.info("Seeds sauvegardés : %d domaine(s) -> %s", len(domains), p)
+
+
+def _remove_seed_from_seeds_data(
+    seeds_data: dict[str, Any],
+    *,
+    domain_name: str,
+    seed_username: str,
+) -> bool:
+    """Retire ``seed_username`` du domaine ``domain_name`` dans ``seeds_data``.
+
+    La comparaison se fait sur le username **normalisé** (``lower()``,
+    sans ``@``) via ``_seed_username`` — donc transparent au schéma
+    string-vs-dict des seeds. Si plusieurs entrées ciblent le même
+    username (cas d'invariant cassé en curation manuelle), toutes sont
+    retirées.
+
+    Le domaine est conservé même si sa liste ``seeds`` devient vide
+    (cf. brief : ne pas le supprimer).
+
+    Retourne ``True`` si au moins une entrée a été retirée — sinon
+    ``False`` (le caller décide s'il faut sauvegarder ou non).
+    """
+    target = (seed_username or "").lstrip("@").strip().lower()
+    if not target:
+        return False
+    domains = seeds_data.get("domains") or []
+    for d in domains:
+        if not isinstance(d, dict):
+            continue
+        if str(d.get("name") or "") != domain_name:
+            continue
+        original = list(d.get("seeds") or [])
+        kept = [s for s in original if _seed_username(s).lower() != target]
+        if len(kept) != len(original):
+            d["seeds"] = kept
+            return True
+    return False
 
 
 # --- blacklist ---
@@ -1836,67 +1899,16 @@ def _watchlist_usernames(
 # =============================================================================
 # Exploration réseau
 # =============================================================================
-
-
-def _seed_followings(
-    client: Any,
-    seed: str,
-    *,
-    log: logging.Logger,
-) -> list[str]:
-    """Retourne les usernames suivis par ``seed`` (max ``FOLLOWING_FETCH_AMOUNT``).
-
-    Propagation des erreurs :
-    - ``DiscoverySessionLost`` pour ``LoginRequired`` / ``PleaseWaitFewMinutes``.
-    - Les autres erreurs sont loggées et renvoient ``[]`` (on passe au seed suivant).
-    """
-    s = (seed or "").lstrip("@").strip()
-    if not s:
-        return []
-    polite_sleep()
-    try:
-        seed_id = client.user_id_from_username(s)
-    except UserNotFound:
-        log.warning("Seed @%s introuvable — skip.", s)
-        return []
-    except (LoginRequired, PleaseWaitFewMinutes) as e:
-        raise DiscoverySessionLost(f"user_id_from_username @{s}: {e}") from e
-    except (RateLimitError, ClientThrottledError) as e:
-        log.warning("Seed @%s : rate limit user_id (%s) — skip.", s, e)
-        return []
-    except Exception as e:
-        log.warning("Seed @%s : erreur user_id (%s) — skip.", s, e)
-        return []
-
-    polite_sleep()
-    try:
-        following = client.user_following(str(seed_id), amount=FOLLOWING_FETCH_AMOUNT)
-    except (LoginRequired, PleaseWaitFewMinutes) as e:
-        raise DiscoverySessionLost(f"user_following @{s}: {e}") from e
-    except (RateLimitError, ClientThrottledError) as e:
-        log.warning("Seed @%s : rate limit user_following (%s) — skip.", s, e)
-        return []
-    except (PrivateAccount, PrivateError):
-        log.info("Seed @%s : following non lisible (privé) — skip.", s)
-        return []
-    except Exception as e:
-        log.warning("Seed @%s : erreur user_following (%s) — skip.", s, e)
-        return []
-
-    out: list[str] = []
-    if isinstance(following, dict):
-        for _, ushort in following.items():
-            uname = str(getattr(ushort, "username", "") or "").strip()
-            if uname:
-                out.append(uname)
-    else:
-        # Compat : certains adaptateurs renvoient une liste
-        for ushort in following or []:
-            uname = str(getattr(ushort, "username", "") or "").strip()
-            if uname:
-                out.append(uname)
-    log.info("Seed @%s : %d followings collectés.", s, len(out))
-    return out
+#
+# Discovery 2026-05 : ``explore_network`` ne fetche **plus** les followings
+# Instagram. Le crawl par ``user_following`` a été retiré (rate-limit + qualité
+# du signal). On score uniquement le seed lui-même, puis on le retire de
+# ``seeds.json``. L'expansion réseau passera par d'autres mécanismes
+# (hashtags / audio / similar_accounts) à venir.
+#
+# Helper historique ``_seed_followings`` retiré ; les imports
+# ``PrivateAccount``/``PrivateError`` / ``RateLimitError`` /
+# ``ClientThrottledError`` restent utilisés ailleurs (cf. ``score_profile``).
 
 
 # ---------------------------------------------------------------------------
@@ -1960,22 +1972,36 @@ def explore_network(
     blacklist_path: Path | None = None,
     candidates_path: Path | None = None,
     db_path: Path | None = None,
+    seeds_path: Path | None = None,
     seeds_override: list[str] | None = None,
 ) -> None:
-    """Explore le réseau depuis les seeds d'un domaine et alimente la file
-    de candidats (cf. brief Layer 0).
+    """Discovery 2026-05 : score chaque seed d'un domaine, **un seul profil
+    par seed** (le seed lui-même), puis retire le seed de ``seeds.json``.
 
-    Pour chaque seed :
-        1. ``client.user_following(user_id, amount=50)``
-        2. Filtre déjà-vus (blacklist + watchlist).
-        3. Pour chaque candidat survivant :
-            - ``score_profile(username, domain)``
-            - Si ``score > 500`` → ``candidates.json`` + notif Telegram
-            - **Toujours** ``blacklist.json`` (jamais reproposé).
-            - ``polite_sleep(45–180s)`` entre chaque profil.
+    Pour chaque seed (objet brut, string ou dict avec ``niches``) :
+
+    1. ``_score_one_in_domain(seed)`` — auto-scoring du seed.
+    2. Si le quota quotidien (``MAX_PROFILES_PER_DAY``) est atteint
+       → ``return`` (le seed reste dans ``seeds.json`` pour la prochaine run).
+    3. Sinon : retirer le seed de ``seeds.json`` (sauf si ``seeds_override``
+       est fourni — dans ce cas on ne touche pas à seeds.json) et persister
+       atomiquement.
+    4. Passer au seed suivant.
+
+    **Plus de fetch de followings** (cf. note retrait 2026-05) :
+    ``user_following`` rate-limit + signal de qualité décevant. L'expansion
+    réseau passera par d'autres mécanismes (hashtags, audio, similar_accounts).
+
+    Sets de filtrage :
+        - ``blacklist_set`` : maintenu **mutable en mémoire**, mis à jour
+          immédiatement après chaque blacklisting (pas besoin d'attendre
+          une relecture disque).
+        - ``watchlist_set`` : idem, prêt pour de futures additions intra-run.
+        - ``seen_this_run`` : dédup intra-session ; un seed déjà traité
+          (même blacklisté ce run) est skip avant tout autre check.
 
     Limites humaines :
-        - ``MAX_PROFILES_PER_DAY = 40`` (compteur dans ``session``).
+        - ``MAX_PROFILES_PER_DAY`` (compteur dans ``session``).
         - Inactif 23h–8h, pause obligatoire 12h–14h.
         - Pause 30 min toutes les 2h d'activité.
 
@@ -2027,13 +2053,18 @@ def explore_network(
             log.error("Connexion Instagram impossible (%s) — abandon domaine.", e)
             return
 
+    # Sets initialisés **une seule fois** avant la boucle, puis mis à jour
+    # en place par ``_score_one_in_domain`` au fur et à mesure.
     watchlist_set = _watchlist_usernames(watchlist)
+    blacklist_set = _blacklist_usernames(blacklist)
+    seen_this_run: set[str] = set()
+
     log.info(
         "Domaine %s : %d seeds, watchlist=%d, blacklist=%d.",
         domain_name,
         len(seed_objects),
         len(watchlist_set),
-        len(blacklist.get("profiles", [])),
+        len(blacklist_set),
     )
 
     for seed_obj in seed_objects:
@@ -2044,9 +2075,6 @@ def explore_network(
         seed_domain = {**domain, "niches": list(seed_niches)}
         seed_lower = seed_user.lower()
 
-        # 1) Score du seed lui-même AVANT d'aller chercher ses followings.
-        #    Réutilise exactement le même chemin de code que pour un following
-        #    (cf. ``_score_one_in_domain``) — pas de duplication.
         seed_state = _score_one_in_domain(
             seed_lower,
             domain=seed_domain,
@@ -2056,6 +2084,8 @@ def explore_network(
             candidates=candidates,
             db=db,
             watchlist_set=watchlist_set,
+            blacklist_set=blacklist_set,
+            seen_this_run=seen_this_run,
             client=client,
             session=session,
             blacklist_path=blacklist_path,
@@ -2066,35 +2096,51 @@ def explore_network(
         if seed_state == "quota":
             return
 
-        # 2) Followings du seed.
-        if session.mock:
-            following = _mock_followings_for(seed_user)
-        else:
-            following = _seed_followings(client, seed_user, log=log)
+        # Retrait du seed de seeds.json après exploration complète.
+        # On ne touche pas seeds.json en mode ``seeds_override`` (CLI
+        # ``--seed`` qui ré-explore explicitement un seul seed) ni en mock
+        # (les tests s'attendent à ce que les disques restent intacts).
+        if seeds_override is None and not session.mock:
+            try:
+                seeds_data = load_seeds(path=seeds_path)
+                if _remove_seed_from_seeds_data(
+                    seeds_data,
+                    domain_name=domain_name,
+                    seed_username=seed_lower,
+                ):
+                    save_seeds(seeds_data, path=seeds_path)
+                    log.info(
+                        "Seed @%s exploré et retiré de seeds.json.",
+                        seed_lower,
+                    )
+            except DiscoveryIOError as e:
+                # Best-effort : si on ne peut pas persister la suppression,
+                # on continue le run — le seed sera juste re-scoré au prochain
+                # passage et resservi par ``seen_this_run`` ce run-ci.
+                log.warning(
+                    "Impossible de retirer @%s de seeds.json (%s) — on continue.",
+                    seed_lower, e,
+                )
 
-        for username in following:
-            uname = username.lstrip("@").strip().lower()
-            if not uname or uname == seed_lower:
-                continue
 
-            state = _score_one_in_domain(
-                uname,
-                domain=seed_domain,
-                domain_name=domain_name,
-                parent_seed=seed_user,
-                blacklist=blacklist,
-                candidates=candidates,
-                db=db,
-                watchlist_set=watchlist_set,
-                client=client,
-                session=session,
-                blacklist_path=blacklist_path,
-                candidates_path=candidates_path,
-                db_path=db_path,
-                log=log,
-            )
-            if state == "quota":
-                return
+def _blacklist_usernames(blacklist: dict[str, Any] | None) -> set[str]:
+    """Construit le set des usernames blacklistés à partir de ``blacklist``.
+
+    Format attendu : ``{"profiles": [{"username": "...", ...}, ...]}``.
+    Tolère les entrées dégénérées (string vide, casse, ``@`` initial). Le
+    set retourné est **mutable** côté caller (``explore_network``) qui
+    l'enrichit après chaque blacklisting.
+    """
+    if not blacklist:
+        return set()
+    out: set[str] = set()
+    for p in blacklist.get("profiles", []) or []:
+        if not isinstance(p, dict):
+            continue
+        u = str(p.get("username") or "").lstrip("@").strip().lower()
+        if u:
+            out.add(u)
+    return out
 
 
 def _score_one_in_domain(
@@ -2107,6 +2153,8 @@ def _score_one_in_domain(
     candidates: dict[str, Any],
     db: dict[str, Any],
     watchlist_set: set[str],
+    blacklist_set: set[str],
+    seen_this_run: set[str],
     client: Any | None,
     session: DiscoverySession,
     blacklist_path: Path | None,
@@ -2116,29 +2164,41 @@ def _score_one_in_domain(
 ) -> str:
     """Score & persiste **un** username dans le contexte d'un domaine.
 
-    Cette fonction encapsule **tout** le pipeline per-profil :
+    Pipeline (ordre des checks) :
 
+    0. ``seen_this_run`` : dédup intra-session, premier check absolu.
     1. Quota quotidien (``MAX_PROFILES_PER_DAY``).
     2. Fenêtre d'activité (nuit / déjeuner) + pause de burst.
-    3. Filtres : watchlist + blacklist (déjà-vus).
+    3. Filtres ``watchlist_set`` / ``blacklist_set`` (O(1) chacun).
     4. ``score_profile`` (ou ``_mock_score_profile`` en mode mock).
     5. ``upsert_profile`` (toujours si le scoring a abouti).
     6. ``_record_candidate`` + ``_notify_candidate`` si score > seuil.
-    7. ``_record_seen`` (blacklist : *tout* profil scoré, jamais reproposé).
+    7. ``_record_seen`` + ajout à ``blacklist_set`` (en mémoire — pas
+       d'attente du prochain reload disque).
     8. ``polite_sleep`` entre profils (sauf mock).
+
+    Tout ``uname`` traité (même skip ou ineligible) est ajouté à
+    ``seen_this_run`` à la fin pour éviter qu'un même username repasse
+    dans la boucle pendant le même run.
 
     ``parent_seed=None`` indique que ``uname`` **est** le seed lui-même
     (auto-scoring). Les messages de log sont adaptés en conséquence.
 
     Retourne :
-        - ``"quota"``  : quota quotidien atteint, le caller doit ``return``.
-        - ``"skipped"`` : profil filtré (watchlist / blacklist), aucun scoring.
+        - ``"quota"``   : quota quotidien atteint, le caller doit ``return``.
+        - ``"skipped"`` : profil filtré (seen / watchlist / blacklist),
+          aucun scoring.
         - ``"scored"``  : scoring tenté (succès ou ``None`` = inéligible).
 
     Lève ``DiscoverySessionLost`` si la session Instagram est perdue — la
     recovery est déléguée au caller (``run_discovery``).
     """
     is_seed = parent_seed is None
+
+    # 0) Dédup intra-session : premier check, **avant** tout autre.
+    if uname in seen_this_run:
+        log.debug("@%s déjà vu ce run — skip.", uname)
+        return "skipped"
 
     _maybe_reset_day(session, _local_now())
     if session.profiles_today >= MAX_PROFILES_PER_DAY:
@@ -2157,10 +2217,14 @@ def _score_one_in_domain(
             log.info("Seed @%s déjà vu — skip auto-score.", uname)
         else:
             log.info("@%s déjà dans watchlist — skip.", uname)
+        seen_this_run.add(uname)
         return "skipped"
-    if _is_blacklisted(uname, blacklist):
+    # Check O(1) sur le set en mémoire (mis à jour par les itérations
+    # précédentes de la même boucle ``explore_network``).
+    if uname in blacklist_set:
         if is_seed:
             log.info("Seed @%s déjà vu — skip auto-score.", uname)
+        seen_this_run.add(uname)
         return "skipped"
 
     if is_seed:
@@ -2181,7 +2245,9 @@ def _score_one_in_domain(
                 uname, domain, blacklist=blacklist, client=client
             )
     except DiscoverySessionLost:
-        # Stop net : le caller (run_discovery) appellera recovery.
+        # Stop net : le caller (run_discovery) appellera recovery. On
+        # n'ajoute PAS à ``seen_this_run`` — la recovery peut vouloir
+        # retenter ce username au prochain passage.
         raise
 
     session.profiles_today += 1
@@ -2237,7 +2303,12 @@ def _score_one_in_domain(
         mock=session.mock,
         blacklist_path=blacklist_path,
     )
+    # Mirror disque → mémoire : si le prochain seed du même run cible le
+    # même username (via dédup ou via une autre piste), on le filtrera en
+    # O(1) sans relire la blacklist sur disque.
+    blacklist_set.add(uname)
     session.blacklisted_count += 1
+    seen_this_run.add(uname)
 
     if not session.mock:
         polite_sleep(
@@ -2250,11 +2321,6 @@ def _score_one_in_domain(
 # =============================================================================
 # Helpers mock (mode --mock)
 # =============================================================================
-
-
-def _mock_followings_for(seed: str) -> list[str]:
-    base = seed.lower().replace("@", "")
-    return [f"{base}_follow_{i}" for i in range(3)]
 
 
 def _mock_score_profile(username: str, domain: dict[str, Any]) -> dict[str, Any] | None:
@@ -2413,6 +2479,7 @@ def run_discovery(
                     blacklist_path=blacklist_path,
                     candidates_path=candidates_path,
                     db_path=db_path,
+                    seeds_path=seeds_path,
                     seeds_override=seeds_override,
                 )
             except DiscoverySessionLost as e:
@@ -2689,6 +2756,7 @@ __all__ = [
     "run_discovery",
     "save_blacklist",
     "save_candidates",
+    "save_seeds",
     "score_and_persist",
     "score_profile",
     "setup_discovery_logger",

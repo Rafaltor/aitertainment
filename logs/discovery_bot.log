@@ -1174,3 +1174,93 @@
 2026-05-09 17:56:04,503 [WARNING] notify_score_evolution skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
 2026-05-09 17:56:04,504 [INFO] [mock] notify_score_evolution : 📈 @raikkonenaf : 448 → 745 (+66%) — Tier B→A
 2026-05-09 17:56:04,504 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-09 18:10:26,619 [WARNING] Telegram answerCallbackQuery non-ok : status=400 body={"ok":false,"error_code":400,"description":"Bad Request: query is too old and response timeout expired or query ID is invalid"}
+2026-05-09 18:10:26,621 [INFO] validate @realo.23 -> ✅ @realo.23 ajouté à la watchlist (T-type T2)
+2026-05-09 18:10:44,745 [WARNING] Telegram answerCallbackQuery non-ok : status=400 body={"ok":false,"error_code":400,"description":"Bad Request: query is too old and response timeout expired or query ID is invalid"}
+2026-05-09 18:10:44,748 [INFO] validate @realo.23 -> ☑️ @realo.23 déjà dans la watchlist
+2026-05-09 18:11:40,223 [INFO] === Discovery Bot démarré (offset=234052997) ===
+2026-05-09 18:11:41,034 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:11:47,168 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:11:53,060 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:11:59,052 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:12:04,829 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:12:07,470 [INFO] reject @bolvirgg -> ❌ @bolvirgg ignoré
+2026-05-09 18:12:11,923 [INFO] reject @abalaclavachaud -> ❌ @abalaclavachaud ignoré
+2026-05-09 18:12:12,244 [WARNING] Telegram editMessageText non-ok : status=400 body={"ok":false,"error_code":400,"description":"Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message"}
+2026-05-09 18:12:13,230 [INFO] reject @abalaclavachaud -> ❌ @abalaclavachaud ignoré
+2026-05-09 18:12:14,784 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:12:18,352 [INFO] reject @charton_arthur -> ❌ @charton_arthur ignoré
+2026-05-09 18:12:20,666 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:12:26,441 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:12:30,785 [INFO] reject @alexandreskrt -> ❌ @alexandreskrt ignoré
+2026-05-09 18:12:32,199 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:12:38,206 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:12:44,067 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:12:50,325 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:12:56,141 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:13:02,227 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:13:07,982 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:13:13,959 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:13:19,717 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:13:25,980 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:13:31,919 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:13:38,588 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:13:40,473 [INFO] Interruption clavier — arrêt Discovery Bot.
+2026-05-09 18:13:40,515 [INFO] === Discovery Bot arrêté (offset=234052999) ===
+2026-05-09 18:13:43,310 [INFO] === Discovery Bot démarré (offset=234052999) ===
+2026-05-09 18:13:44,213 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:13:50,256 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:13:56,148 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:14:02,164 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 18:14:05,289 [INFO] Interruption clavier — arrêt Discovery Bot.
+2026-05-09 18:14:05,329 [INFO] === Discovery Bot arrêté (offset=234052999) ===
+2026-05-09 18:18:56,161 [INFO] === Discovery Bot démarré (offset=234052999) ===
+2026-05-09 18:22:12,425 [INFO] notify_candidate @abalaclavachaud : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:abalaclavachaud | ❌ Rejeter → r:abalaclavachaud | ✏️ Modifier T-type → m:abalaclavachaud | 👁 Voir profil → https://www.instagram.com/abalaclavachaud/ | 📈 Voir évolution → ev:abalaclavachaud]
+2026-05-09 18:22:13,331 [INFO] notify_candidate @abalaclavachaud : envoyé (message_id=15)
+2026-05-09 18:40:35,803 [INFO] reject @abalaclavachaud -> ❌ @abalaclavachaud ignoré
+2026-05-09 18:40:46,646 [INFO] notify_candidate @charton_arthur : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:charton_arthur | ❌ Rejeter → r:charton_arthur | ✏️ Modifier T-type → m:charton_arthur | 👁 Voir profil → https://www.instagram.com/charton_arthur/ | 📈 Voir évolution → ev:charton_arthur]
+2026-05-09 18:40:47,971 [INFO] notify_candidate @charton_arthur : envoyé (message_id=16)
+2026-05-09 18:41:30,058 [INFO] reject @charton_arthur -> ❌ @charton_arthur ignoré
+2026-05-09 18:56:07,155 [INFO] notify_candidate @bolvirgg : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:bolvirgg | ❌ Rejeter → r:bolvirgg | ✏️ Modifier T-type → m:bolvirgg | 👁 Voir profil → https://www.instagram.com/bolvirgg/ | 📈 Voir évolution → ev:bolvirgg]
+2026-05-09 18:56:08,114 [INFO] notify_candidate @bolvirgg : envoyé (message_id=17)
+2026-05-09 18:56:27,636 [INFO] reject @bolvirgg -> ❌ @bolvirgg ignoré
+2026-05-09 20:42:09,848 [WARNING] Telegram getUpdates GET erreur (('Connection aborted.', ConnectionResetError(10054, 'Une connexion existante a dû être fermée par l’hôte distant', None, 10054, None)))
+2026-05-09 20:42:09,962 [WARNING] getUpdates non-ok — pause 5s et retry.
+2026-05-09 20:44:16,310 [INFO] set t_type @promising_creator -> T4
+2026-05-09 20:44:27,282 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-09 20:44:27,331 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-09 20:44:27,331 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-09 20:44:27,332 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-09 20:44:27,337 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-09 20:44:27,345 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-09 20:44:27,352 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-09 20:44:27,369 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-09 20:44:27,374 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-09 20:44:27,375 [INFO] set t_type @promising_creator -> T4
+2026-05-09 20:44:27,389 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-09 20:44:27,392 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-09 20:44:27,393 [INFO] set t_type @promising_creator -> T2
+2026-05-09 20:44:27,398 [INFO] set t_type @promising_creator -> T9
+2026-05-09 20:44:27,409 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-09 20:44:27,411 [INFO] collecte @promising_creator skip : profil absent de database.json.
+2026-05-09 20:44:27,411 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-09 20:44:27,416 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-09 20:44:27,419 [INFO] evolution @ghost
+2026-05-09 20:44:27,424 [INFO] evolution @alice
+2026-05-09 20:44:27,426 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-09 20:44:27,427 [INFO] notify_candidate @promising_creator : envoyé (message_id=7)
+2026-05-09 20:44:27,428 [WARNING] notify_candidate @promising_creator : reply_markup invalide (inline_keyboard manquant ou vide) — {'foo': 'bar'}
+2026-05-09 20:44:27,429 [INFO] notify_candidate @promising_creator : envoyé (message_id=9)
+2026-05-09 20:44:27,431 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-09 20:44:27,431 [WARNING] notify_candidate @promising_creator : Telegram a refusé (description=Bad Request: chat not found).
+2026-05-09 20:44:27,432 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-09 20:44:27,441 [INFO] [mock] notify_candidate @promising_creator
+2026-05-09 20:44:27,442 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-09 20:44:27,442 [INFO] notify_candidate @promising_creator : envoyé (message_id=1)
+2026-05-09 20:44:27,443 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-09 20:44:27,443 [INFO] notify_candidate @promising_creator : envoyé (message_id=1)
+2026-05-09 20:44:27,444 [WARNING] notify_score_evolution skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-09 20:44:27,444 [INFO] [mock] notify_score_evolution : 📈 @raikkonenaf : 448 → 745 (+66%) — Tier B→A
+2026-05-09 20:44:27,445 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-09 21:38:46,078 [WARNING] Telegram getUpdates GET erreur (('Connection aborted.', ConnectionResetError(10054, 'Une connexion existante a dû être fermée par l’hôte distant', None, 10054, None)))
+2026-05-09 21:38:46,263 [WARNING] getUpdates non-ok — pause 5s et retry.

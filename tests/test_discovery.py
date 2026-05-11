@@ -1294,6 +1294,11 @@ class HumanScheduleHelpersTest(unittest.TestCase):
 
 
 class ExploreNetworkTest(unittest.TestCase):
+    """Discovery 2026-05 : ``explore_network`` ne score **plus** que le seed
+    lui-même (plus de fetch ``user_following``). Le seed est retiré de
+    ``seeds.json`` après exploration.
+    """
+
     DOMAIN = {
         "name": "humour",
         "niche": "humour",
@@ -1320,58 +1325,22 @@ class ExploreNetworkTest(unittest.TestCase):
         )
         self._burst_patch.start()
         self.addCleanup(self._burst_patch.stop)
+        # Pas de touches disque sur seeds.json par défaut — chaque test qui
+        # veut auditer la suppression patche localement avec une vraie path.
+        self._save_seeds_patch = patch.object(discovery, "save_seeds")
+        self._save_seeds_patch.start()
+        self.addCleanup(self._save_seeds_patch.stop)
+        self._load_seeds_patch = patch.object(
+            discovery, "load_seeds",
+            return_value={"domains": [dict(self.DOMAIN)]},
+        )
+        self._load_seeds_patch.start()
+        self.addCleanup(self._load_seeds_patch.stop)
 
-    @staticmethod
-    def _make_following_client(
-        followings: list[str],
-    ) -> MagicMock:
-        client = MagicMock()
-        client.user_id_from_username.return_value = "111"
-        # user_following renvoie un Dict[pk, UserShort]
-        client.user_following.return_value = {
-            f"pk_{i}": SimpleNamespace(username=u, pk=f"pk_{i}")
-            for i, u in enumerate(followings)
-        }
-        return client
-
-    def test_filters_already_in_blacklist_and_watchlist(self) -> None:
-        client = self._make_following_client(["alpha", "beta", "gamma"])
-        blacklist = {"profiles": [{"username": "beta"}]}
-        watchlist = [{"username": "gamma"}]
-        candidates: dict[str, Any] = {"candidates": []}
-        session = discovery.DiscoverySession(mock=False)
-
-        scored: list[str] = []
-
-        def fake_score(username, domain, **kw):
-            scored.append(username)
-            return None  # ineligible — toujours blacklist mais pas candidat
-
-        with patch.object(discovery, "score_profile", side_effect=fake_score):
-            discovery.explore_network(
-                self.DOMAIN,
-                blacklist=blacklist,
-                watchlist=watchlist,
-                candidates=candidates,
-                client=client,
-                session=session,
-                blacklist_path=Path("/tmp/skip_persist_bl.json"),
-                candidates_path=Path("/tmp/skip_persist_cand.json"),
-            )
-
-        # Mod B 2026-05 : le seed est désormais scoré en premier
-        # (auto-scoring), avant ses followings.
-        self.assertEqual(scored, ["seed_one", "alpha"])  # beta blacklist, gamma watchlist
-        self.assertEqual(candidates["candidates"], [])
-        # seed + alpha ajoutés à la blacklist (outcome=ineligible)
-        bl_users = [p["username"] for p in blacklist["profiles"]]
-        self.assertIn("seed_one", bl_users)
-        self.assertIn("alpha", bl_users)
-
-    def test_seed_in_blacklist_skips_auto_score_but_still_fetches_followings(self) -> None:
-        """Mod B : si le seed est déjà blacklisté, on ne le re-score pas mais
-        on continue à fetch ses followings (le crawl ne s'arrête pas)."""
-        client = self._make_following_client(["alpha"])
+    def test_seed_in_blacklist_skips_auto_score(self) -> None:
+        """Si le seed est déjà blacklisté, aucun scoring (Discovery 2026-05 :
+        plus de followings, le seed est le seul profil considéré).
+        """
         blacklist = {"profiles": [{"username": "seed_one"}]}
         candidates: dict[str, Any] = {"candidates": []}
         session = discovery.DiscoverySession(mock=False)
@@ -1388,18 +1357,17 @@ class ExploreNetworkTest(unittest.TestCase):
                 blacklist=blacklist,
                 watchlist=[],
                 candidates=candidates,
-                client=client,
+                client=MagicMock(),
                 session=session,
                 blacklist_path=Path("/tmp/skip_persist_bl.json"),
                 candidates_path=Path("/tmp/skip_persist_cand.json"),
             )
 
-        # Le seed est skip (déjà vu), seul alpha est scoré.
-        self.assertEqual(scored, ["alpha"])
+        self.assertEqual(scored, [])
+        self.assertEqual(session.profiles_today, 0)
 
     def test_seed_in_watchlist_skips_auto_score(self) -> None:
-        """Mod B : seed déjà dans la watchlist → log spécifique + skip auto-score."""
-        client = self._make_following_client(["alpha"])
+        """Seed déjà dans la watchlist → log spécifique + aucun scoring."""
         watchlist = [{"username": "seed_one"}]
         session = discovery.DiscoverySession(mock=False)
 
@@ -1416,29 +1384,29 @@ class ExploreNetworkTest(unittest.TestCase):
                 blacklist={"profiles": []},
                 watchlist=watchlist,
                 candidates={"candidates": []},
-                client=client,
+                client=MagicMock(),
                 session=session,
                 blacklist_path=Path("/tmp/skip_persist_bl.json"),
                 candidates_path=Path("/tmp/skip_persist_cand.json"),
             )
 
-        self.assertEqual(scored, ["alpha"])
-        # Le log spécifique au seed doit apparaître exactement.
+        self.assertEqual(scored, [])
         self.assertTrue(
             any("Seed @seed_one déjà vu — skip auto-score." in m for m in cm.output),
             cm.output,
         )
 
-    def test_high_score_added_to_candidates_and_notified(self) -> None:
-        # Le seed est déjà blacklisté pour isoler le scoring du following
-        # ``promising`` — l'auto-scoring du seed est testé séparément.
-        client = self._make_following_client(["promising"])
-        blacklist = {"profiles": [{"username": "seed_one"}]}
+    def test_seed_with_high_score_added_to_candidates_and_notified(self) -> None:
+        """Le seed est l'unique profil scoré : si son score franchit le seuil
+        il est ajouté aux candidates et notifié (boutons inline ✅ ❌ ✏️ via
+        ``_notify_candidate``).
+        """
+        blacklist = {"profiles": []}
         candidates: dict[str, Any] = {"candidates": []}
         session = discovery.DiscoverySession(mock=False)
 
         good_result = {
-            "username": "promising",
+            "username": "seed_one",
             "domain": "humour",
             "score": 720.0,
             "ratio_median": 1.2,
@@ -1458,72 +1426,29 @@ class ExploreNetworkTest(unittest.TestCase):
                 blacklist=blacklist,
                 watchlist=[],
                 candidates=candidates,
-                client=client,
+                client=MagicMock(),
                 session=session,
             )
 
         self.assertEqual(len(candidates["candidates"]), 1)
-        self.assertEqual(candidates["candidates"][0]["username"], "promising")
+        self.assertEqual(candidates["candidates"][0]["username"], "seed_one")
         self.assertTrue(candidates["candidates"][0]["validated"] is False)
         self.assertEqual(session.candidates_found, 1)
         notif.assert_called_once()
-        # Toujours blacklisté, même si retenu (jamais reproposé)
-        self.assertIn("promising", [p["username"] for p in blacklist["profiles"]])
+        self.assertEqual(session.profiles_today, 1)
+        # Le seed est aussi blacklisté ("candidate" outcome) — jamais reproposé.
+        self.assertIn("seed_one", [p["username"] for p in blacklist["profiles"]])
 
-    def test_seed_itself_can_become_a_candidate(self) -> None:
-        """Mod B : le seed lui-même peut être promu candidat si son score est élevé."""
-        client = self._make_following_client(["other"])
-        blacklist = {"profiles": []}
-        candidates: dict[str, Any] = {"candidates": []}
-        session = discovery.DiscoverySession(mock=False)
-
-        # Score élevé pour le seed, faible pour les followings — pour vérifier
-        # que c'est *bien* le seed qui est ajouté aux candidates.
-        def fake_score(username: str, domain, **kw):
-            base = {
-                "domain": "humour",
-                "ratio_median": 1.0,
-                "ratio_trend": "stable",
-                "t_type_dominant": "T2",
-                "t_type_distribution": {"T2": 1.0},
-                "biography": "bio",
-                "followers": 12_000,
-            }
-            if username == "seed_one":
-                return {**base, "username": "seed_one", "score": 850.0}
-            return {**base, "username": username, "score": 100.0}
-
-        with patch.object(discovery, "score_profile", side_effect=fake_score), \
-             patch.object(discovery, "_notify_candidate") as notif, \
-             patch.object(discovery, "save_blacklist"), \
-             patch.object(discovery, "save_candidates"):
-            discovery.explore_network(
-                self.DOMAIN,
-                blacklist=blacklist,
-                watchlist=[],
-                candidates=candidates,
-                client=client,
-                session=session,
-            )
-
-        # Seul le seed franchit le seuil — il est dans candidates et notifié.
-        self.assertEqual(session.candidates_found, 1)
-        cand_users = [c["username"] for c in candidates["candidates"]]
-        self.assertEqual(cand_users, ["seed_one"])
-        notif.assert_called_once()
-        # session.profiles_today = 2 (seed + other)
-        self.assertEqual(session.profiles_today, 2)
-
-    def test_low_score_blacklisted_but_not_candidate(self) -> None:
-        client = self._make_following_client(["meh"])
+    def test_seed_with_low_score_blacklisted_not_candidate(self) -> None:
+        """Score sous seuil → blacklist (outcome=rejected), pas de notif."""
         blacklist = {"profiles": []}
         candidates: dict[str, Any] = {"candidates": []}
         session = discovery.DiscoverySession(mock=False)
 
         low_result = {
-            "username": "meh",
+            "username": "seed_one",
             "domain": "humour",
-            "score": 250.0,
+            "score": 250.0,  # sous CANDIDATE_SCORE_THRESHOLD
             "ratio_median": 0.3,
             "ratio_trend": "declining",
             "t_type_dominant": "T1",
@@ -1541,18 +1466,26 @@ class ExploreNetworkTest(unittest.TestCase):
                 blacklist=blacklist,
                 watchlist=[],
                 candidates=candidates,
-                client=client,
+                client=MagicMock(),
                 session=session,
             )
 
         self.assertEqual(candidates["candidates"], [])
         notif.assert_not_called()
-        self.assertEqual(
-            blacklist["profiles"][0]["outcome"], "rejected"
-        )
+        self.assertEqual(blacklist["profiles"][0]["outcome"], "rejected")
 
-    def test_daily_quota_stops_exploration(self) -> None:
-        client = self._make_following_client([f"u{i}" for i in range(10)])
+    def test_daily_quota_stops_exploration_across_seeds(self) -> None:
+        """Quota atteint → on s'arrête sans toucher aux seeds restants.
+
+        Avec un domaine de 5 seeds et un quota déjà à ``MAX-2``, on ne
+        consomme que 2 slots — les seeds 3-4-5 ne sont pas scorés.
+        """
+        domain = {
+            "name": "humour",
+            "niche": "humour",
+            "seeds": ["s1", "s2", "s3", "s4", "s5"],
+            "t_types_target": ["T2"],
+        }
         blacklist = {"profiles": []}
         candidates: dict[str, Any] = {"candidates": []}
         session = discovery.DiscoverySession(
@@ -1571,37 +1504,44 @@ class ExploreNetworkTest(unittest.TestCase):
              patch.object(discovery, "save_blacklist"), \
              patch.object(discovery, "save_candidates"):
             discovery.explore_network(
-                self.DOMAIN,
+                domain,
                 blacklist=blacklist,
                 watchlist=[],
                 candidates=candidates,
-                client=client,
+                client=MagicMock(),
                 session=session,
             )
 
-        # On ne consomme que les 2 derniers slots du quota.
-        self.assertEqual(len(scored), 2)
+        # Exactement 2 seeds consommés (le quota cap les 3 suivants).
+        self.assertEqual(scored, ["s1", "s2"])
         self.assertEqual(session.profiles_today, discovery.MAX_PROFILES_PER_DAY)
 
-    def test_session_lost_propagates_from_explore(self) -> None:
-        client = self._make_following_client(["x"])
-        client.user_following.side_effect = LoginRequired("kicked")
-        with self.assertRaises(discovery.DiscoverySessionLost):
-            discovery.explore_network(
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                watchlist=[],
-                candidates={"candidates": []},
-                client=client,
-                session=discovery.DiscoverySession(mock=False),
-            )
+    def test_session_lost_propagates_from_score_profile(self) -> None:
+        """``score_profile`` peut lever ``DiscoverySessionLost`` (LoginRequired
+        intercepté en interne). ``explore_network`` re-lève vers le caller.
+        """
+        with patch.object(
+            discovery, "score_profile",
+            side_effect=discovery.DiscoverySessionLost("user_info @seed_one: kicked"),
+        ):
+            with self.assertRaises(discovery.DiscoverySessionLost):
+                discovery.explore_network(
+                    self.DOMAIN,
+                    blacklist={"profiles": []},
+                    watchlist=[],
+                    candidates={"candidates": []},
+                    client=MagicMock(),
+                    session=discovery.DiscoverySession(mock=False),
+                )
 
     def test_mock_mode_runs_without_network(self) -> None:
+        """En mock : aucun ``client`` Instagram, aucune écriture disque,
+        seul le seed est scoré (``profiles_today=1``).
+        """
         session = discovery.DiscoverySession(mock=True)
         candidates: dict[str, Any] = {"candidates": []}
         blacklist = {"profiles": []}
 
-        # Ni client ni I/O ne doivent être touchés en mock.
         with patch.object(discovery, "save_blacklist") as bl_save, \
              patch.object(discovery, "save_candidates") as cd_save:
             discovery.explore_network(
@@ -1615,8 +1555,274 @@ class ExploreNetworkTest(unittest.TestCase):
             bl_save.assert_not_called()
             cd_save.assert_not_called()
 
-        # On a bien parcouru les followings simulés (3 par seed).
-        self.assertGreater(session.profiles_today, 0)
+        # Mock mode 2026-05 : 1 seed = 1 scoring (plus de followings).
+        self.assertEqual(session.profiles_today, 1)
+
+
+class ExploreNetworkSeedsRemovalTest(unittest.TestCase):
+    """Discovery 2026-05 : après exploration, le seed est retiré de
+    ``seeds.json`` (mais le domaine est conservé même vide).
+    """
+
+    DOMAIN = {
+        "name": "humour",
+        "niche": "humour",
+        "seeds": ["seed_one", "seed_two"],
+        "t_types_target": ["T2"],
+    }
+
+    def setUp(self) -> None:
+        self._sleep_patch = patch.object(discovery, "polite_sleep", lambda *a, **k: None)
+        self._sleep_patch.start()
+        self.addCleanup(self._sleep_patch.stop)
+        self._window_patch = patch.object(
+            discovery, "_wait_for_active_window", lambda *a, **k: None
+        )
+        self._window_patch.start()
+        self.addCleanup(self._window_patch.stop)
+        self._burst_patch = patch.object(
+            discovery, "_maybe_take_burst_break", lambda *a, **k: None
+        )
+        self._burst_patch.start()
+        self.addCleanup(self._burst_patch.stop)
+
+    def test_seed_removed_from_seeds_json_after_exploration(self) -> None:
+        """Chaque seed exploré est retiré du ``seeds`` du domaine et
+        ``save_seeds`` est appelé après chaque retrait — sans toucher au
+        domaine lui-même (préservé même après le dernier seed).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            seeds_p = Path(tmp) / "seeds.json"
+            seeds_p.write_text(
+                json.dumps(
+                    {
+                        "domains": [
+                            {
+                                "name": "humour",
+                                "niche": "humour",
+                                "seeds": ["seed_one", "seed_two"],
+                                "t_types_target": ["T2"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(discovery, "score_profile", return_value=None), \
+                 patch.object(discovery, "save_blacklist"), \
+                 patch.object(discovery, "save_candidates"):
+                discovery.explore_network(
+                    self.DOMAIN,
+                    blacklist={"profiles": []},
+                    watchlist=[],
+                    candidates={"candidates": []},
+                    client=MagicMock(),
+                    session=discovery.DiscoverySession(mock=False),
+                    seeds_path=seeds_p,
+                )
+
+            # Après l'exploration des 2 seeds, ``seeds`` est vidée mais le
+            # domaine subsiste (cf. brief : on ne supprime pas le domaine).
+            data = json.loads(seeds_p.read_text(encoding="utf-8"))
+            domain = data["domains"][0]
+            self.assertEqual(domain["seeds"], [])
+            self.assertEqual(domain["name"], "humour")
+            self.assertEqual(domain.get("t_types_target"), ["T2"])
+
+    def test_seeds_json_not_touched_in_mock_mode(self) -> None:
+        """En mock : aucune écriture sur seeds.json (le test ne doit pas
+        polluer le repo).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            seeds_p = Path(tmp) / "seeds.json"
+            payload = {
+                "domains": [
+                    {
+                        "name": "humour",
+                        "niche": "humour",
+                        "seeds": ["seed_one", "seed_two"],
+                        "t_types_target": ["T2"],
+                    }
+                ]
+            }
+            seeds_p.write_text(json.dumps(payload), encoding="utf-8")
+
+            with patch.object(discovery, "score_profile", return_value=None), \
+                 patch.object(discovery, "save_blacklist"), \
+                 patch.object(discovery, "save_candidates"), \
+                 patch.object(discovery, "save_seeds") as save_seeds_mock:
+                discovery.explore_network(
+                    self.DOMAIN,
+                    blacklist={"profiles": []},
+                    watchlist=[],
+                    candidates={"candidates": []},
+                    client=None,
+                    session=discovery.DiscoverySession(mock=True),
+                    seeds_path=seeds_p,
+                )
+
+            save_seeds_mock.assert_not_called()
+            self.assertEqual(
+                json.loads(seeds_p.read_text(encoding="utf-8")), payload
+            )
+
+    def test_seeds_json_not_touched_when_seeds_override_used(self) -> None:
+        """``seeds_override`` (CLI ``--seed``) n'altère pas seeds.json :
+        on score juste le seed fourni sans modifier la persistance.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            seeds_p = Path(tmp) / "seeds.json"
+            payload = {
+                "domains": [
+                    {
+                        "name": "humour",
+                        "niche": "humour",
+                        "seeds": ["existing"],
+                        "t_types_target": ["T2"],
+                    }
+                ]
+            }
+            seeds_p.write_text(json.dumps(payload), encoding="utf-8")
+
+            with patch.object(discovery, "score_profile", return_value=None), \
+                 patch.object(discovery, "save_blacklist"), \
+                 patch.object(discovery, "save_candidates"), \
+                 patch.object(discovery, "save_seeds") as save_seeds_mock:
+                discovery.explore_network(
+                    {"name": "humour", "niche": "humour", "seeds": []},
+                    blacklist={"profiles": []},
+                    watchlist=[],
+                    candidates={"candidates": []},
+                    client=MagicMock(),
+                    session=discovery.DiscoverySession(mock=False),
+                    seeds_path=seeds_p,
+                    seeds_override=["adhoc_one"],
+                )
+
+            save_seeds_mock.assert_not_called()
+            self.assertEqual(
+                json.loads(seeds_p.read_text(encoding="utf-8")), payload
+            )
+
+
+class ExploreNetworkInMemorySetsTest(unittest.TestCase):
+    """Discovery 2026-05 : ``blacklist_set`` / ``seen_this_run`` mutables
+    en mémoire — pas besoin d'attendre un reload disque entre seeds.
+    """
+
+    def setUp(self) -> None:
+        self._sleep_patch = patch.object(discovery, "polite_sleep", lambda *a, **k: None)
+        self._sleep_patch.start()
+        self.addCleanup(self._sleep_patch.stop)
+        self._window_patch = patch.object(
+            discovery, "_wait_for_active_window", lambda *a, **k: None
+        )
+        self._window_patch.start()
+        self.addCleanup(self._window_patch.stop)
+        self._burst_patch = patch.object(
+            discovery, "_maybe_take_burst_break", lambda *a, **k: None
+        )
+        self._burst_patch.start()
+        self.addCleanup(self._burst_patch.stop)
+        # Stub seeds.json IO pour ne pas écrire sur disque.
+        self._save_seeds_patch = patch.object(discovery, "save_seeds")
+        self._save_seeds_patch.start()
+        self.addCleanup(self._save_seeds_patch.stop)
+        self._load_seeds_patch = patch.object(
+            discovery, "load_seeds",
+            return_value={"domains": [
+                {"name": "humour", "seeds": [], "t_types_target": ["T2"]}
+            ]},
+        )
+        self._load_seeds_patch.start()
+        self.addCleanup(self._load_seeds_patch.stop)
+
+    def test_seen_this_run_dedupes_duplicate_seeds(self) -> None:
+        """Si la même valeur apparaît 2× dans seeds (cas de curation cassée),
+        ``score_profile`` n'est appelé qu'une seule fois.
+        """
+        domain = {
+            "name": "humour",
+            "niche": "humour",
+            "seeds": ["seed_one", "seed_one"],
+            "t_types_target": ["T2"],
+        }
+        scored: list[str] = []
+
+        def fake_score(username, domain, **kw):
+            scored.append(username)
+            return None
+
+        with patch.object(discovery, "score_profile", side_effect=fake_score), \
+             patch.object(discovery, "save_blacklist"), \
+             patch.object(discovery, "save_candidates"):
+            discovery.explore_network(
+                domain,
+                blacklist={"profiles": []},
+                watchlist=[],
+                candidates={"candidates": []},
+                client=MagicMock(),
+                session=discovery.DiscoverySession(mock=False),
+            )
+
+        self.assertEqual(scored, ["seed_one"])
+
+    def test_blacklist_set_updated_in_memory_between_seeds(self) -> None:
+        """Un seed scoré (donc ajouté à la blacklist) est immédiatement filtré
+        si réapparaît dans la même boucle — sans relire le disque.
+
+        Scénario : 2 seeds distincts ; on simule en passant la même string
+        seed dupliquée AVEC une casse différente — le set en mémoire la
+        normalise et bloque le doublon.
+        """
+        domain = {
+            "name": "humour",
+            "niche": "humour",
+            "seeds": ["alpha", "ALPHA"],  # même seed avec casse différente
+            "t_types_target": ["T2"],
+        }
+
+        scored: list[str] = []
+
+        def fake_score(username, domain, **kw):
+            scored.append(username)
+            return None
+
+        with patch.object(discovery, "score_profile", side_effect=fake_score), \
+             patch.object(discovery, "save_blacklist"), \
+             patch.object(discovery, "save_candidates"):
+            discovery.explore_network(
+                domain,
+                blacklist={"profiles": []},
+                watchlist=[],
+                candidates={"candidates": []},
+                client=MagicMock(),
+                session=discovery.DiscoverySession(mock=False),
+            )
+
+        # ``alpha`` est scoré 1 fois, ``ALPHA`` (normalisé en alpha) skip via
+        # le set en mémoire (seen_this_run + blacklist_set).
+        self.assertEqual(scored, ["alpha"])
+
+    def test_blacklist_usernames_helper_normalizes_entries(self) -> None:
+        """``_blacklist_usernames`` strip ``@`` et ``lower``."""
+        bl = {
+            "profiles": [
+                {"username": "@FOO"},
+                {"username": "  bar  "},
+                {"username": ""},  # ignoré
+                {"not_a_dict": True},  # ignoré (entrée mal formée)
+                "string_au_lieu_de_dict",  # ignoré
+            ]
+        }
+        out = discovery._blacklist_usernames(bl)
+        self.assertEqual(out, {"foo", "bar"})
+
+    def test_blacklist_usernames_helper_handles_none_and_empty(self) -> None:
+        self.assertEqual(discovery._blacklist_usernames(None), set())
+        self.assertEqual(discovery._blacklist_usernames({}), set())
+        self.assertEqual(discovery._blacklist_usernames({"profiles": []}), set())
 
 
 class RunDiscoveryCliTest(unittest.TestCase):
@@ -1866,13 +2072,17 @@ class ScoreAndPersistTest(unittest.TestCase):
 
 
 class ExploreNetworkUpsertsDatabaseTest(unittest.TestCase):
-    """`explore_network` doit upserter dans `database.json` à chaque scoring
-    réussi, **même** si le score est sous le seuil candidat (500)."""
+    """``explore_network`` upserte dans ``database.json`` à chaque scoring
+    réussi, **même** si le score est sous le seuil candidat.
+
+    Discovery 2026-05 : seul le seed est scoré (plus de followings). Avec
+    plusieurs seeds dans le domaine, on attend N upserts pour N seeds.
+    """
 
     DOMAIN = {
         "name": "humour",
         "niche": "humour",
-        "seeds": ["seed_one"],
+        "seeds": ["seed_one", "seed_two"],
         "t_types_target": ["T2"],
     }
 
@@ -1880,17 +2090,19 @@ class ExploreNetworkUpsertsDatabaseTest(unittest.TestCase):
         self._sleep_patch = patch.object(discovery, "polite_sleep", lambda *a, **k: None)
         self._sleep_patch.start()
         self.addCleanup(self._sleep_patch.stop)
-
-    def _make_following_client(self, usernames: list[str]) -> MagicMock:
-        client = MagicMock()
-        client.user_id_from_username.return_value = "1"
-        client.user_following.return_value = {
-            str(i): SimpleNamespace(username=u) for i, u in enumerate(usernames)
-        }
-        return client
+        # Stub seeds.json IO (le bloc seeds removal essaie sinon de
+        # ``load_seeds`` avec ``DEFAULT_SEEDS_PATH``).
+        self._save_seeds_patch = patch.object(discovery, "save_seeds")
+        self._save_seeds_patch.start()
+        self.addCleanup(self._save_seeds_patch.stop)
+        self._load_seeds_patch = patch.object(
+            discovery, "load_seeds",
+            return_value={"domains": [dict(self.DOMAIN)]},
+        )
+        self._load_seeds_patch.start()
+        self.addCleanup(self._load_seeds_patch.stop)
 
     def test_low_score_still_upserted_in_db(self) -> None:
-        client = self._make_following_client(["a", "b"])
         db: dict[str, Any] = {"profiles": {}}
 
         def fake_score(username, domain, **kw):
@@ -1899,7 +2111,7 @@ class ExploreNetworkUpsertsDatabaseTest(unittest.TestCase):
                 "domain": "humour",
                 "platform": "instagram",
                 "followers": 5_000,
-                "score": 250.0,  # < CANDIDATE_SCORE_THRESHOLD (= DISCOVERY_NOTIFY_THRESHOLD)
+                "score": 250.0,  # < CANDIDATE_SCORE_THRESHOLD
                 "score_reels": 250.0,
                 "score_posts": 0.0,
                 "reel_weight": 1.0,
@@ -1932,19 +2144,19 @@ class ExploreNetworkUpsertsDatabaseTest(unittest.TestCase):
                 watchlist=[],
                 candidates={"candidates": []},
                 db=db,
-                client=client,
+                client=MagicMock(),
                 session=discovery.DiscoverySession(mock=False),
             )
 
-        # Mod B 2026-05 : le seed est aussi auto-scoré → 3 profils upsertés
-        # (seed_one + a + b), tous tier C archivés (score 250 < 400).
-        self.assertEqual(set(db["profiles"].keys()), {"seed_one", "a", "b"})
-        self.assertEqual(db["profiles"]["a"]["tier"], "C")
-        self.assertTrue(db["profiles"]["a"]["archived"])
-        # Pas de notif sous 500.
+        # Discovery 2026-05 : 2 seeds → 2 profils upsertés (plus de
+        # followings). Tous tier C archivés (score 250 < seuil tier B).
+        self.assertEqual(set(db["profiles"].keys()), {"seed_one", "seed_two"})
+        self.assertEqual(db["profiles"]["seed_one"]["tier"], "C")
+        self.assertTrue(db["profiles"]["seed_one"]["archived"])
+        # Pas de notif sous le seuil.
         notif_mock.assert_not_called()
-        # Et save_db a bien été appelé (à chaque upsert hors mock).
-        self.assertGreaterEqual(save_db_mock.call_count, 3)
+        # Et save_db a été appelé pour chaque upsert (hors mock).
+        self.assertGreaterEqual(save_db_mock.call_count, 2)
 
 
 class PrintScoreSummaryTest(unittest.TestCase):

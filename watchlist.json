@@ -3,6 +3,9 @@
     {
       "username": "marrant_club",
       "platform": "instagram",
+      "niches": [
+        "humour"
+      ],
       "niche": "humour",
       "t_type": "T2",
       "engagement_baseline": 0.046396921029125876,
@@ -12,6 +15,9 @@
     {
       "username": "raikkonenaf",
       "platform": "instagram",
+      "niches": [
+        "humour"
+      ],
       "niche": "humour",
       "t_type": "T2",
       "engagement_baseline": 0.05605593503798183,
@@ -21,11 +27,28 @@
     {
       "username": "recrutestagiaire",
       "platform": "instagram",
+      "niches": [
+        "humour"
+      ],
       "niche": "humour",
       "t_type": "T2",
       "engagement_baseline": 0.052554744525547446,
       "last_post_id": null,
       "added_at": "2026-05-09T10:54:42+00:00"
+    },
+    {
+      "username": "realo.23",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "niche": "humour",
+      "t_type": "T2",
+      "engagement_baseline": 0.12398746752254318,
+      "last_post_id": null,
+      "added_at": "2026-05-09T16:09:30+00:00"
     }
   ]
 }

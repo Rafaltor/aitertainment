@@ -1298,14 +1298,14 @@
     },
     "charton_arthur": {
       "platform": "instagram",
-      "followers": 1248,
+      "followers": 1250,
       "tier": "C",
       "validated": false,
       "t_type_original": null,
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-08T22:07:06+00:00",
-      "last_scored_at": "2026-05-09T11:31:51+00:00",
+      "last_scored_at": "2026-05-09T16:40:46+00:00",
       "next_rescore_at": null,
       "archived": true,
       "scores_history": [
@@ -1352,6 +1352,22 @@
           "t_type_distribution": {
             "T2": 0.6792452830188679,
             "T1": 0.32075471698113206
+          }
+        },
+        {
+          "date": "2026-05-09T16:40:46+00:00",
+          "score": 380.61780237217556,
+          "score_reels": 327.89748335332933,
+          "score_posts": 393.7978821268871,
+          "reel_ratio_median": 1.04,
+          "reel_ratio_p90": 0.0,
+          "reel_engagement_median": 0.0072,
+          "reel_trend": "stable",
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 0.6666666666666667,
+            "T1": 0.33333333333333337
           }
         }
       ],
@@ -1522,16 +1538,16 @@
     },
     "seed_one": {
       "platform": "instagram",
-      "followers": 12000,
-      "tier": "A",
+      "followers": 9000,
+      "tier": "C",
       "validated": false,
       "t_type_original": "T2",
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-09T09:42:53",
-      "last_scored_at": "2026-05-09T15:55:37",
-      "next_rescore_at": "2026-05-16T15:55:37",
-      "archived": false,
+      "last_scored_at": "2026-05-09T18:44:02",
+      "next_rescore_at": null,
+      "archived": true,
       "scores_history": [
         {
           "date": "2026-05-09T09:42:53",
@@ -1681,6 +1697,66 @@
           "t_type_dominant": "T2",
           "t_type_distribution": {
             "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T18:43:51",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T18:43:51",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T18:44:02",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-09T18:44:02",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
           }
         }
       ],
@@ -1906,7 +1982,7 @@
     },
     "alexandreskrt": {
       "platform": "instagram",
-      "followers": 28191,
+      "followers": 28189,
       "niches": [
         "humour",
         "relatable",
@@ -1918,7 +1994,7 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-09T11:08:53+00:00",
-      "last_scored_at": "2026-05-09T11:42:50+00:00",
+      "last_scored_at": "2026-05-09T16:34:52+00:00",
       "next_rescore_at": null,
       "archived": true,
       "scores_history": [
@@ -1952,6 +2028,22 @@
             "T2": 0.6737588652482269,
             "T1": 0.3262411347517731
           }
+        },
+        {
+          "date": "2026-05-09T16:34:52+00:00",
+          "score": 333.7957994033697,
+          "score_reels": 496.7118118850614,
+          "score_posts": 293.0667962829467,
+          "reel_ratio_median": 3.085175068289049,
+          "reel_ratio_p90": 0.0,
+          "reel_engagement_median": 0.11153286743055801,
+          "reel_trend": "stable",
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T2": 0.33333333333333337,
+            "T1": 0.6666666666666667
+          }
         }
       ]
     },
@@ -1964,9 +2056,9 @@
         "trend"
       ],
       "tier": "B",
-      "validated": false,
+      "validated": true,
       "t_type_original": "T1",
-      "t_type_final": null,
+      "t_type_final": "T2",
       "added_via": "discovery",
       "added_at": "2026-05-09T11:20:43+00:00",
       "last_scored_at": "2026-05-09T15:35:36+00:00",
@@ -2007,7 +2099,7 @@
     },
     "bolvirgg": {
       "platform": "instagram",
-      "followers": 3693,
+      "followers": 3695,
       "niches": [
         "humour",
         "relatable",
@@ -2019,8 +2111,8 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-09T15:23:50+00:00",
-      "last_scored_at": "2026-05-09T15:23:50+00:00",
-      "next_rescore_at": "2026-06-08T15:23:50",
+      "last_scored_at": "2026-05-09T16:56:07+00:00",
+      "next_rescore_at": "2026-06-08T16:56:07",
       "archived": false,
       "scores_history": [
         {
@@ -2037,6 +2129,22 @@
           "t_type_distribution": {
             "T2": 0.6415094339622641,
             "T1": 0.3584905660377358
+          }
+        },
+        {
+          "date": "2026-05-09T16:56:07+00:00",
+          "score": 416.40484932354155,
+          "score_reels": 407.04033748600625,
+          "score_posts": 418.7459772829253,
+          "reel_ratio_median": 2.9382949932341003,
+          "reel_ratio_p90": 0.0,
+          "reel_engagement_median": 0.011096075778078484,
+          "reel_trend": "stable",
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 0.6343283582089553,
+            "T1": 0.36567164179104483
           }
         }
       ]
@@ -2055,8 +2163,8 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-09T15:41:11+00:00",
-      "last_scored_at": "2026-05-09T15:41:11+00:00",
-      "next_rescore_at": "2026-06-08T15:41:11",
+      "last_scored_at": "2026-05-09T16:22:12+00:00",
+      "next_rescore_at": "2026-06-08T16:22:12",
       "archived": false,
       "scores_history": [
         {
@@ -2073,6 +2181,129 @@
           "t_type_distribution": {
             "T2": 0.6666666666666667,
             "T1": 0.33333333333333337
+          }
+        },
+        {
+          "date": "2026-05-09T16:22:12+00:00",
+          "score": 460.1068485889264,
+          "score_reels": 0.0,
+          "score_posts": 460.1068485889264,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 0.6909090909090909,
+            "T1": 0.3090909090909091
+          }
+        }
+      ]
+    },
+    "wrisfld": {
+      "platform": "instagram",
+      "followers": 1424,
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "tier": "C",
+      "validated": false,
+      "t_type_original": "T2",
+      "t_type_final": null,
+      "added_via": "discovery",
+      "added_at": "2026-05-09T16:27:43+00:00",
+      "last_scored_at": "2026-05-09T16:27:43+00:00",
+      "next_rescore_at": null,
+      "archived": true,
+      "scores_history": [
+        {
+          "date": "2026-05-09T16:27:43+00:00",
+          "score": 141.77147140142182,
+          "score_reels": 0.0,
+          "score_posts": 141.77147140142182,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 0.5,
+            "T1": 0.5
+          }
+        }
+      ]
+    },
+    "louisdelaforge": {
+      "platform": "instagram",
+      "followers": 1099,
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "tier": "C",
+      "validated": false,
+      "t_type_original": "T2",
+      "t_type_final": null,
+      "added_via": "discovery",
+      "added_at": "2026-05-09T16:49:17+00:00",
+      "last_scored_at": "2026-05-09T16:49:17+00:00",
+      "next_rescore_at": null,
+      "archived": true,
+      "scores_history": [
+        {
+          "date": "2026-05-09T16:49:17+00:00",
+          "score": 197.56928371241094,
+          "score_reels": 0.0,
+          "score_posts": 197.56928371241094,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T1": 0.3262411347517731,
+            "T2": 0.6737588652482269
+          }
+        }
+      ]
+    },
+    "raafale_": {
+      "platform": "instagram",
+      "followers": 8625,
+      "niches": [
+        "humour",
+        "sketch",
+        "réaction"
+      ],
+      "tier": "C",
+      "validated": false,
+      "t_type_original": "T2",
+      "t_type_final": null,
+      "added_via": "discovery",
+      "added_at": "2026-05-09T17:01:30+00:00",
+      "last_scored_at": "2026-05-09T17:01:30+00:00",
+      "next_rescore_at": null,
+      "archived": true,
+      "scores_history": [
+        {
+          "date": "2026-05-09T17:01:30+00:00",
+          "score": 276.0578413572889,
+          "score_reels": 0.0,
+          "score_posts": 276.0578413572889,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": 0.0,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
           }
         }
       ]

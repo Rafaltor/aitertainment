@@ -80,6 +80,96 @@
       "score": 679.8315979110064,
       "domain": "humour",
       "validated_at": "2026-05-09T10:55:01+00:00"
+    },
+    {
+      "username": "realo.23",
+      "action": "validated",
+      "t_type_original": "T2",
+      "t_type_final": "T2",
+      "score": 677.801610983903,
+      "domain": "humour",
+      "validated_at": "2026-05-09T16:09:30+00:00"
+    },
+    {
+      "username": "realo.23",
+      "action": "validated",
+      "t_type_original": "T2",
+      "t_type_final": "T2",
+      "score": 677.801610983903,
+      "domain": "humour",
+      "validated_at": "2026-05-09T16:10:27+00:00"
+    },
+    {
+      "username": "bolvirgg",
+      "action": "rejected",
+      "t_type_original": "T2",
+      "t_type_final": "",
+      "score": 417.6360688771306,
+      "domain": "humour",
+      "validated_at": "2026-05-09T16:12:05+00:00"
+    },
+    {
+      "username": "abalaclavachaud",
+      "action": "rejected",
+      "t_type_original": "T2",
+      "t_type_final": "",
+      "score": 456.4704849525628,
+      "domain": "humour",
+      "validated_at": "2026-05-09T16:12:09+00:00"
+    },
+    {
+      "username": "abalaclavachaud",
+      "action": "rejected",
+      "t_type_original": "T2",
+      "t_type_final": "",
+      "score": 456.4704849525628,
+      "domain": "humour",
+      "validated_at": "2026-05-09T16:12:10+00:00"
+    },
+    {
+      "username": "charton_arthur",
+      "action": "rejected",
+      "t_type_original": "T2",
+      "t_type_final": "",
+      "score": 382.8460450072933,
+      "domain": "humour",
+      "validated_at": "2026-05-09T16:12:15+00:00"
+    },
+    {
+      "username": "alexandreskrt",
+      "action": "rejected",
+      "t_type_original": "T2",
+      "t_type_final": "",
+      "score": 388.00337106436496,
+      "domain": "humour",
+      "validated_at": "2026-05-09T16:12:28+00:00"
+    },
+    {
+      "username": "abalaclavachaud",
+      "action": "rejected",
+      "t_type_original": "T2",
+      "t_type_final": "",
+      "score": 456.4704849525628,
+      "domain": "humour",
+      "validated_at": "2026-05-09T16:40:33+00:00"
+    },
+    {
+      "username": "charton_arthur",
+      "action": "rejected",
+      "t_type_original": "T2",
+      "t_type_final": "",
+      "score": 382.8460450072933,
+      "domain": "humour",
+      "validated_at": "2026-05-09T16:41:28+00:00"
+    },
+    {
+      "username": "bolvirgg",
+      "action": "rejected",
+      "t_type_original": "T2",
+      "t_type_final": "",
+      "score": 417.6360688771306,
+      "domain": "humour",
+      "validated_at": "2026-05-09T16:56:26+00:00"
     }
   ]
 }
