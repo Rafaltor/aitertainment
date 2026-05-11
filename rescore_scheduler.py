@@ -155,7 +155,6 @@ def run_rescore_cycle(
     rng: random.Random | None = None,
     score_fn: Callable[..., dict[str, Any] | None] | None = None,
     notify_fn: Callable[..., Any] | None = None,
-    check_pending_fn: Callable[..., dict[str, int]] | None = None,
 ) -> dict[str, Any]:
     """Itère sur les profils dûs et les rescore via ``score_and_persist``.
 
@@ -189,7 +188,7 @@ def run_rescore_cycle(
     -------
     dict
         ``{"due_count", "processed", "notified_rise", "notified_drop",
-        "errors", "pending_collected"}``.
+        "errors"}``.
     """
     rnd = rng or random.Random()
     sleep = sleep_fn if sleep_fn is not None else time.sleep
@@ -200,7 +199,6 @@ def run_rescore_cycle(
         "notified_rise": 0,
         "notified_drop": 0,
         "errors": 0,
-        "pending_collected": 0,
     }
 
     try:
@@ -318,34 +316,12 @@ def run_rescore_cycle(
             )
             sleep(wait)
 
-    # Balayage 1×/cycle des collectes différées (créateurs validés sans
-    # Reels ≥ 7 jours au moment de la validation initiale).
-    if check_pending_fn is None:
-        try:
-            from dataset_builder import (  # tardif (cycle d'import)
-                check_pending_collections as _default_pending_fn,
-            )
-            check_pending_fn = _default_pending_fn
-        except ImportError as e:
-            _LOG.warning("dataset_builder indispo (%s) — skip pending.", e)
-            check_pending_fn = None
-
-    if check_pending_fn is not None:
-        try:
-            pending_stats = check_pending_fn(mock=mock, db_path=db_path)
-            stats["pending_collected"] = int(
-                (pending_stats or {}).get("collected", 0)
-            )
-        except Exception as e:
-            _LOG.warning("check_pending_collections a levé (%s).", e)
-
     _LOG.info(
-        "rescore cycle terminé : processed=%d rise=%d drop=%d errors=%d pending_collected=%d",
+        "rescore cycle terminé : processed=%d rise=%d drop=%d errors=%d",
         stats["processed"],
         stats["notified_rise"],
         stats["notified_drop"],
         stats["errors"],
-        stats["pending_collected"],
     )
     return stats
 
@@ -399,7 +375,6 @@ def _main_cli() -> None:
         f"✅ Rescore terminé — dûs={stats['due_count']} | "
         f"processed={stats['processed']} | "
         f"📈={stats['notified_rise']} | 📉={stats['notified_drop']} | "
-        f"pending_collected={stats.get('pending_collected', 0)} | "
         f"errors={stats['errors']}"
     )
 

@@ -7184,3 +7184,473 @@
 2026-05-11 14:47:14,172 [INFO] score_profile @ghost : compte introuvable (nope)
 2026-05-11 14:47:14,173 [INFO] score_profile @viral_skew : skip commentaires (collecte différée via collect_comments.py)
 2026-05-11 14:47:14,173 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-11 16:14:01,048 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:01,049 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:14:01,051 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:14:01,052 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:14:01,052 [INFO] Scoring seed @seed_two lui-même (domaine humour)...
+2026-05-11 16:14:01,052 [WARNING] suggestions non disponibles pour @seed_two — fallback followings
+2026-05-11 16:14:01,053 [INFO] Seed @seed_two exploré et retiré de seeds.json.
+2026-05-11 16:14:01,066 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-11 16:14:01,071 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-11 16:14:01,072 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-11 16:14:01,080 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-11 16:14:01,082 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-11 16:14:01,084 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-11 16:14:01,088 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-11 16:14:01,092 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,092 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:01,095 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,095 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:01,097 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,097 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:01,098 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-11 16:14:01,098 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-11 16:14:01,099 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-11 16:14:01,100 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-11 16:14:01,101 [INFO] score_profile @rising_creator : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,101 [INFO] score_profile @rising_creator : score=383.7 (reels=12 w=1.00 score=383.7 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:01,101 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-11 16:14:01,102 [INFO] score_profile @mixed_50 : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,102 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-11 16:14:01,103 [INFO] score_profile @mixed_80 : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,103 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-11 16:14:01,105 [INFO] score_profile @with_pins : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,105 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:01,106 [INFO] score_profile @reel_rhythm_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,106 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-11 16:14:01,107 [INFO] score_profile @rhythm_check : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,107 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:01,108 [INFO] score_profile @capped_posts : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,108 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-11 16:14:01,109 [INFO] score_profile @posts_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,109 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-11 16:14:01,110 [INFO] score_profile @secret : compte privé — skip.
+2026-05-11 16:14:01,111 [INFO] score_profile @all_zero_reels : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,111 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:01,112 [INFO] score_profile @has_views : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,112 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:01,115 [INFO] score_profile @zero_list_views : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,115 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:01,116 [INFO] score_profile @reels_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,116 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:01,117 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-11 16:14:01,117 [INFO] score_profile @no_comment_fetch : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,117 [INFO] score_profile @no_comment_fetch : score=448.3 (reels=4 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:01,129 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-11 16:14:01,131 [INFO] score_profile @viral_skew : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:01,131 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-11 16:14:51,572 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — repart vide.
+2026-05-11 16:14:51,572 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:51,572 [INFO] Scoring seed @alpha lui-même (domaine humour)...
+2026-05-11 16:14:51,574 [WARNING] suggestions non disponibles pour @alpha — fallback followings
+2026-05-11 16:14:51,575 [WARNING] suggestions non disponibles pour @ALPHA — fallback followings
+2026-05-11 16:14:51,577 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — repart vide.
+2026-05-11 16:14:51,577 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:51,578 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:14:51,579 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:14:51,580 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:14:51,582 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — repart vide.
+2026-05-11 16:14:51,582 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:51,582 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:14:51,583 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:14:51,585 [INFO] Seeds sauvegardés : 1 domaine(s) -> C:\Users\paulm\AppData\Local\Temp\tmpqo7e4frv\seeds.json
+2026-05-11 16:14:51,586 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:14:51,586 [INFO] Scoring seed @seed_two lui-même (domaine humour)...
+2026-05-11 16:14:51,586 [WARNING] suggestions non disponibles pour @seed_two — fallback followings
+2026-05-11 16:14:51,587 [INFO] Seeds sauvegardés : 1 domaine(s) -> C:\Users\paulm\AppData\Local\Temp\tmpqo7e4frv\seeds.json
+2026-05-11 16:14:51,587 [INFO] Seed @seed_two exploré et retiré de seeds.json.
+2026-05-11 16:14:51,589 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — repart vide.
+2026-05-11 16:14:51,589 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:51,589 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:14:51,590 [INFO] _score_one_in_domain : tentative notify @seed_one score=392.0
+2026-05-11 16:14:51,590 [INFO] [mock] notif candidate skip — @seed_one score=392
+2026-05-11 16:14:51,590 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:14:51,590 [INFO] Scoring seed @seed_two lui-même (domaine humour)...
+2026-05-11 16:14:51,590 [INFO] _score_one_in_domain : tentative notify @seed_two score=542.0
+2026-05-11 16:14:51,590 [INFO] [mock] notif candidate skip — @seed_two score=542
+2026-05-11 16:14:51,591 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:14:51,594 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — repart vide.
+2026-05-11 16:14:51,594 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:51,594 [INFO] Scoring seed @adhoc_one lui-même (domaine humour)...
+2026-05-11 16:14:51,596 [WARNING] suggestions non disponibles pour @adhoc_one — fallback followings
+2026-05-11 16:14:51,599 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — repart vide.
+2026-05-11 16:14:51,599 [INFO] Domaine humour : 5 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:51,599 [INFO] Scoring seed @s1 lui-même (domaine humour)...
+2026-05-11 16:14:51,601 [WARNING] suggestions non disponibles pour @s1 — fallback followings
+2026-05-11 16:14:51,601 [INFO] Scoring seed @s2 lui-même (domaine humour)...
+2026-05-11 16:14:51,602 [WARNING] suggestions non disponibles pour @s2 — fallback followings
+2026-05-11 16:14:51,602 [INFO] Quota quotidien atteint (40) — arrêt domaine humour.
+2026-05-11 16:14:51,603 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — repart vide.
+2026-05-11 16:14:51,603 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:51,603 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:14:51,603 [INFO] _score_one_in_domain : tentative notify @seed_one score=392.0
+2026-05-11 16:14:51,603 [INFO] [mock] notif candidate skip — @seed_one score=392
+2026-05-11 16:14:51,603 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:14:51,604 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — repart vide.
+2026-05-11 16:14:51,604 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=1.
+2026-05-11 16:14:51,604 [INFO] Seed @seed_one déjà vu — skip auto-score.
+2026-05-11 16:14:51,606 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:14:51,607 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:14:51,608 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — repart vide.
+2026-05-11 16:14:51,608 [INFO] Domaine humour : 1 seeds, watchlist=1, blacklist=0.
+2026-05-11 16:14:51,608 [INFO] Seed @seed_one déjà vu — skip auto-score.
+2026-05-11 16:14:51,609 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:14:51,611 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:14:51,614 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Expecting property name enclosed in double quotes: line 1 column 2 (char 1)) — repart vide.
+2026-05-11 16:14:51,615 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:51,615 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:14:51,617 [INFO] _score_one_in_domain : tentative notify @seed_one score=720.0
+2026-05-11 16:14:51,617 [INFO] _score_one_in_domain : notify retour=<MagicMock name='_notify_candidate()' id='2883855808032'>
+2026-05-11 16:14:51,618 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:14:51,619 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:14:51,620 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:51,620 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:14:51,623 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:14:51,624 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:14:51,625 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:51,625 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:14:51,627 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:14:51,627 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:14:51,629 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:14:51,631 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:14:51,631 [INFO] Scoring seed @seed_two lui-même (domaine humour)...
+2026-05-11 16:14:51,632 [WARNING] suggestions non disponibles pour @seed_two — fallback followings
+2026-05-11 16:14:51,632 [INFO] Seed @seed_two exploré et retiré de seeds.json.
+2026-05-11 16:14:51,641 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-11 16:14:51,642 [INFO] Domaine humour : 1 seeds, watchlist=4, blacklist=0.
+2026-05-11 16:14:51,642 [INFO] Scoring seed @alpha lui-même (domaine humour)...
+2026-05-11 16:14:51,642 [INFO] Domaine humour terminé — pause 178 min avant le suivant.
+2026-05-11 16:14:51,643 [INFO] Domaine streetwear : 1 seeds, watchlist=4, blacklist=1.
+2026-05-11 16:14:51,643 [INFO] Scoring seed @beta lui-même (domaine streetwear)...
+2026-05-11 16:14:51,643 [INFO] === Discovery terminée (profiles_today=2, candidates=0, blacklisted=2) ===
+2026-05-11 16:14:51,646 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-11 16:14:51,647 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-11 16:14:51,647 [INFO] Domaine humour : 1 seeds, watchlist=4, blacklist=0.
+2026-05-11 16:14:51,647 [INFO] Scoring seed @brand_new lui-même (domaine humour)...
+2026-05-11 16:14:51,647 [INFO] === Discovery terminée (profiles_today=1, candidates=0, blacklisted=1) ===
+2026-05-11 16:14:51,654 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-11 16:14:51,656 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-11 16:14:51,658 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-11 16:14:51,662 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-11 16:14:51,665 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,665 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:51,676 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,676 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:51,679 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,679 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:51,680 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-11 16:14:51,680 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-11 16:14:51,681 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-11 16:14:51,682 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-11 16:14:51,682 [INFO] score_profile @rising_creator : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,682 [INFO] score_profile @rising_creator : score=383.7 (reels=12 w=1.00 score=383.7 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:51,683 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-11 16:14:51,684 [INFO] score_profile @mixed_50 : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,684 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-11 16:14:51,685 [INFO] score_profile @mixed_80 : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,685 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-11 16:14:51,686 [INFO] score_profile @with_pins : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,687 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:51,687 [INFO] score_profile @reel_rhythm_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,688 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-11 16:14:51,689 [INFO] score_profile @rhythm_check : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,689 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:51,691 [INFO] score_profile @capped_posts : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,691 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-11 16:14:51,692 [INFO] score_profile @posts_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,693 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-11 16:14:51,694 [INFO] score_profile @secret : compte privé — skip.
+2026-05-11 16:14:51,696 [INFO] score_profile @all_zero_reels : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,696 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:51,697 [INFO] score_profile @has_views : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,697 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:51,698 [INFO] score_profile @zero_list_views : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,698 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:51,699 [INFO] score_profile @reels_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,699 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:51,700 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-11 16:14:51,701 [INFO] score_profile @no_comment_fetch : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,701 [INFO] score_profile @no_comment_fetch : score=448.3 (reels=4 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:14:51,702 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-11 16:14:51,703 [INFO] score_profile @viral_skew : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:14:51,703 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-11 16:15:07,268 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Extra data: line 1 column 3 (char 2)) — repart vide.
+2026-05-11 16:15:07,268 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:07,268 [INFO] Scoring seed @alpha lui-même (domaine humour)...
+2026-05-11 16:15:07,270 [WARNING] suggestions non disponibles pour @alpha — fallback followings
+2026-05-11 16:15:07,271 [WARNING] suggestions non disponibles pour @ALPHA — fallback followings
+2026-05-11 16:15:07,274 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Extra data: line 1 column 3 (char 2)) — repart vide.
+2026-05-11 16:15:07,274 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:07,274 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:07,275 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:07,277 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:07,279 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Extra data: line 1 column 3 (char 2)) — repart vide.
+2026-05-11 16:15:07,279 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:07,279 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:07,280 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:07,283 [INFO] Seeds sauvegardés : 1 domaine(s) -> C:\Users\paulm\AppData\Local\Temp\tmpwv8eaw_o\seeds.json
+2026-05-11 16:15:07,283 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:07,283 [INFO] Scoring seed @seed_two lui-même (domaine humour)...
+2026-05-11 16:15:07,284 [WARNING] suggestions non disponibles pour @seed_two — fallback followings
+2026-05-11 16:15:07,286 [INFO] Seeds sauvegardés : 1 domaine(s) -> C:\Users\paulm\AppData\Local\Temp\tmpwv8eaw_o\seeds.json
+2026-05-11 16:15:07,286 [INFO] Seed @seed_two exploré et retiré de seeds.json.
+2026-05-11 16:15:07,288 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Extra data: line 1 column 3 (char 2)) — repart vide.
+2026-05-11 16:15:07,288 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:07,288 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:07,288 [INFO] _score_one_in_domain : tentative notify @seed_one score=816.0
+2026-05-11 16:15:07,288 [INFO] [mock] notif candidate skip — @seed_one score=816
+2026-05-11 16:15:07,289 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:15:07,289 [INFO] Scoring seed @seed_two lui-même (domaine humour)...
+2026-05-11 16:15:07,289 [INFO] _score_one_in_domain : tentative notify @seed_two score=478.0
+2026-05-11 16:15:07,289 [INFO] [mock] notif candidate skip — @seed_two score=478
+2026-05-11 16:15:07,289 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:15:07,292 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Extra data: line 1 column 3 (char 2)) — repart vide.
+2026-05-11 16:15:07,292 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:07,292 [INFO] Scoring seed @adhoc_one lui-même (domaine humour)...
+2026-05-11 16:15:07,294 [WARNING] suggestions non disponibles pour @adhoc_one — fallback followings
+2026-05-11 16:15:07,297 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Extra data: line 1 column 3 (char 2)) — repart vide.
+2026-05-11 16:15:07,297 [INFO] Domaine humour : 5 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:07,298 [INFO] Scoring seed @s1 lui-même (domaine humour)...
+2026-05-11 16:15:07,299 [WARNING] suggestions non disponibles pour @s1 — fallback followings
+2026-05-11 16:15:07,300 [INFO] Scoring seed @s2 lui-même (domaine humour)...
+2026-05-11 16:15:07,300 [WARNING] suggestions non disponibles pour @s2 — fallback followings
+2026-05-11 16:15:07,300 [INFO] Quota quotidien atteint (40) — arrêt domaine humour.
+2026-05-11 16:15:07,301 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Extra data: line 1 column 3 (char 2)) — repart vide.
+2026-05-11 16:15:07,302 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:07,302 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:07,302 [INFO] _score_one_in_domain : tentative notify @seed_one score=816.0
+2026-05-11 16:15:07,302 [INFO] [mock] notif candidate skip — @seed_one score=816
+2026-05-11 16:15:07,302 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:15:07,303 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Extra data: line 1 column 3 (char 2)) — repart vide.
+2026-05-11 16:15:07,304 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=1.
+2026-05-11 16:15:07,304 [INFO] Seed @seed_one déjà vu — skip auto-score.
+2026-05-11 16:15:07,305 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:07,306 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:07,308 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Extra data: line 1 column 3 (char 2)) — repart vide.
+2026-05-11 16:15:07,309 [INFO] Domaine humour : 1 seeds, watchlist=1, blacklist=0.
+2026-05-11 16:15:07,309 [INFO] Seed @seed_one déjà vu — skip auto-score.
+2026-05-11 16:15:07,311 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:07,312 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:07,315 [WARNING] database illisible (JSON invalide dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json : Extra data: line 1 column 3 (char 2)) — repart vide.
+2026-05-11 16:15:07,316 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:07,316 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:07,318 [INFO] _score_one_in_domain : tentative notify @seed_one score=720.0
+2026-05-11 16:15:07,318 [INFO] _score_one_in_domain : notify retour=<MagicMock name='_notify_candidate()' id='2551213356576'>
+2026-05-11 16:15:07,320 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:07,321 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:07,322 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:07,322 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:07,325 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:07,326 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:07,328 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:07,328 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:07,329 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:07,330 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:07,332 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:07,333 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:07,333 [INFO] Scoring seed @seed_two lui-même (domaine humour)...
+2026-05-11 16:15:07,333 [WARNING] suggestions non disponibles pour @seed_two — fallback followings
+2026-05-11 16:15:07,333 [INFO] Seed @seed_two exploré et retiré de seeds.json.
+2026-05-11 16:15:07,343 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-11 16:15:07,345 [INFO] Domaine humour : 1 seeds, watchlist=4, blacklist=0.
+2026-05-11 16:15:07,345 [INFO] Scoring seed @alpha lui-même (domaine humour)...
+2026-05-11 16:15:07,345 [INFO] _score_one_in_domain : tentative notify @alpha score=412.0
+2026-05-11 16:15:07,345 [INFO] [mock] notif candidate skip — @alpha score=412
+2026-05-11 16:15:07,345 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:15:07,345 [INFO] Domaine humour terminé — pause 176 min avant le suivant.
+2026-05-11 16:15:07,345 [INFO] Domaine streetwear : 1 seeds, watchlist=4, blacklist=1.
+2026-05-11 16:15:07,345 [INFO] Scoring seed @beta lui-même (domaine streetwear)...
+2026-05-11 16:15:07,346 [INFO] _score_one_in_domain : tentative notify @beta score=567.0
+2026-05-11 16:15:07,346 [INFO] [mock] notif candidate skip — @beta score=567
+2026-05-11 16:15:07,346 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:15:07,346 [INFO] === Discovery terminée (profiles_today=2, candidates=2, blacklisted=2) ===
+2026-05-11 16:15:07,349 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-11 16:15:07,349 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-11 16:15:07,350 [INFO] Domaine humour : 1 seeds, watchlist=4, blacklist=0.
+2026-05-11 16:15:07,350 [INFO] Scoring seed @brand_new lui-même (domaine humour)...
+2026-05-11 16:15:07,351 [INFO] _score_one_in_domain : tentative notify @brand_new score=488.0
+2026-05-11 16:15:07,351 [INFO] [mock] notif candidate skip — @brand_new score=488
+2026-05-11 16:15:07,351 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:15:07,351 [INFO] === Discovery terminée (profiles_today=1, candidates=1, blacklisted=1) ===
+2026-05-11 16:15:07,359 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-11 16:15:07,362 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-11 16:15:07,363 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-11 16:15:07,367 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-11 16:15:07,369 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,370 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:07,381 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,382 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:07,383 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,383 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:07,385 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-11 16:15:07,385 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-11 16:15:07,387 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-11 16:15:07,388 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-11 16:15:07,389 [INFO] score_profile @rising_creator : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,389 [INFO] score_profile @rising_creator : score=383.7 (reels=12 w=1.00 score=383.7 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:07,390 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-11 16:15:07,391 [INFO] score_profile @mixed_50 : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,391 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-11 16:15:07,392 [INFO] score_profile @mixed_80 : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,393 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-11 16:15:07,394 [INFO] score_profile @with_pins : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,394 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:07,396 [INFO] score_profile @reel_rhythm_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,396 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-11 16:15:07,397 [INFO] score_profile @rhythm_check : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,397 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:07,398 [INFO] score_profile @capped_posts : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,399 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-11 16:15:07,400 [INFO] score_profile @posts_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,400 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-11 16:15:07,401 [INFO] score_profile @secret : compte privé — skip.
+2026-05-11 16:15:07,403 [INFO] score_profile @all_zero_reels : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,403 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:07,404 [INFO] score_profile @has_views : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,404 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:07,406 [INFO] score_profile @zero_list_views : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,406 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:07,407 [INFO] score_profile @reels_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,407 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:07,408 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-11 16:15:07,409 [INFO] score_profile @no_comment_fetch : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,409 [INFO] score_profile @no_comment_fetch : score=448.3 (reels=4 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:07,411 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-11 16:15:07,413 [INFO] score_profile @viral_skew : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:07,413 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000
+2026-05-11 16:15:26,721 [WARNING] database illisible ("profiles" manquant dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json) — repart vide.
+2026-05-11 16:15:26,721 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:26,722 [INFO] Scoring seed @alpha lui-même (domaine humour)...
+2026-05-11 16:15:26,726 [WARNING] suggestions non disponibles pour @alpha — fallback followings
+2026-05-11 16:15:26,729 [WARNING] suggestions non disponibles pour @ALPHA — fallback followings
+2026-05-11 16:15:26,735 [WARNING] database illisible ("profiles" manquant dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json) — repart vide.
+2026-05-11 16:15:26,736 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:26,736 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:26,740 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:26,742 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:26,747 [WARNING] database illisible ("profiles" manquant dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json) — repart vide.
+2026-05-11 16:15:26,747 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:26,748 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:26,750 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:26,754 [INFO] Seeds sauvegardés : 1 domaine(s) -> C:\Users\paulm\AppData\Local\Temp\tmpz6o6iyo4\seeds.json
+2026-05-11 16:15:26,754 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:26,755 [INFO] Scoring seed @seed_two lui-même (domaine humour)...
+2026-05-11 16:15:26,755 [WARNING] suggestions non disponibles pour @seed_two — fallback followings
+2026-05-11 16:15:26,758 [INFO] Seeds sauvegardés : 1 domaine(s) -> C:\Users\paulm\AppData\Local\Temp\tmpz6o6iyo4\seeds.json
+2026-05-11 16:15:26,758 [INFO] Seed @seed_two exploré et retiré de seeds.json.
+2026-05-11 16:15:26,762 [WARNING] database illisible ("profiles" manquant dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json) — repart vide.
+2026-05-11 16:15:26,762 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:26,762 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:26,763 [INFO] Scoring seed @seed_two lui-même (domaine humour)...
+2026-05-11 16:15:26,767 [WARNING] database illisible ("profiles" manquant dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json) — repart vide.
+2026-05-11 16:15:26,767 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:26,768 [INFO] Scoring seed @adhoc_one lui-même (domaine humour)...
+2026-05-11 16:15:26,770 [WARNING] suggestions non disponibles pour @adhoc_one — fallback followings
+2026-05-11 16:15:26,774 [WARNING] database illisible ("profiles" manquant dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json) — repart vide.
+2026-05-11 16:15:26,774 [INFO] Domaine humour : 5 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:26,774 [INFO] Scoring seed @s1 lui-même (domaine humour)...
+2026-05-11 16:15:26,777 [WARNING] suggestions non disponibles pour @s1 — fallback followings
+2026-05-11 16:15:26,778 [INFO] Scoring seed @s2 lui-même (domaine humour)...
+2026-05-11 16:15:26,779 [WARNING] suggestions non disponibles pour @s2 — fallback followings
+2026-05-11 16:15:26,779 [INFO] Quota quotidien atteint (40) — arrêt domaine humour.
+2026-05-11 16:15:26,780 [WARNING] database illisible ("profiles" manquant dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json) — repart vide.
+2026-05-11 16:15:26,781 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:26,781 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:26,782 [WARNING] database illisible ("profiles" manquant dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json) — repart vide.
+2026-05-11 16:15:26,783 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=1.
+2026-05-11 16:15:26,783 [INFO] Seed @seed_one déjà vu — skip auto-score.
+2026-05-11 16:15:26,785 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:26,786 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:26,788 [WARNING] database illisible ("profiles" manquant dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json) — repart vide.
+2026-05-11 16:15:26,788 [INFO] Domaine humour : 1 seeds, watchlist=1, blacklist=0.
+2026-05-11 16:15:26,789 [INFO] Seed @seed_one déjà vu — skip auto-score.
+2026-05-11 16:15:26,790 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:26,792 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:26,797 [WARNING] database illisible ("profiles" manquant dans C:\Users\paulm\Documents\ASUS\AItertainment\aitertainment\data\database.json) — repart vide.
+2026-05-11 16:15:26,797 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:26,798 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:26,801 [INFO] _score_one_in_domain : tentative notify @seed_one score=720.0
+2026-05-11 16:15:26,801 [INFO] _score_one_in_domain : notify retour=<MagicMock name='_notify_candidate()' id='3168856340000'>
+2026-05-11 16:15:26,804 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:26,805 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:26,807 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:26,808 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:26,813 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:26,814 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:26,816 [INFO] Domaine humour : 1 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:26,816 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:26,818 [INFO] Domaine humour : 2 seeds, watchlist=0, blacklist=0.
+2026-05-11 16:15:26,818 [INFO] Scoring seed @seed_one lui-même (domaine humour)...
+2026-05-11 16:15:26,820 [WARNING] suggestions non disponibles pour @seed_one — fallback followings
+2026-05-11 16:15:26,821 [INFO] Seed @seed_one exploré et retiré de seeds.json.
+2026-05-11 16:15:26,822 [INFO] Scoring seed @seed_two lui-même (domaine humour)...
+2026-05-11 16:15:26,822 [WARNING] suggestions non disponibles pour @seed_two — fallback followings
+2026-05-11 16:15:26,822 [INFO] Seed @seed_two exploré et retiré de seeds.json.
+2026-05-11 16:15:26,866 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=None) ===
+2026-05-11 16:15:26,869 [INFO] Domaine humour : 1 seeds, watchlist=4, blacklist=0.
+2026-05-11 16:15:26,869 [INFO] Scoring seed @alpha lui-même (domaine humour)...
+2026-05-11 16:15:26,869 [INFO] _score_one_in_domain : tentative notify @alpha score=451.0
+2026-05-11 16:15:26,869 [INFO] [mock] notif candidate skip — @alpha score=451
+2026-05-11 16:15:26,869 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:15:26,870 [INFO] Domaine humour terminé — pause 87 min avant le suivant.
+2026-05-11 16:15:26,871 [INFO] Domaine streetwear : 1 seeds, watchlist=4, blacklist=1.
+2026-05-11 16:15:26,871 [INFO] Scoring seed @beta lui-même (domaine streetwear)...
+2026-05-11 16:15:26,871 [INFO] _score_one_in_domain : tentative notify @beta score=706.0
+2026-05-11 16:15:26,872 [INFO] [mock] notif candidate skip — @beta score=706
+2026-05-11 16:15:26,872 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:15:26,872 [INFO] === Discovery terminée (profiles_today=2, candidates=2, blacklisted=2) ===
+2026-05-11 16:15:26,877 [INFO] === Discovery démarrée (mock=True, only_domain=None, only_seed=@brand_new) ===
+2026-05-11 16:15:26,878 [INFO] Seed @brand_new pas dans seeds.json — rattaché au domaine 'humour' (premier).
+2026-05-11 16:15:26,879 [INFO] Domaine humour : 1 seeds, watchlist=4, blacklist=0.
+2026-05-11 16:15:26,879 [INFO] Scoring seed @brand_new lui-même (domaine humour)...
+2026-05-11 16:15:26,879 [INFO] _score_one_in_domain : tentative notify @brand_new score=652.0
+2026-05-11 16:15:26,879 [INFO] [mock] notif candidate skip — @brand_new score=652
+2026-05-11 16:15:26,880 [INFO] _score_one_in_domain : notify retour=None
+2026-05-11 16:15:26,880 [INFO] === Discovery terminée (profiles_today=1, candidates=1, blacklisted=1) ===
+2026-05-11 16:15:26,889 [INFO] score_and_persist @raikkonenaf : domaine par défaut 'humour'.
+2026-05-11 16:15:26,892 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-11 16:15:26,895 [INFO] score_and_persist @private_user : filtré (None).
+2026-05-11 16:15:26,902 [INFO] Candidates sauvegardés : 1 entrée(s) -> candidates.json
+2026-05-11 16:15:26,906 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,906 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:26,919 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,919 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:26,921 [INFO] score_profile @user : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,922 [INFO] score_profile @user : score=343.4 (reels=5 w=1.00 score=343.4 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:26,923 [INFO] score_profile @thin_history : 2 média(s) au total (< 3) — historique trop maigre, skip.
+2026-05-11 16:15:26,924 [INFO] score_profile @known : déjà en blacklist — skip.
+2026-05-11 16:15:26,925 [INFO] score_profile @mega : followers=2000000 hors fourchette [1000, 1000000] — skip.
+2026-05-11 16:15:26,926 [INFO] score_profile @tiny : followers=500 hors fourchette [1000, 1000000] — skip.
+2026-05-11 16:15:26,927 [INFO] score_profile @rising_creator : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,927 [INFO] score_profile @rising_creator : score=383.7 (reels=12 w=1.00 score=383.7 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:26,928 [INFO] score_profile @thin : media_count=1 < 2 — skip.
+2026-05-11 16:15:26,930 [INFO] score_profile @mixed_50 : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,930 [INFO] score_profile @mixed_50 : score=471.5 (reels=4 w=0.50 score=522.2 / posts=4 w=0.50 score=420.8) t_type=None followers=10000
+2026-05-11 16:15:26,931 [INFO] score_profile @mixed_80 : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,932 [INFO] score_profile @mixed_80 : score=453.7 (reels=8 w=0.80 score=479.8 / posts=2 w=0.20 score=349.5) t_type=None followers=10000
+2026-05-11 16:15:26,933 [INFO] score_profile @with_pins : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,934 [INFO] score_profile @with_pins : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:26,935 [INFO] score_profile @reel_rhythm_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,935 [INFO] score_profile @reel_rhythm_only : score=447.9 (reels=4 w=0.50 score=479.8 / posts=4 w=0.50 score=416.0) t_type=None followers=10000
+2026-05-11 16:15:26,937 [INFO] score_profile @rhythm_check : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,937 [INFO] score_profile @rhythm_check : score=479.8 (reels=4 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:26,938 [INFO] score_profile @capped_posts : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,938 [INFO] score_profile @capped_posts : score=483.3 (reels=6 w=0.60 score=479.8 / posts=4 w=0.40 score=488.7) t_type=None followers=10000
+2026-05-11 16:15:26,940 [INFO] score_profile @posts_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,940 [INFO] score_profile @posts_only : score=441.7 (reels=0 w=0.00 score=0.0 / posts=4 w=1.00 score=441.7) t_type=None followers=10000
+2026-05-11 16:15:26,940 [INFO] score_profile @secret : compte privé — skip.
+2026-05-11 16:15:26,943 [INFO] score_profile @all_zero_reels : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,943 [INFO] score_profile @all_zero_reels : score=471.5 (reels=16 w=1.00 score=471.5 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:26,944 [INFO] score_profile @has_views : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,945 [INFO] score_profile @has_views : score=448.3 (reels=5 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:26,947 [INFO] score_profile @zero_list_views : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,947 [INFO] score_profile @zero_list_views : score=487.2 (reels=3 w=1.00 score=487.2 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:26,949 [INFO] score_profile @reels_only : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,949 [INFO] score_profile @reels_only : score=479.8 (reels=10 w=1.00 score=479.8 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:26,950 [INFO] score_profile @empty : aucun media retourné — skip.
+2026-05-11 16:15:26,951 [INFO] score_profile @no_comment_fetch : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,951 [INFO] score_profile @no_comment_fetch : score=448.3 (reels=4 w=1.00 score=448.3 / posts=0 w=0.00 score=0.0) t_type=None followers=10000
+2026-05-11 16:15:26,952 [INFO] score_profile @ghost : compte introuvable (nope)
+2026-05-11 16:15:26,954 [INFO] score_profile @viral_skew : skip commentaires (collecte différée via collect_comments.py)
+2026-05-11 16:15:26,954 [INFO] score_profile @viral_skew : score=538.0 (reels=10 w=1.00 score=538.0 / posts=0 w=0.00 score=0.0) t_type=None followers=48000

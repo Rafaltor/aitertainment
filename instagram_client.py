@@ -42,7 +42,9 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import requests
 
 import config
 
@@ -142,13 +144,48 @@ def setup_watcher_logger() -> logging.Logger:
     return log
 
 
+def send_telegram_markdown(
+    text: str,
+    *,
+    bot_token: str | None = None,
+    chat_id: str | None = None,
+    parse_mode: str = "Markdown",
+) -> dict[str, Any]:
+    """Envoie un message Telegram via l'API HTTP du bot."""
+    token = (
+        bot_token if bot_token is not None else (config.TELEGRAM_BOT_TOKEN or "")
+    ).strip()
+    chat = str(
+        chat_id if chat_id is not None else (config.TELEGRAM_CHAT_ID or "")
+    ).strip()
+    if not token:
+        raise ValueError("TELEGRAM_BOT_TOKEN manquant : .env ou argument bot_token=")
+    if not chat:
+        raise ValueError("TELEGRAM_CHAT_ID manquant : .env ou argument chat_id=")
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    resp = requests.post(
+        url,
+        json={
+            "chat_id": chat,
+            "text": text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": False,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"Telegram API ok=false: {data}")
+    return data
+
+
 def _notify_telegram(text: str) -> None:
     """Envoie une notif Telegram en best-effort (silencieux si Telegram KO)."""
     log = logging.getLogger(_LOGGER_NAME)
     try:
-        from modules.notifier import TelegramNotifier
-
-        TelegramNotifier()._send_raw(text, parse_mode="Markdown")
+        send_telegram_markdown(text, parse_mode="Markdown")
         log.info("Notification Telegram envoyée.")
     except Exception as e:
         log.warning("Notification Telegram échouée : %s", e)

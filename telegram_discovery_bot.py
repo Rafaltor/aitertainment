@@ -768,55 +768,6 @@ def _validation_record(
     }
 
 
-def _trigger_dataset_collection(
-    username: str,
-    *,
-    db_path: Path | None,
-) -> None:
-    """Lance ``dataset_builder.collect_training_data`` après validation humaine.
-
-    Best-effort : si la collecte échoue (réseau, profil absent de la DB, etc.),
-    on logge un warning sans **jamais** propager. Si aucun Reel ≥ 7 jours n'est
-    éligible, on programme une collecte différée via
-    ``schedule_pending_collection`` (le scheduler de rescore rebalayera demain).
-    """
-    try:
-        from dataset_builder import (  # tardif : évite cycle / dépendance dure
-            collect_training_data,
-            schedule_pending_collection,
-        )
-        from database import load_db
-    except ImportError as e:
-        _LOG.warning("dataset_builder/database indispo (%s) — skip collecte.", e)
-        return
-
-    try:
-        db = load_db(path=db_path)
-    except Exception as e:
-        _LOG.warning("load_db a échoué (%s) — skip collecte.", e)
-        return
-
-    profile = db.get("profiles", {}).get(username) if isinstance(db, dict) else None
-    if not isinstance(profile, dict):
-        _LOG.info("collecte @%s skip : profil absent de database.json.", username)
-        return
-
-    try:
-        added = collect_training_data(username, profile)
-    except Exception as e:
-        _LOG.warning("collect_training_data @%s a levé (%s) — skip.", username, e)
-        added = []
-
-    if not added:
-        # Aucun Reel ≥ 7 jours (créateur très récent / actif) → on diffère.
-        try:
-            schedule_pending_collection(username)
-        except Exception as e:
-            _LOG.warning(
-                "schedule_pending_collection @%s a échoué (%s).", username, e
-            )
-
-
 def _persist_validation_in_db(
     username: str,
     t_type_final: str,
@@ -879,7 +830,6 @@ def _handle_validate(
         path=validations_path,
     )
     _persist_validation_in_db(username, t_final, db_path=db_path)
-    _trigger_dataset_collection(username, db_path=db_path)
     if added:
         return f"✅ @{username} ajouté à la watchlist (T-type {t_final})"
     return f"☑️ @{username} déjà dans la watchlist"
@@ -930,7 +880,6 @@ def _handle_set_ttype(
         path=validations_path,
     )
     _persist_validation_in_db(username, new_t_type, db_path=db_path)
-    _trigger_dataset_collection(username, db_path=db_path)
     if action == "corrected":
         suffix = f" (corrigé : {t_original} → {new_t_type})"
     else:

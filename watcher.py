@@ -685,7 +685,7 @@ def notify_new_post(
     erreur réseau…). N'interrompt jamais la boucle en cas d'échec.
     """
     log = logging.getLogger("aitertainment.watcher")
-    from modules.notifier import TelegramNotifier  # import local : config
+    from instagram_client import send_telegram_markdown
 
     username = str(creator.get("username") or "?")
     t_type = str(creator.get("t_type") or "?")
@@ -715,7 +715,7 @@ def notify_new_post(
     )
 
     try:
-        TelegramNotifier()._send_raw(text, parse_mode="Markdown")
+        send_telegram_markdown(text, parse_mode="Markdown")
     except ValueError as e:
         log.warning("Telegram non envoyée @%s (config manquante) : %s", username, e)
         return False
