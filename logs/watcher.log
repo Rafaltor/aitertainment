@@ -2010,3 +2010,48 @@
 2026-05-11 16:15:29,097 [INFO] @atelier_xyz : 3 commentaire(s) généré(s).
 2026-05-11 16:15:29,097 [INFO] @atelier_xyz : last_post_id mis à jour -> fresh_post_id
 2026-05-11 16:15:29,099 [INFO] max_cycles=1 atteint, arrêt.
+2026-05-11 21:44:56,672 [INFO] check_new_post @u : bootstrap (last_post_id null) -> media_id=777
+2026-05-11 21:44:56,678 [INFO] check_new_post @someone : nouveau post media_id=111 (précédent 000)
+2026-05-11 21:44:56,686 [WARNING] check_new_post @testuser : session Instagram perdue (LoginRequired) — recovery.
+2026-05-11 21:44:56,688 [WARNING] check_new_post @testuser : session Instagram perdue (PleaseWaitFewMinutes) — recovery.
+2026-05-11 21:44:56,692 [WARNING] check_new_post @testuser : rate limit court Instagram (slow down), pause 30s puis retry
+2026-05-11 21:44:56,693 [INFO] generate @? : pas de vecteur — génération sans profil créateur
+2026-05-11 21:44:56,695 [INFO] generate @raikkonenaf : pas de vecteur — génération sans profil créateur
+2026-05-11 21:44:56,699 [INFO] generate @creator1 : pas de vecteur — génération sans profil créateur
+2026-05-11 21:44:56,707 [INFO] === Watcher démarré (mock=True, max_accounts/session=50) ===
+2026-05-11 21:44:56,709 [INFO] vector_store chargé : 0 comptes
+2026-05-11 21:44:56,714 [INFO] --- Cycle 1 ---
+2026-05-11 21:44:56,717 [INFO] @creator_a : 3 commentaire(s) généré(s).
+2026-05-11 21:44:56,718 [INFO] [mock] notification Telegram skip (post=mock_post_creator_a)
+2026-05-11 21:44:56,718 [INFO] @creator_a : last_post_id mis à jour -> mock_post_creator_a
+2026-05-11 21:44:56,719 [INFO] @creator_b : t_type absent (Discovery requis), skip.
+2026-05-11 21:44:56,720 [INFO] max_cycles=1 atteint, arrêt.
+2026-05-11 21:44:56,726 [INFO] === Watcher démarré (mock=False, max_accounts/session=3) ===
+2026-05-11 21:44:56,727 [INFO] vector_store chargé : 0 comptes
+2026-05-11 21:44:56,727 [INFO] --- Cycle 1 ---
+2026-05-11 21:44:56,731 [INFO] Seuil de 3 comptes vérifiés atteint — pause 600s anti-flag.
+2026-05-11 21:44:56,732 [INFO] max_cycles=1 atteint, arrêt.
+2026-05-11 21:44:56,739 [INFO] === Watcher démarré (mock=False, max_accounts/session=50) ===
+2026-05-11 21:44:56,740 [INFO] vector_store chargé : 0 comptes
+2026-05-11 21:44:56,741 [INFO] --- Cycle 1 ---
+2026-05-11 21:44:56,743 [WARNING] Session perdue pendant @creator_0 : session expirée → recovery.
+2026-05-11 21:44:56,744 [INFO] Reconnexion réussie, on continue le cycle.
+2026-05-11 21:44:56,748 [INFO] @creator_1 : 3 commentaire(s) généré(s).
+2026-05-11 21:44:56,749 [INFO] @creator_1 : last_post_id mis à jour -> fresh
+2026-05-11 21:44:56,755 [INFO] max_cycles=1 atteint, arrêt.
+2026-05-11 21:44:56,760 [INFO] === Watcher démarré (mock=False, max_accounts/session=50) ===
+2026-05-11 21:44:56,763 [INFO] vector_store chargé : 0 comptes
+2026-05-11 21:44:56,764 [INFO] --- Cycle 1 ---
+2026-05-11 21:44:56,766 [WARNING] Session perdue pendant @creator_0 : session perdue → recovery.
+2026-05-11 21:44:56,766 [ERROR] Watcher stoppé proprement (recovery KO) : recovery KO
+2026-05-11 21:44:56,774 [INFO] === Watcher démarré (mock=False, max_accounts/session=50) ===
+2026-05-11 21:44:56,776 [INFO] vector_store chargé : 0 comptes
+2026-05-11 21:44:56,777 [INFO] --- Cycle 1 ---
+2026-05-11 21:44:56,785 [INFO] @newbie : bootstrap, mémorise last_post_id=first_id sans notification.
+2026-05-11 21:44:56,795 [INFO] max_cycles=1 atteint, arrêt.
+2026-05-11 21:44:56,812 [INFO] === Watcher démarré (mock=False, max_accounts/session=50) ===
+2026-05-11 21:44:56,816 [INFO] vector_store chargé : 0 comptes
+2026-05-11 21:44:56,816 [INFO] --- Cycle 1 ---
+2026-05-11 21:44:56,820 [INFO] @atelier_xyz : 3 commentaire(s) généré(s).
+2026-05-11 21:44:56,823 [INFO] @atelier_xyz : last_post_id mis à jour -> fresh_post_id
+2026-05-11 21:44:56,836 [INFO] max_cycles=1 atteint, arrêt.

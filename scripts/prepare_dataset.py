@@ -63,6 +63,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from config import VALID_T_TYPES
+
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
@@ -73,12 +75,6 @@ DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "data"
 VECTOR_STORE_PATH = Path("data/vector_store.json")
 CLASSIFIER_FILENAME = "dataset_classifier.jsonl"
 GENERATOR_FILENAME = "dataset_generator.jsonl"
-
-# T-types valides — un commentaire avec un label hors set est filtré (sinon
-# le classifier apprend à prédire des classes fantômes).
-VALID_TTYPES: frozenset[str] = frozenset(
-    {"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"}
-)
 
 CLASSIFIER_INSTRUCTION = (
     "Classifie ce commentaire Instagram selon le type d'engagement."
@@ -312,7 +308,7 @@ def generate_classifier_dataset(
     Filtres stricts (entrée ignorée si) :
 
     * ``text`` absent ou vide après ``strip()``.
-    * ``t_type`` absent ou pas dans ``VALID_TTYPES``.
+    * ``t_type`` absent ou pas dans ``VALID_T_TYPES``.
 
     Coercitions silencieuses :
 
@@ -331,7 +327,7 @@ def generate_classifier_dataset(
             skipped_text += 1
             continue
         t_type = str(entry.get("t_type") or "").strip()
-        if t_type not in VALID_TTYPES:
+        if t_type not in VALID_T_TYPES:
             skipped_ttype += 1
             continue
 
@@ -587,7 +583,7 @@ __all__ = [
     "DEFAULT_TRAINING_PATH",
     "GENERATOR_FILENAME",
     "GENERATOR_INSTRUCTION",
-    "VALID_TTYPES",
+    "VALID_T_TYPES",
     "VECTOR_STORE_PATH",
     "generate_classifier_dataset",
     "generate_generator_dataset",

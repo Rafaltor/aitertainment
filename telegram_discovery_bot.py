@@ -63,6 +63,7 @@ from typing import Any
 import requests
 
 import config
+from config import VALID_T_TYPES
 
 # ---------------------------------------------------------------------------
 # Constantes
@@ -73,7 +74,7 @@ DEFAULT_VALIDATIONS_PATH = DEFAULT_DATA_DIR / "validations.json"
 DEFAULT_BOT_STATE_PATH = DEFAULT_DATA_DIR / "discovery_bot_state.json"
 DEFAULT_LOG_PATH = _PROJECT_ROOT / "logs" / "discovery_bot.log"
 
-T_TYPES_AVAILABLE: tuple[str, ...] = ("T1", "T2", "T2b", "T3a", "T3b", "T4", "T5")
+T_TYPES_AVAILABLE: tuple[str, ...] = tuple(sorted(VALID_T_TYPES))
 TREND_EMOJI = {"rising": "📈", "stable": "➡️", "declining": "📉"}
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -730,12 +731,7 @@ def add_to_watchlist(
         {
             "username": target,
             "platform": str(candidate.get("platform") or "instagram"),
-            # Source de vérité 2026-05 + alias string pour les callers legacy
-            # (``watcher.py`` lit encore ``creator["niche"]`` dans plusieurs
-            # endroits — on conserve ce champ tant que la migration n'est
-            # pas terminée).
             "niches": list(niches),
-            "niche": niches[0],
             "t_type": t_type_final,
             "engagement_baseline": eng_baseline,
             "last_post_id": None,

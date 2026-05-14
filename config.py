@@ -12,7 +12,6 @@ try:
 except ImportError:
     pass
 
-APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -87,6 +86,7 @@ OLLAMA_URL = (
 ).strip()
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b").strip()
 
+VALID_T_TYPES = frozenset({"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"})
 
 # ----------------------------------------------------------------------------
 # Niches éditoriales — vocabulaire fermé pour la classification de profils

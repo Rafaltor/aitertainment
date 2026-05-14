@@ -8,6 +8,7 @@ from typing import Any
 import requests
 
 import config
+from config import VALID_T_TYPES
 
 SYSTEM_PROMPT = """Tu es un expert en analyse culturelle des réseaux sociaux.
 Classe la section de commentaires suivante selon ces types :
@@ -151,7 +152,6 @@ FORBIDDEN_GENERATOR_WORDS: frozenset[str] = frozenset({
     "post",
 })
 
-VALID_TYPES = frozenset({"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"})
 VALID_RISK = frozenset({"low", "medium", "high"})
 
 
@@ -208,9 +208,9 @@ def _parse_json_from_response(text: str) -> dict[str, Any]:
 
 def _normalize_classification(data: dict[str, Any]) -> dict[str, Any]:
     t = data.get("type")
-    if not isinstance(t, str) or t not in VALID_TYPES:
+    if not isinstance(t, str) or t not in VALID_T_TYPES:
         raise ClassificationError(
-            f"type invalide: {t!r} (attendu un parmi {sorted(VALID_TYPES)})"
+            f"type invalide: {t!r} (attendu un parmi {sorted(VALID_T_TYPES)})"
         )
 
     conf = data.get("confidence")

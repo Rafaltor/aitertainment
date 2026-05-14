@@ -1638,3 +1638,35 @@
 2026-05-11 16:15:29,044 [WARNING] notify_score_evolution skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
 2026-05-11 16:15:29,045 [INFO] [mock] notify_score_evolution : 📈 @raikkonenaf : 448 → 745 (+66%) — Tier B→A
 2026-05-11 16:15:29,045 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.
+2026-05-11 21:44:56,431 [INFO] set t_type @promising_creator -> T4
+2026-05-11 21:44:56,454 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-11 21:44:56,481 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-11 21:44:56,482 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-11 21:44:56,491 [WARNING] Callback ignoré : chat_id 666 != attendu 42
+2026-05-11 21:44:56,509 [INFO] modify @promising_creator : menu T-types affiché
+2026-05-11 21:44:56,525 [INFO] reject @promising_creator -> ❌ @promising_creator ignoré
+2026-05-11 21:44:56,550 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-11 21:44:56,551 [INFO] set t_type @promising_creator -> T4
+2026-05-11 21:44:56,572 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-11 21:44:56,572 [INFO] set t_type @promising_creator -> T2
+2026-05-11 21:44:56,580 [INFO] set t_type @promising_creator -> T9
+2026-05-11 21:44:56,601 [INFO] validate_profile @promising_creator skip (profil inconnu : @promising_creator).
+2026-05-11 21:44:56,602 [INFO] validate @promising_creator -> ✅ @promising_creator ajouté à la watchlist (T-type T2)
+2026-05-11 21:44:56,612 [INFO] validate @ghost -> ⚠️ @ghost introuvable dans candidates.json
+2026-05-11 21:44:56,617 [INFO] evolution @ghost
+2026-05-11 21:44:56,623 [INFO] evolution @alice
+2026-05-11 21:44:56,625 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-11 21:44:56,628 [INFO] notify_candidate @promising_creator : envoyé (message_id=7)
+2026-05-11 21:44:56,630 [WARNING] notify_candidate @promising_creator : reply_markup invalide (inline_keyboard manquant ou vide) — {'foo': 'bar'}
+2026-05-11 21:44:56,632 [INFO] notify_candidate @promising_creator : envoyé (message_id=9)
+2026-05-11 21:44:56,635 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-11 21:44:56,636 [WARNING] notify_candidate @promising_creator : Telegram a refusé (description=Bad Request: chat not found).
+2026-05-11 21:44:56,637 [WARNING] notify_candidate skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-11 21:44:56,638 [INFO] [mock] notify_candidate @promising_creator
+2026-05-11 21:44:56,641 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-11 21:44:56,641 [INFO] notify_candidate @promising_creator : envoyé (message_id=1)
+2026-05-11 21:44:56,642 [INFO] notify_candidate @promising_creator : reply_markup = 5 boutons sur 3 ligne(s) [✅ Valider → v:promising_creator | ❌ Rejeter → r:promising_creator | ✏️ Modifier T-type → m:promising_creator | 👁 Voir profil → https://www.instagram.com/promising_creator/ | 📈 Voir évolution → ev:promising_creator]
+2026-05-11 21:44:56,643 [INFO] notify_candidate @promising_creator : envoyé (message_id=1)
+2026-05-11 21:44:56,645 [WARNING] notify_score_evolution skip : TELEGRAM_DISCOVERY_TOKEN / TELEGRAM_DISCOVERY_CHAT_ID manquants — éditez .env
+2026-05-11 21:44:56,647 [INFO] [mock] notify_score_evolution : 📈 @raikkonenaf : 448 → 745 (+66%) — Tier B→A
+2026-05-11 21:44:56,649 [INFO] [mock] run_bot — aucune connexion Telegram, sortie immédiate.

@@ -261,11 +261,7 @@ class HandleCallbackTest(unittest.TestCase):
         creator = wl["creators"][0]
         self.assertEqual(creator["username"], "promising_creator")
         self.assertEqual(creator["t_type"], "T2")
-        # Schéma 2026-05 : ``niches`` (liste) lue depuis le candidate, plus
-        # depuis seeds.json. Alias ``niche`` = ``niches[0]`` pour les callers
-        # legacy (watcher.py).
         self.assertEqual(creator["niches"], ["humour", "sketch"])
-        self.assertEqual(creator["niche"], "humour")
         self.assertIsNone(creator["last_post_id"])
         # engagement_baseline tiré de reel_engagement_median en priorité
         self.assertAlmostEqual(creator["engagement_baseline"], 0.06, places=4)
@@ -802,7 +798,6 @@ class AddToWatchlistNichesSchemaTest(unittest.TestCase):
         self.assertTrue(added)
         creator = self._read_creator()
         self.assertEqual(creator["niches"], ["humour", "sketch", "imitation"])
-        self.assertEqual(creator["niche"], "humour")  # alias = niches[0]
 
     def test_falls_back_to_candidate_niche_string(self) -> None:
         # Candidate sans ``niches`` mais avec l'ancien champ ``niche`` string.
@@ -817,7 +812,6 @@ class AddToWatchlistNichesSchemaTest(unittest.TestCase):
         self.assertTrue(added)
         creator = self._read_creator()
         self.assertEqual(creator["niches"], ["gaming"])
-        self.assertEqual(creator["niche"], "gaming")
 
     def test_ultimate_fallback_humour(self) -> None:
         # Candidate qui n'a NI niches NI niche → fallback ``["humour"]``.
@@ -831,7 +825,6 @@ class AddToWatchlistNichesSchemaTest(unittest.TestCase):
         self.assertTrue(added)
         creator = self._read_creator()
         self.assertEqual(creator["niches"], ["humour"])
-        self.assertEqual(creator["niche"], "humour")
 
     def test_filters_empty_strings_in_niches_list(self) -> None:
         cand = {**SAMPLE_CANDIDATE, "niches": ["", "humour", "  ", "sketch"]}

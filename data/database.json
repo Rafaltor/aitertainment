@@ -10,7 +10,7 @@
       "t_type_final": null,
       "added_via": "discovery",
       "added_at": "2026-05-11T14:15:26",
-      "last_scored_at": "2026-05-11T14:15:26",
+      "last_scored_at": "2026-05-11T19:44:50",
       "next_rescore_at": null,
       "archived": true,
       "scores_history": [
@@ -31,6 +31,36 @@
         },
         {
           "date": "2026-05-11T14:15:26",
+          "score": 250.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T1",
+          "t_type_distribution": {
+            "T1": 1.0
+          }
+        },
+        {
+          "date": "2026-05-11T19:44:50",
+          "score": 720.0,
+          "score_reels": null,
+          "score_posts": null,
+          "reel_ratio_median": null,
+          "reel_ratio_p90": null,
+          "reel_engagement_median": null,
+          "reel_trend": null,
+          "posting_rhythm": null,
+          "t_type_dominant": "T2",
+          "t_type_distribution": {
+            "T2": 1.0
+          }
+        },
+        {
+          "date": "2026-05-11T19:44:50",
           "score": 250.0,
           "score_reels": null,
           "score_posts": null,

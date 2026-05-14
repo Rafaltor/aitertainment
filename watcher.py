@@ -70,6 +70,7 @@ from instagrapi.exceptions import (
 )
 
 import config
+from config import VALID_T_TYPES
 from instagram_client import (
     InstagramAuthError,
     WatcherStopRequested,
@@ -85,7 +86,6 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_WATCHLIST_PATH = _PROJECT_ROOT / "watchlist.json"
 VECTOR_STORE_PATH = Path("data/vector_store.json")
 
-VALID_T_TYPES = frozenset({"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"})
 VALID_PLATFORMS = frozenset({"instagram", "tiktok"})
 
 _LOGGER = logging.getLogger("aitertainment")
@@ -93,6 +93,24 @@ _LOGGER = logging.getLogger("aitertainment")
 
 def _hashtags_from_caption(caption: str) -> list[str]:
     return _HASHTAG_RE.findall(caption or "")
+
+
+def _creator_primary_niche(creator: dict[str, Any]) -> str:
+    niches = creator.get("niches")
+    if isinstance(niches, list) and niches:
+        return str(niches[0] or "?")
+    legacy = creator.get("niche", "")
+    return str(legacy or "?")
+
+
+def _creator_niches(creator: dict[str, Any]) -> list[str]:
+    niches = creator.get("niches")
+    if isinstance(niches, list) and niches:
+        return list(niches)
+    legacy = creator.get("niche", "")
+    if isinstance(legacy, str) and legacy.strip():
+        return [legacy.strip()]
+    return []
 
 
 def _media_permalink(media: Any) -> str:
@@ -689,7 +707,7 @@ def notify_new_post(
 
     username = str(creator.get("username") or "?")
     t_type = str(creator.get("t_type") or "?")
-    niche = str(creator.get("niche") or "?")
+    niche = _creator_primary_niche(creator)
 
     caption_short = _truncate(str(post.get("caption") or ""), 240)
     hashtags = post.get("hashtags") or []
@@ -742,7 +760,8 @@ def _mock_post(creator: dict[str, Any]) -> dict[str, Any]:
 
 def _mock_generate(context: dict[str, Any]) -> list[str]:
     return [
-        f"[mock] commentaire 1 — {context.get('t_type')} / {context.get('niche')}",
+        f"[mock] commentaire 1 — {context.get('t_type')} / "
+        f"{(context.get('niches') or ['?'])[0]}",
         "[mock] commentaire 2 — registre figé en Discovery",
         "[mock] commentaire 3 — placeholder Watcher",
     ]
@@ -792,13 +811,7 @@ def _process_creator(
 
     context = {
         "t_type": t_type,
-        # Schéma 2026-05 : on propage la liste ``niches`` ; ``niche`` est
-        # conservé en alias rétro-compat (lu par d'éventuels callers de
-        # mock / debug encore sur l'ancien schéma).
-        "niches": creator.get("niches") or (
-            [creator["niche"]] if isinstance(creator.get("niche"), str) and creator["niche"] else []
-        ),
-        "niche": creator.get("niche"),
+        "niches": _creator_niches(creator),
         "caption": post.get("caption"),
         "hashtags": post.get("hashtags"),
         "audio": post.get("audio_id"),
