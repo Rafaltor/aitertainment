@@ -658,6 +658,13 @@ class WatchlistSchemaMigrationTest(unittest.TestCase):
         self.assertEqual(out["niches"], [])
         self.assertEqual(out["niche"], "")
 
+    def test_t_type_placeholder_becomes_none(self) -> None:
+        from watcher import _normalize_entry
+
+        for raw in ("T?", " T? ", ""):
+            out = _normalize_entry(self._entry(t_type=raw), index=0)
+            self.assertIsNone(out["t_type"])
+
     def test_niches_not_a_list_raises(self) -> None:
         from watcher import WatchlistError, _normalize_entry
 

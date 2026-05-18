@@ -413,6 +413,10 @@ def _normalize_entry(entry: Any, *, index: int) -> dict[str, Any]:
     niche = niches[0] if niches else ""
 
     t_type_raw = entry.get("t_type")
+    if isinstance(t_type_raw, str):
+        t_type_raw = t_type_raw.strip()
+        if t_type_raw in ("", "T?"):
+            t_type_raw = None
     t_type: str | None
     if t_type_raw is None or t_type_raw == "":
         t_type = None
