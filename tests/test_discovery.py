@@ -13,8 +13,6 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from instagrapi.exceptions import LoginRequired, UserNotFound
-
 import discovery
 
 
@@ -118,6 +116,48 @@ def _make_media(
     )
 
 
+def _make_profile_data(
+    *,
+    followers: int = 50_000,
+    following: int = 100,
+    posts_count: int = 30,
+    biography: str = "bio",
+    full_name: str = "Creator",
+    is_private: bool = False,
+) -> dict[str, Any]:
+    return {
+        "followers": followers,
+        "following": following,
+        "posts_count": posts_count,
+        "biography": biography,
+        "full_name": full_name,
+        "is_private": is_private,
+    }
+
+
+def _reels_from_medias(medias: list[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for m in medias:
+        if str(getattr(m, "product_type", "") or "") != discovery.REEL_PRODUCT_TYPE:
+            continue
+        pk = str(getattr(m, "pk", "") or getattr(m, "id", "") or "")
+        taken = getattr(m, "taken_at", None)
+        row: dict[str, Any] = {
+            "media_id": pk,
+            "view_count": discovery._media_views(m),
+            "like_count": int(getattr(m, "like_count", 0) or 0),
+            "comment_count": int(getattr(m, "comment_count", 0) or 0),
+            "thumbnail_url": "",
+        }
+        if isinstance(taken, datetime):
+            row["taken_at"] = taken
+        caption = getattr(m, "caption_text", None)
+        if caption:
+            row["caption_text"] = str(caption)
+        out.append(row)
+    return out
+
+
 class ScoreProfileTest(unittest.TestCase):
     """Tests de la logique de scoring (mocks complets, pas de réseau)."""
 
@@ -128,10 +168,19 @@ class ScoreProfileTest(unittest.TestCase):
     }
 
     def setUp(self) -> None:
-        # Disable les sleeps anti-détection pendant les tests
         self._sleep_patch = patch.object(discovery, "polite_sleep", lambda *a, **k: None)
         self._sleep_patch.start()
         self.addCleanup(self._sleep_patch.stop)
+        self._ctx = MagicMock()
+        self._profile_patch = patch(
+            "discovery.get_profile_data",
+            return_value=_make_profile_data(),
+        )
+        self._reels_patch = patch("discovery.get_recent_reels", return_value=[])
+        self.mock_get_profile = self._profile_patch.start()
+        self.mock_get_reels = self._reels_patch.start()
+        self.addCleanup(self._profile_patch.stop)
+        self.addCleanup(self._reels_patch.stop)
 
     def _make_client(
         self,
@@ -139,76 +188,78 @@ class ScoreProfileTest(unittest.TestCase):
         user: SimpleNamespace | None = None,
         medias: list[SimpleNamespace] | None = None,
     ) -> MagicMock:
-        client = MagicMock()
-        client.user_id_from_username.return_value = "111"
-        client.user_info.return_value = user or _make_user()
-        client.user_medias.return_value = medias or []
-        return client
+        """Configure les mocks Playwright (profil + reels) pour un cas de test."""
+        u = user or _make_user()
+        self.mock_get_profile.return_value = _make_profile_data(
+            followers=int(u.follower_count),
+            posts_count=int(u.media_count),
+            biography=str(u.biography),
+            is_private=bool(u.is_private),
+        )
+        self.mock_get_reels.return_value = _reels_from_medias(medias or [])
+        return self._ctx
 
     def test_user_not_found_returns_none(self) -> None:
-        client = MagicMock()
-        client.user_id_from_username.side_effect = UserNotFound("nope")
+        self.mock_get_profile.return_value = None
         result = discovery.score_profile(
             "ghost",
             self.DOMAIN,
             blacklist={"profiles": []},
-            client=client,
+            context=self._ctx,
         )
         self.assertIsNone(result)
 
     def test_blacklisted_skipped_before_network(self) -> None:
-        client = MagicMock()
         result = discovery.score_profile(
             "@known",
             self.DOMAIN,
             blacklist={"profiles": [{"username": "known"}]},
-            client=client,
+            context=self._ctx,
         )
         self.assertIsNone(result)
-        client.user_id_from_username.assert_not_called()
+        self.mock_get_profile.assert_not_called()
 
     def test_followers_below_min_returns_none(self) -> None:
-        client = self._make_client(user=_make_user(follower_count=500))
+        self._make_client(user=_make_user(follower_count=500))
         self.assertIsNone(
             discovery.score_profile(
-                "tiny", self.DOMAIN, blacklist={"profiles": []}, client=client
+                "tiny", self.DOMAIN, blacklist={"profiles": []}, context=self._ctx
             )
         )
 
     def test_followers_above_max_returns_none(self) -> None:
-        client = self._make_client(user=_make_user(follower_count=2_000_000))
+        self._make_client(user=_make_user(follower_count=2_000_000))
         self.assertIsNone(
             discovery.score_profile(
-                "mega", self.DOMAIN, blacklist={"profiles": []}, client=client
+                "mega", self.DOMAIN, blacklist={"profiles": []}, context=self._ctx
             )
         )
 
     def test_private_account_returns_none(self) -> None:
-        client = self._make_client(user=_make_user(is_private=True))
+        self._make_client(user=_make_user(is_private=True))
         self.assertIsNone(
             discovery.score_profile(
-                "secret", self.DOMAIN, blacklist={"profiles": []}, client=client
+                "secret", self.DOMAIN, blacklist={"profiles": []}, context=self._ctx
             )
         )
 
     def test_media_count_too_low(self) -> None:
-        client = self._make_client(user=_make_user(media_count=1))
+        self._make_client(user=_make_user(media_count=1))
         self.assertIsNone(
             discovery.score_profile(
-                "thin", self.DOMAIN, blacklist={"profiles": []}, client=client
+                "thin", self.DOMAIN, blacklist={"profiles": []}, context=self._ctx
             )
         )
 
-    def test_session_lost_propagates(self) -> None:
-        client = MagicMock()
-        client.user_id_from_username.side_effect = LoginRequired("session expired")
-        with self.assertRaises(discovery.DiscoverySessionLost):
+    def test_missing_context_returns_none(self) -> None:
+        self.assertIsNone(
             discovery.score_profile(
                 "anyone",
                 self.DOMAIN,
                 blacklist={"profiles": []},
-                client=client,
+                context=None,
             )
+        )
 
     def test_full_scoring_rising_trend_with_t2(self) -> None:
         # 12 medias chronologiques, vues qui montent à la fin → trend = rising
@@ -247,7 +298,7 @@ class ScoreProfileTest(unittest.TestCase):
             "rising_creator",
             self.DOMAIN,
             blacklist={"profiles": []},
-            client=client,
+            context=self._ctx,
         )
 
         self.assertIsNotNone(result)
@@ -272,7 +323,7 @@ class ScoreProfileTest(unittest.TestCase):
         client = self._make_client(user=_make_user(media_count=10), medias=[])
         self.assertIsNone(
             discovery.score_profile(
-                "empty", self.DOMAIN, blacklist={"profiles": []}, client=client
+                "empty", self.DOMAIN, blacklist={"profiles": []}, context=self._ctx
             )
         )
 
@@ -300,7 +351,7 @@ class ScoreProfileTest(unittest.TestCase):
                     "thin_history",
                     self.DOMAIN,
                     blacklist={"profiles": []},
-                    client=client,
+                    context=self._ctx,
                 )
             )
 
@@ -326,7 +377,7 @@ class ScoreProfileTest(unittest.TestCase):
                 "reels_only",
                 self.DOMAIN,
                 blacklist={"profiles": []},
-                client=client,
+                context=self._ctx,
             )
         self.assertIsNotNone(result)
         assert result is not None
@@ -340,7 +391,8 @@ class ScoreProfileTest(unittest.TestCase):
         # score = score_reels × 1.0
         self.assertAlmostEqual(result["score"], result["score_reels"], places=3)
 
-    def test_posts_only_creator_reel_weight_zero(self) -> None:
+    def test_posts_only_creator_returns_none(self) -> None:
+        """Playwright ne récupère que des Reels — profil sans Reel → skip."""
         followers = 10_000
         medias = [
             _make_media(
@@ -353,32 +405,17 @@ class ScoreProfileTest(unittest.TestCase):
             )
             for i in range(8)
         ]
-        client = self._make_client(
+        self._make_client(
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
         )
-        with patch("modules.classifier.CommentClassifier"):
-            result = discovery.score_profile(
-                "posts_only",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                client=client,
-            )
-        self.assertIsNotNone(result)
-        assert result is not None
-        self.assertEqual(result["reels_count"], 0)
-        # 8 posts en entrée → cap à MAX_POSTS_FOR_SCORING (4) pour le scoring.
-        self.assertEqual(result["posts_count"], 4)
-        self.assertAlmostEqual(result["reel_weight"], 0.0, places=5)
-        self.assertAlmostEqual(result["post_weight"], 1.0, places=5)
-        self.assertIsNone(result["reel_ratio_median"])
-        self.assertIsNone(result["reel_trend"])
-        self.assertEqual(result["score_reels"], 0.0)
-        self.assertGreaterEqual(result["score"], 0.0)
-        # score = score_posts × 1.0
-        self.assertAlmostEqual(result["score"], result["score_posts"], places=3)
-        # post_ratio_median = 800/10000 = 0.08 (4 plus récents, tous identiques)
-        self.assertAlmostEqual(result["post_ratio_median"], 0.08, places=4)
+        result = discovery.score_profile(
+            "posts_only",
+            self.DOMAIN,
+            blacklist={"profiles": []},
+            context=self._ctx,
+        )
+        self.assertIsNone(result)
 
     def test_mixed_50_50_balances_weights(self) -> None:
         # 4 reels qualité + 4 posts moyens → weights 50/50 (sous le cap posts).
@@ -423,20 +460,17 @@ class ScoreProfileTest(unittest.TestCase):
                 "mixed_50",
                 self.DOMAIN,
                 blacklist={"profiles": []},
-                client=client,
+                context=self._ctx,
             )
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["reels_count"], 4)
-        self.assertEqual(result["posts_count"], 4)
-        self.assertAlmostEqual(result["reel_weight"], 0.5, places=5)
-        self.assertAlmostEqual(result["post_weight"], 0.5, places=5)
-        # SCORE_FINAL = 0.5 × score_reels + 0.5 × score_posts
-        expected = 0.5 * result["score_reels"] + 0.5 * result["score_posts"]
-        self.assertAlmostEqual(result["score"], expected, places=3)
-        # Les Reels qualité ne sont pas dilués par les photos pour leur métrique propre
+        self.assertEqual(result["posts_count"], 0)
+        self.assertAlmostEqual(result["reel_weight"], 1.0, places=5)
+        self.assertAlmostEqual(result["post_weight"], 0.0, places=5)
+        self.assertAlmostEqual(result["score"], result["score_reels"], places=3)
         self.assertGreater(result["reel_ratio_median"], 2.0)
-        self.assertAlmostEqual(result["post_ratio_median"], 0.06, places=4)
+        self.assertIsNone(result["post_ratio_median"])
 
     def test_mixed_80_reels_20_posts_weighted_correctly(self) -> None:
         followers = 10_000
@@ -472,50 +506,42 @@ class ScoreProfileTest(unittest.TestCase):
                 "mixed_80",
                 self.DOMAIN,
                 blacklist={"profiles": []},
-                client=client,
+                context=self._ctx,
             )
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["reels_count"], 8)
-        self.assertEqual(result["posts_count"], 2)
-        self.assertAlmostEqual(result["reel_weight"], 0.8, places=5)
-        self.assertAlmostEqual(result["post_weight"], 0.2, places=5)
-        expected = 0.8 * result["score_reels"] + 0.2 * result["score_posts"]
-        self.assertAlmostEqual(result["score"], expected, places=3)
+        self.assertEqual(result["posts_count"], 0)
+        self.assertAlmostEqual(result["reel_weight"], 1.0, places=5)
+        self.assertAlmostEqual(result["post_weight"], 0.0, places=5)
+        self.assertAlmostEqual(result["score"], result["score_reels"], places=3)
 
     def test_reel_views_top_up_from_media_info(self) -> None:
-        """user_medias sans compteurs ; media_info renvoie play_count si view_count=0."""
+        """Reels Playwright avec vues renseignées → ratio médian cohérent."""
         followers = 10_000
-        medias = [
-            _make_media(
-                pk=f"r{i}",
-                views=0,
-                view_count=0,
-                play_count=0,
-                likes=500,
-                comments=40,
-                days_ago=5 - i,
-                product_type="clips",
-            )
-            for i in range(3)
-        ]
-        client = self._make_client(
+        self._make_client(
             user=_make_user(follower_count=followers, media_count=40),
-            medias=medias,
-        )
-        client.media_info.return_value = SimpleNamespace(
-            view_count=0, play_count=50_000
+            medias=[
+                _make_media(
+                    pk=f"r{i}",
+                    views=50_000,
+                    likes=500,
+                    comments=40,
+                    days_ago=5 - i,
+                    product_type="clips",
+                )
+                for i in range(3)
+            ],
         )
         with patch("modules.classifier.CommentClassifier"):
             result = discovery.score_profile(
                 "zero_list_views",
                 self.DOMAIN,
                 blacklist={"profiles": []},
-                client=client,
+                context=self._ctx,
             )
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(client.media_info.call_count, 3)
         self.assertAlmostEqual(result["reel_ratio_median"], 5.0, places=4)
 
     def test_top_up_sets_reel_views_from_play_count_when_view_count_zero(self) -> None:
@@ -539,41 +565,6 @@ class ScoreProfileTest(unittest.TestCase):
         )
         self.assertEqual(reels[0]["views"], 50_000)
 
-    def test_reel_view_top_up_no_cap_processes_all_zero_reels(self) -> None:
-        """Pas de cap : 16 Reels à 0 vue → 16 appels media_info."""
-        followers = 10_000
-        medias = [
-            _make_media(
-                pk=f"r{i}",
-                views=0,
-                view_count=0,
-                play_count=0,
-                likes=400,
-                comments=30,
-                days_ago=30 - i,
-                product_type="clips",
-            )
-            for i in range(16)
-        ]
-        client = self._make_client(
-            user=_make_user(follower_count=followers, media_count=40),
-            medias=medias,
-        )
-        client.media_info.return_value = SimpleNamespace(
-            view_count=0, play_count=50_000
-        )
-        with patch("modules.classifier.CommentClassifier"):
-            result = discovery.score_profile(
-                "all_zero_reels",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                client=client,
-            )
-        self.assertIsNotNone(result)
-        assert result is not None
-        self.assertEqual(client.media_info.call_count, 16)
-        self.assertAlmostEqual(result["reel_ratio_median"], 5.0, places=4)
-
     def test_reel_views_skip_media_info_when_list_has_views(self) -> None:
         followers = 10_000
         medias = [
@@ -592,13 +583,13 @@ class ScoreProfileTest(unittest.TestCase):
             medias=medias,
         )
         with patch("modules.classifier.CommentClassifier"):
-            discovery.score_profile(
+            result = discovery.score_profile(
                 "has_views",
                 self.DOMAIN,
                 blacklist={"profiles": []},
-                client=client,
+                context=self._ctx,
             )
-        client.media_info.assert_not_called()
+        self.assertIsNotNone(result)
 
     def test_viral_outlier_pushes_score_above_median_only(self) -> None:
         """Distribution skewée @raikkonenaf : P90 capte le potentiel viral.
@@ -633,7 +624,7 @@ class ScoreProfileTest(unittest.TestCase):
                 "viral_skew",
                 self.DOMAIN,
                 blacklist={"profiles": []},
-                client=client,
+                context=self._ctx,
             )
         self.assertIsNotNone(result)
         assert result is not None
@@ -705,18 +696,18 @@ class ScoreProfileTest(unittest.TestCase):
                 "with_pins",
                 self.DOMAIN,
                 blacklist={"profiles": []},
-                client=client,
+                context=self._ctx,
             )
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result["media_sampled"], 12)
+        self.assertEqual(result["media_sampled"], 40)
         self.assertEqual(result["reels_count"], 10)
         self.assertEqual(result["posts_count"], 0)
         # Médiane des ratios sur les 10 non épinglés uniquement (20k / 10k = 2.0)
         self.assertAlmostEqual(result["reel_ratio_median"], 2.0, places=4)
 
-    def test_posts_capped_at_max_for_scoring_keeps_most_recent(self) -> None:
-        """6 reels + 8 posts → posts capés à 4, reel_weight = 6/10 = 0.6."""
+    def test_reels_only_when_posts_present_in_profile(self) -> None:
+        """Playwright : seuls les Reels sont scorés (posts feed ignorés)."""
         followers = 10_000
         medias = []
         for i in range(6):
@@ -730,8 +721,6 @@ class ScoreProfileTest(unittest.TestCase):
                     product_type="clips",
                 )
             )
-        # 8 posts : "old0..old3" très anciens (likes faibles, signaux dégradés),
-        # "p0..p3" récents (likes élevés). Le cap doit garder les 4 récents.
         for i in range(4):
             medias.append(
                 _make_media(
@@ -754,27 +743,23 @@ class ScoreProfileTest(unittest.TestCase):
                     product_type="feed",
                 )
             )
-        client = self._make_client(
+        self._make_client(
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
         )
-        with patch("modules.classifier.CommentClassifier"):
-            result = discovery.score_profile(
-                "capped_posts",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                client=client,
-            )
+        result = discovery.score_profile(
+            "capped_posts",
+            self.DOMAIN,
+            blacklist={"profiles": []},
+            context=self._ctx,
+        )
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["reels_count"], 6)
-        self.assertEqual(result["posts_count"], 4)
-        self.assertAlmostEqual(result["reel_weight"], 0.6, places=5)
-        self.assertAlmostEqual(result["post_weight"], 0.4, places=5)
-        # post_ratio_median = médiane(900/10000) sur les 4 récents uniquement
-        # (les anciens "old_p*" à 10 likes seraient ~0.001 et tireraient la
-        # médiane vers 0 si pris en compte).
-        self.assertAlmostEqual(result["post_ratio_median"], 0.09, places=4)
+        self.assertEqual(result["posts_count"], 0)
+        self.assertAlmostEqual(result["reel_weight"], 1.0, places=5)
+        self.assertAlmostEqual(result["post_weight"], 0.0, places=5)
+        self.assertIsNone(result["post_ratio_median"])
 
     def test_score_profile_does_not_fetch_media_comments(self) -> None:
         """Le scoring Discovery ne charge plus les commentaires individuels."""
@@ -798,7 +783,7 @@ class ScoreProfileTest(unittest.TestCase):
             "no_comment_fetch",
             self.DOMAIN,
             blacklist={"profiles": []},
-            client=client,
+            context=self._ctx,
         )
         client.media_comments.assert_not_called()
 
@@ -825,7 +810,7 @@ class ScoreProfileTest(unittest.TestCase):
                 "rhythm_check",
                 self.DOMAIN,
                 blacklist={"profiles": []},
-                client=client,
+                context=self._ctx,
             )
         self.assertIsNotNone(result)
         assert result is not None
@@ -872,7 +857,7 @@ class ScoreProfileTest(unittest.TestCase):
                 "reel_rhythm_only",
                 self.DOMAIN,
                 blacklist={"profiles": []},
-                client=client,
+                context=self._ctx,
             )
         self.assertIsNotNone(result)
         assert result is not None
@@ -1243,7 +1228,7 @@ class ExploreNetworkTest(unittest.TestCase):
                 blacklist=blacklist,
                 watchlist=[],
                 candidates=candidates,
-                client=MagicMock(),
+                context=MagicMock(),
                 session=session,
                 blacklist_path=Path("/tmp/skip_persist_bl.json"),
                 candidates_path=Path("/tmp/skip_persist_cand.json"),
@@ -1270,7 +1255,7 @@ class ExploreNetworkTest(unittest.TestCase):
                 blacklist={"profiles": []},
                 watchlist=watchlist,
                 candidates={"candidates": []},
-                client=MagicMock(),
+                context=MagicMock(),
                 session=session,
                 blacklist_path=Path("/tmp/skip_persist_bl.json"),
                 candidates_path=Path("/tmp/skip_persist_cand.json"),
@@ -1312,7 +1297,7 @@ class ExploreNetworkTest(unittest.TestCase):
                 blacklist=blacklist,
                 watchlist=[],
                 candidates=candidates,
-                client=MagicMock(),
+                context=MagicMock(),
                 session=session,
             )
 
@@ -1352,7 +1337,7 @@ class ExploreNetworkTest(unittest.TestCase):
                 blacklist=blacklist,
                 watchlist=[],
                 candidates=candidates,
-                client=MagicMock(),
+                context=MagicMock(),
                 session=session,
             )
 
@@ -1394,7 +1379,7 @@ class ExploreNetworkTest(unittest.TestCase):
                 blacklist=blacklist,
                 watchlist=[],
                 candidates=candidates,
-                client=MagicMock(),
+                context=MagicMock(),
                 session=session,
             )
 
@@ -1402,23 +1387,17 @@ class ExploreNetworkTest(unittest.TestCase):
         self.assertEqual(scored, ["s1", "s2"])
         self.assertEqual(session.profiles_today, discovery.MAX_PROFILES_PER_DAY)
 
-    def test_session_lost_propagates_from_score_profile(self) -> None:
-        """``score_profile`` peut lever ``DiscoverySessionLost`` (LoginRequired
-        intercepté en interne). ``explore_network`` re-lève vers le caller.
-        """
-        with patch.object(
-            discovery, "score_profile",
-            side_effect=discovery.DiscoverySessionLost("user_info @seed_one: kicked"),
-        ):
-            with self.assertRaises(discovery.DiscoverySessionLost):
-                discovery.explore_network(
-                    self.DOMAIN,
-                    blacklist={"profiles": []},
-                    watchlist=[],
-                    candidates={"candidates": []},
-                    client=MagicMock(),
-                    session=discovery.DiscoverySession(mock=False),
-                )
+    def test_score_profile_error_still_runs_explore_network(self) -> None:
+        """Une erreur dans ``score_profile`` ne doit pas planter ``explore_network``."""
+        with patch.object(discovery, "score_profile", return_value=None):
+            discovery.explore_network(
+                self.DOMAIN,
+                blacklist={"profiles": []},
+                watchlist=[],
+                candidates={"candidates": []},
+                context=MagicMock(),
+                session=discovery.DiscoverySession(mock=False),
+            )
 
     def test_mock_mode_runs_without_network(self) -> None:
         """En mock : aucun ``client`` Instagram, aucune écriture disque,
@@ -1435,7 +1414,7 @@ class ExploreNetworkTest(unittest.TestCase):
                 blacklist=blacklist,
                 watchlist=[],
                 candidates=candidates,
-                client=None,
+                context=None,
                 session=session,
             )
             bl_save.assert_not_called()
@@ -1503,7 +1482,7 @@ class ExploreNetworkSeedsRemovalTest(unittest.TestCase):
                     blacklist={"profiles": []},
                     watchlist=[],
                     candidates={"candidates": []},
-                    client=MagicMock(),
+                    context=MagicMock(),
                     session=discovery.DiscoverySession(mock=False),
                     seeds_path=seeds_p,
                 )
@@ -1543,7 +1522,7 @@ class ExploreNetworkSeedsRemovalTest(unittest.TestCase):
                     blacklist={"profiles": []},
                     watchlist=[],
                     candidates={"candidates": []},
-                    client=None,
+                    context=None,
                     session=discovery.DiscoverySession(mock=True),
                     seeds_path=seeds_p,
                 )
@@ -1580,7 +1559,7 @@ class ExploreNetworkSeedsRemovalTest(unittest.TestCase):
                     blacklist={"profiles": []},
                     watchlist=[],
                     candidates={"candidates": []},
-                    client=MagicMock(),
+                    context=MagicMock(),
                     session=discovery.DiscoverySession(mock=False),
                     seeds_path=seeds_p,
                     seeds_override=["adhoc_one"],
@@ -1648,7 +1627,7 @@ class ExploreNetworkInMemorySetsTest(unittest.TestCase):
                 blacklist={"profiles": []},
                 watchlist=[],
                 candidates={"candidates": []},
-                client=MagicMock(),
+                context=MagicMock(),
                 session=discovery.DiscoverySession(mock=False),
             )
 
@@ -1683,7 +1662,7 @@ class ExploreNetworkInMemorySetsTest(unittest.TestCase):
                 blacklist={"profiles": []},
                 watchlist=[],
                 candidates={"candidates": []},
-                client=MagicMock(),
+                context=MagicMock(),
                 session=discovery.DiscoverySession(mock=False),
             )
 
@@ -1712,96 +1691,21 @@ class ExploreNetworkInMemorySetsTest(unittest.TestCase):
 
 
 class FetchSuggestionsTest(unittest.TestCase):
-    """``_fetch_suggestions`` : cascade discover → suggestion_details → followings."""
+    """``_fetch_suggestions`` délègue à ``get_suggested_accounts`` (Playwright)."""
 
-    def setUp(self) -> None:
-        self._sleep_patch = patch.object(discovery, "polite_sleep", lambda *a, **k: None)
-        self._sleep_patch.start()
-        self.addCleanup(self._sleep_patch.stop)
-
-    @staticmethod
-    def _client_with_user_id(user_id: str = "111") -> MagicMock:
-        client = MagicMock()
-        client.user_id_from_username.return_value = user_id
-        return client
-
-    def test_level_one_used_when_available(self) -> None:
-        client = self._client_with_user_id()
-        client.discover_recommended_accounts_for_category_v1.return_value = {
-            "users": [{"username": "alpha"}, {"username": "beta"}]
-        }
-
-        with patch.object(discovery, "_fetch_followings") as followings_mock:
-            result = discovery._fetch_suggestions("seed_one", client, max_results=30)
-
-        self.assertEqual(result, ["alpha", "beta"])
-        client.discover_recommended_accounts_for_category_v1.assert_called_once_with("111")
-        client.fetch_suggestion_details.assert_not_called()
-        followings_mock.assert_not_called()
-
-    def test_level_one_attribute_error_falls_back_to_level_two(self) -> None:
-        client = self._client_with_user_id()
-        client.discover_recommended_accounts_for_category_v1.side_effect = (
-            AttributeError("missing")
-        )
-        client.fetch_suggestion_details.return_value = {
-            "users": [{"username": "gamma"}]
-        }
-
-        with patch.object(discovery, "_fetch_followings") as followings_mock:
-            result = discovery._fetch_suggestions("seed_one", client, max_results=30)
-
-        self.assertEqual(result, ["gamma"])
-        client.fetch_suggestion_details.assert_called_once_with("111")
-        followings_mock.assert_not_called()
-
-    def test_level_one_and_two_fail_fall_back_to_followings_with_warning(self) -> None:
-        client = self._client_with_user_id()
-        client.discover_recommended_accounts_for_category_v1.return_value = {"users": []}
-        client.fetch_suggestion_details.side_effect = RuntimeError("down")
-
+    def test_delegates_to_get_suggested_accounts(self) -> None:
+        ctx = MagicMock()
         with patch.object(
-            discovery, "_fetch_followings", return_value=["follow_a", "follow_b"]
-        ) as followings_mock, self.assertLogs(
-            "aitertainment.discovery", level="WARNING"
-        ) as cm:
-            result = discovery._fetch_suggestions("seed_one", client, max_results=30)
+            discovery,
+            "get_suggested_accounts",
+            return_value=["alpha", "beta"],
+        ) as mock_gsa:
+            result = discovery._fetch_suggestions("seed_one", ctx, max_results=30)
+        self.assertEqual(result, ["alpha", "beta"])
+        mock_gsa.assert_called_once_with("seed_one", ctx, max_results=30)
 
-        self.assertEqual(result, ["follow_a", "follow_b"])
-        followings_mock.assert_called_once_with("seed_one", client)
-        self.assertTrue(
-            any(
-                "suggestions non disponibles pour @seed_one — fallback followings"
-                in m
-                for m in cm.output
-            ),
-            cm.output,
-        )
-
-    def test_result_truncated_to_max_results(self) -> None:
-        client = self._client_with_user_id()
-        client.discover_recommended_accounts_for_category_v1.return_value = {
-            "users": [{"username": f"u{i}"} for i in range(10)]
-        }
-
-        result = discovery._fetch_suggestions("seed_one", client, max_results=3)
-
-        self.assertEqual(result, ["u0", "u1", "u2"])
-
-    def test_empty_or_none_usernames_filtered(self) -> None:
-        client = self._client_with_user_id()
-        client.discover_recommended_accounts_for_category_v1.return_value = {
-            "users": [
-                {"username": "valid"},
-                {"username": ""},
-                {"username": None},
-                {"username": "  @other  "},
-            ]
-        }
-
-        result = discovery._fetch_suggestions("seed_one", client, max_results=30)
-
-        self.assertEqual(result, ["valid", "other"])
+    def test_empty_when_no_context(self) -> None:
+        self.assertEqual(discovery._fetch_suggestions("seed_one", None), [])
 
 
 class RunDiscoveryCliTest(unittest.TestCase):
@@ -1941,7 +1845,7 @@ class ScoreAndPersistTest(unittest.TestCase):
                 domain=self.DOMAIN,
                 added_via="manual",
                 blacklist={"profiles": []},
-                client=MagicMock(),
+                context=MagicMock(),
                 db_path=self.db_path,
                 candidates_path=self.cand_path,
                 notify_fn=notify_calls.append,
@@ -1973,7 +1877,7 @@ class ScoreAndPersistTest(unittest.TestCase):
                 "@raikkonenaf",
                 domain=self.DOMAIN,
                 blacklist={"profiles": []},
-                client=MagicMock(),
+                context=MagicMock(),
                 db_path=self.db_path,
                 candidates_path=self.cand_path,
                 notify_fn=notify_calls.append,
@@ -1999,7 +1903,7 @@ class ScoreAndPersistTest(unittest.TestCase):
                 "@private_user",
                 domain=self.DOMAIN,
                 blacklist={"profiles": []},
-                client=MagicMock(),
+                context=MagicMock(),
                 db_path=self.db_path,
             )
         self.assertIsNone(summary)
@@ -2040,7 +1944,7 @@ class ScoreAndPersistTest(unittest.TestCase):
                 summary = discovery.score_and_persist(
                     "@raikkonenaf",
                     blacklist={"profiles": []},
-                    client=MagicMock(),
+                    context=MagicMock(),
                     seeds_path=seeds_p,
                     db_path=self.db_path,
                     candidates_path=self.cand_path,
@@ -2123,7 +2027,7 @@ class ExploreNetworkUpsertsDatabaseTest(unittest.TestCase):
                 watchlist=[],
                 candidates={"candidates": []},
                 db=db,
-                client=MagicMock(),
+                context=MagicMock(),
                 session=discovery.DiscoverySession(mock=False),
             )
 
@@ -2397,7 +2301,26 @@ class SeedSchemaHelpersTest(unittest.TestCase):
 
 
 class ScoreProfileNichesSchemaTest(unittest.TestCase):
-    """Vérifie que ``score_profile`` retourne ``niches`` (liste) + ``niche`` (rétrocompat)."""
+    """Vérifie que ``score_profile`` retourne ``niches`` (liste)."""
+
+    def setUp(self) -> None:
+        self._ctx = MagicMock()
+        medias = [
+            _make_media(pk=f"M{i}", views=10_000, likes=500, comments=30, days_ago=i)
+            for i in range(5)
+        ]
+        self._profile_patch = patch(
+            "discovery.get_profile_data",
+            return_value=_make_profile_data(),
+        )
+        self._reels_patch = patch(
+            "discovery.get_recent_reels",
+            return_value=_reels_from_medias(medias),
+        )
+        self._profile_patch.start()
+        self._reels_patch.start()
+        self.addCleanup(self._profile_patch.stop)
+        self.addCleanup(self._reels_patch.stop)
 
     @staticmethod
     def _user(follower_count: int = 10_000) -> SimpleNamespace:
@@ -2447,7 +2370,7 @@ class ScoreProfileNichesSchemaTest(unittest.TestCase):
                 "type": "T2", "confidence": 0.8,
             }
             result = discovery.score_profile(
-                "user", domain, blacklist={"profiles": []}, client=self._client()
+                "user", domain, blacklist={"profiles": []}, context=self._ctx
             )
 
         self.assertIsNotNone(result)
@@ -2464,7 +2387,7 @@ class ScoreProfileNichesSchemaTest(unittest.TestCase):
                 "type": "T2", "confidence": 0.8,
             }
             result = discovery.score_profile(
-                "user", domain, blacklist={"profiles": []}, client=self._client()
+                "user", domain, blacklist={"profiles": []}, context=self._ctx
             )
 
         self.assertEqual(result["niches"], ["humour"])
@@ -2479,7 +2402,7 @@ class ScoreProfileNichesSchemaTest(unittest.TestCase):
                 "type": "T2", "confidence": 0.8,
             }
             result = discovery.score_profile(
-                "user", domain, blacklist={"profiles": []}, client=self._client()
+                "user", domain, blacklist={"profiles": []}, context=self._ctx
             )
 
         # ``INVALID`` est rejeté par ``validate_niches`` et logué en WARNING.

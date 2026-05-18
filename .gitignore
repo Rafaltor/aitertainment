@@ -1,1 +1,108 @@
+# =============================================================================
+# Secrets & credentials (never commit)
+# =============================================================================
 .env
+.env.*
+!.env.example
+
+*.pem
+*.key
+session.json
+
+# Instagram session (Playwright + instagrapi)
+data/instagram_cookies.json
+
+# =============================================================================
+# Python
+# =============================================================================
+.venv/
+venv/
+env/
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+*.egg
+
+# =============================================================================
+# Tests & tooling
+# =============================================================================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# =============================================================================
+# IDE & OS
+# =============================================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+.idea/
+.vscode/
+*.swp
+*~
+.project
+.pydevproject
+
+# =============================================================================
+# Jupyter
+# =============================================================================
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# =============================================================================
+# Logs (runtime)
+# =============================================================================
+logs/
+*.log
+
+# =============================================================================
+# Local runtime data (machine-specific state)
+# =============================================================================
+data/*
+!data/.gitkeep
+!data/*.example.json
+
+# Watchlist racine (doublon possible avec data/watchlist.json)
+watchlist.json
+
+# Modèles / embeddings régénérables
+pca_model.pkl
+data/pca_model.pkl
+
+# =============================================================================
+# Playwright (si généré localement)
+# =============================================================================
+playwright-report/
+test-results/
+.playwright/
+
+# =============================================================================
+# Divers temporaires
+# =============================================================================
+*.tmp
+.tmp/
+temp/
+tmp/
+
+# Fichiers média / downloads locaux
+*.mp4
+*.wav
+*.mp3
+downloads/

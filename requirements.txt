@@ -1,6 +1,9 @@
 # Instagram API
 instagrapi>=2.5.0,<3.0
 
+# Navigateur (scraping Instagram)
+playwright>=1.40,<2.0
+
 # HTTP (Telegram Bot API)
 requests>=2.32,<3.0
 

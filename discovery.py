@@ -30,7 +30,7 @@ Principes :
 
 Ce module expose uniquement la **persistance** et les chemins par défaut :
 chargement / sauvegarde atomique de ``seeds``, ``blacklist``, ``candidates``.
-La boucle d'exploration et les appels instagrapi viendront ensuite.
+La boucle d'exploration utilise Playwright (``scripts/instagram_browser``).
 
 ============================================================================
 Fichiers de données (répertoire ``data/``)
@@ -56,16 +56,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from instagrapi.exceptions import (
-    ClientThrottledError,
-    LoginRequired,
-    PleaseWaitFewMinutes,
-    PrivateAccount,
-    PrivateError,
-    RateLimitError,
-    UserNotFound,
-)
-
 import config
 from database import (
     DatabaseIOError,
@@ -73,13 +63,13 @@ from database import (
     save_db,
     upsert_profile,
 )
-from instagram_client import (
-    InstagramAuthError,
-    WatcherStopRequested,
-    get_client,
+from playwright.sync_api import BrowserContext, sync_playwright
+from scripts.instagram_browser import (
+    get_browser_context,
+    get_profile_data,
+    get_recent_reels,
+    get_suggested_accounts,
     polite_sleep,
-    recover_from_session_loss,
-    setup_watcher_logger,
 )
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
@@ -100,7 +90,7 @@ DISCOVERY_BETWEEN_POSTS_MAX_S = float(config.DISCOVERY_BETWEEN_POSTS_MAX_S)
 MIN_FOLLOWERS = 1_000
 MAX_FOLLOWERS = 1_000_000
 MIN_MEDIA_COUNT = 2
-HISTORY_MEDIAS_TO_FETCH = 15          # historique (+ marge vs épinglés exclus)
+HISTORY_MEDIAS_TO_FETCH = 20          # historique (4 lignes × 5 colonnes sur /reels/)
 MIN_TOTAL_MEDIAS_REQUIRED = 3          # nb min de médias TOTAL (reels + posts) pour scorer
 MAX_POSTS_FOR_SCORING = 4              # cap sur les Posts scorés (les 4 plus récents non-épinglés)
 COMMENTS_MEDIA_SAMPLE = 3              # nombre de médias dont on scrape les commentaires
@@ -498,81 +488,29 @@ def _media_metric_row(media: Any) -> dict[str, Any]:
 
 
 def debug_reel_views(username: str) -> None:
-    """Debug brut : compare les compteurs de vues Reels ``user_medias`` vs ``media_info``.
-
-    Utile pour diagnostiquer pourquoi ``view_count`` / ``play_count`` sont à 0
-    sur les lignes ``user_medias`` alors que le détail média les expose.
-
-    Pas de scoring, pas de ``polite_sleep`` — uniquement des ``print`` ligne par ligne.
-    """
+    """Debug Reels via Playwright (``get_recent_reels``)."""
     u = (username or "").lstrip("@").strip()
     if not u:
         print("debug_reel_views: username vide")
         return
 
-    client = get_client()
-    user_id = client.user_id_from_username(u)
-    medias = client.user_medias(str(user_id), amount=20)
-    reels = [
-        m
-        for m in medias
-        if str(getattr(m, "product_type", "") or "") == REEL_PRODUCT_TYPE
-    ]
-
-    print(f"=== debug_reel_views @{u} ===")
-    print(f"user_id={user_id}  total_medias={len(medias)}  reels(clips)={len(reels)}")
-    print()
-
-    for idx, m in enumerate(reels, start=1):
-        pk = getattr(m, "pk", None) or getattr(m, "id", None)
-        pk_str = str(pk) if pk is not None else ""
-
-        vc_um = getattr(m, "view_count", None)
-        pc_um = getattr(m, "play_count", None)
-
-        print(f"--- Reel #{idx} (user_medias) pk={pk_str!r} ---")
-        print(f"  media_id (pk): {pk_str!r}")
-        print(f"  taken_at: {getattr(m, 'taken_at', None)!r}")
-        print(f"  is_pinned: {getattr(m, 'is_pinned', None)!r}")
-        print(f"  product_type: {getattr(m, 'product_type', None)!r}")
-        print(f"  view_count (user_medias): {vc_um!r}")
-        print(f"  play_count (user_medias): {pc_um!r}")
-        print(f"  views (_media_views): {_media_views(m)}")
+    playwright_instance = sync_playwright().start()
+    context = get_browser_context(playwright_instance)
+    try:
+        reels = get_recent_reels(u, context, max_reels=HISTORY_MEDIAS_TO_FETCH)
+        print(f"=== debug_reel_views @{u} (Playwright) ===")
+        print(f"reels={len(reels)}")
         print()
-
-        if not pk_str:
-            print("  media_info: skip (pk vide)")
+        for idx, r in enumerate(reels, start=1):
+            print(f"--- Reel #{idx} ---")
+            print(f"  media_id: {r.get('media_id')!r}")
+            print(f"  view_count: {r.get('view_count')!r}")
+            print(f"  like_count: {r.get('like_count')!r}")
+            print(f"  thumbnail_url: {(r.get('thumbnail_url') or '')[:80]!r}...")
             print()
-            continue
-
-        try:
-            full = client.media_info(pk_str)
-        except Exception as e:
-            print(f"  media_info({pk_str}) ERROR: {type(e).__name__}: {e}")
-            print()
-            continue
-
-        vc_mi = getattr(full, "view_count", None)
-        pc_mi = getattr(full, "play_count", None)
-        vvc = getattr(full, "video_view_count", None)
-        mt = getattr(full, "media_type", None)
-        pt_mi = getattr(full, "product_type", None)
-        meta = getattr(full, "clips_metadata", None)
-        if meta is None:
-            clips_vc_repr = "<clips_metadata absent>"
-        elif isinstance(meta, dict):
-            clips_vc_repr = repr(meta.get("view_count", "<pas de clé view_count>"))
-        else:
-            clips_vc_repr = repr(getattr(meta, "view_count", "<pas d'attribut view_count>"))
-
-        print(f"  --- media_info({pk_str}) ---")
-        print(f"  view_count (media_info): {vc_mi!r}")
-        print(f"  play_count (media_info): {pc_mi!r}")
-        print(f"  video_view_count (media_info): {vvc!r}")
-        print(f"  media_type: {mt!r}")
-        print(f"  product_type (media_info): {pt_mi!r}")
-        print(f"  clips_metadata.get('view_count') si dict / équivalent: {clips_vc_repr}")
-        print()
+    finally:
+        context.close()
+        playwright_instance.stop()
 
 
 def _top_up_reel_views_via_media_info(
@@ -602,26 +540,6 @@ def _top_up_reel_views_via_media_info(
             continue
         try:
             media_full = client.media_info(pk)
-        except (LoginRequired, PleaseWaitFewMinutes) as e:
-            raise DiscoverySessionLost(
-                f"media_info({pk}) @{username}: {e}"
-            ) from e
-        except (RateLimitError, ClientThrottledError) as e:
-            log.warning(
-                "score_profile @%s : rate limit media_info(%s) (%s) — skip top-up.",
-                username,
-                pk,
-                e,
-            )
-            continue
-        except PrivateError as e:
-            log.warning(
-                "score_profile @%s : media_info(%s) privé (%s) — skip.",
-                username,
-                pk,
-                e,
-            )
-            continue
         except Exception as e:
             log.warning(
                 "score_profile @%s : media_info(%s) erreur (%s) — skip.",
@@ -847,24 +765,6 @@ def _classify_recent_comments(
         polite_sleep()
         try:
             comments = client.media_comments(str(media_id), amount=COMMENTS_PER_MEDIA)
-        except (LoginRequired, PleaseWaitFewMinutes) as e:
-            raise DiscoverySessionLost(
-                f"session perdue pendant media_comments({media_id}) : {e}"
-            ) from e
-        except (RateLimitError, ClientThrottledError) as e:
-            log.warning(
-                "media_comments(%s) : rate limit court (%s) — skip ce post.",
-                media_id,
-                e,
-            )
-            continue
-        except PrivateError as e:
-            log.warning(
-                "media_comments(%s) : commentaires inaccessibles (%s) — skip.",
-                media_id,
-                e,
-            )
-            continue
         except Exception as e:
             log.warning("media_comments(%s) : erreur (%s) — skip.", media_id, e)
             continue
@@ -1204,21 +1104,47 @@ def explain_score(score_result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _playwright_reel_rows(raw_reels: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convertit la sortie ``get_recent_reels`` en lignes métriques discovery."""
+    if not raw_reels:
+        return []
+    now = datetime.now(timezone.utc)
+    rows: list[dict[str, Any]] = []
+    # Ordre feed page Reels (épinglés en tête) — ne pas inverser.
+    for i, r in enumerate(raw_reels):
+        taken = r.get("taken_at")
+        if not isinstance(taken, datetime):
+            taken = now - timedelta(days=i)
+        rows.append(
+            {
+                "media_id": str(r.get("media_id") or ""),
+                "views": int(r.get("view_count") or 0),
+                "likes": int(r.get("like_count") or 0),
+                "comments": int(r.get("comment_count") or 0),
+                "shares": r.get("share_count"),
+                "taken_at": taken,
+                "caption_text": str(r.get("caption_text") or ""),
+                "product_type": REEL_PRODUCT_TYPE,
+            }
+        )
+    return rows
+
+
 def score_profile(
     username: str,
     domain: dict[str, Any],
     *,
     blacklist: dict[str, Any] | None = None,
-    client: Any | None = None,
+    context: BrowserContext | None = None,
 ) -> dict[str, Any] | None:
     """Score un profil candidat sur son **historique** (Layer 0).
 
     Pipeline :
 
-    1. ``client = get_client()`` (sauf si fourni — utile pour les tests).
-    2. ``user_info`` : lit ``follower_count``, ``media_count``, ``biography``,
-       ``is_private``.
-    3. **Filtres d'éligibilité** (retourne ``None`` immédiatement) :
+    1. ``get_profile_data(username, context)`` (Playwright + GraphQL).
+    2. **Filtres d'éligibilité** sur followers / posts_count / privé.
+    3. ``get_recent_reels`` pour vues et likes des Reels récents.
+    4. **Filtres d'éligibilité** (retourne ``None`` immédiatement) :
         - followers < 1 000 ou > 1 000 000
         - media_count < 2
         - compte privé
@@ -1309,14 +1235,7 @@ def score_profile(
         ``user_medias``, avant exclusion épinglés), ``reels_count``,
         ``posts_count`` (après cap à 4).
 
-    Raises
-    ------
-    DiscoverySessionLost
-        Session Instagram perdue (``LoginRequired`` / ``PleaseWaitFewMinutes``).
-        Le caller (boucle Discovery) doit appeler
-        ``recover_from_session_loss`` puis re-tenter.
     """
-    setup_watcher_logger()
     log = logging.getLogger("aitertainment.discovery")
     if log.level == logging.NOTSET:
         log.setLevel(logging.INFO)
@@ -1340,50 +1259,20 @@ def score_profile(
         log.info("score_profile @%s : déjà en blacklist — skip.", u)
         return None
 
-    if client is None:
-        try:
-            client = get_client()
-        except InstagramAuthError as e:
-            log.warning("score_profile @%s : connexion Instagram impossible (%s)", u, e)
-            return None
-
-    # 2. user_info ---------------------------------------------------------
-    polite_sleep()
-    try:
-        user_id = client.user_id_from_username(u)
-    except UserNotFound as e:
-        log.info("score_profile @%s : compte introuvable (%s)", u, e)
-        return None
-    except (LoginRequired, PleaseWaitFewMinutes) as e:
-        raise DiscoverySessionLost(f"user_id_from_username @{u}: {e}") from e
-    except (RateLimitError, ClientThrottledError) as e:
-        log.warning("score_profile @%s : rate limit user_id (%s) — abandon.", u, e)
-        return None
-    except Exception as e:
-        log.warning("score_profile @%s : erreur user_id (%s) — abandon.", u, e)
+    if context is None:
+        log.warning("score_profile @%s : context Playwright manquant — abandon.", u)
         return None
 
-    polite_sleep()
-    try:
-        info = client.user_info(str(user_id))
-    except (LoginRequired, PleaseWaitFewMinutes) as e:
-        raise DiscoverySessionLost(f"user_info @{u}: {e}") from e
-    except (RateLimitError, ClientThrottledError) as e:
-        log.warning("score_profile @%s : rate limit user_info (%s) — abandon.", u, e)
-        return None
-    except (PrivateAccount, PrivateError):
-        log.info("score_profile @%s : profil non lisible (privé).", u)
-        return None
-    except Exception as e:
-        log.warning("score_profile @%s : erreur user_info (%s) — abandon.", u, e)
+    profile_data = get_profile_data(u, context)
+    if profile_data is None:
+        log.info("score_profile @%s : profil introuvable ou privé — skip.", u)
         return None
 
-    follower_count = int(getattr(info, "follower_count", 0) or 0)
-    media_count = int(getattr(info, "media_count", 0) or 0)
-    biography = str(getattr(info, "biography", "") or "")
-    is_private = bool(getattr(info, "is_private", False))
+    follower_count = int(profile_data.get("followers") or 0)
+    media_count = int(profile_data.get("posts_count") or 0)
+    biography = str(profile_data.get("biography") or "")
+    is_private = bool(profile_data.get("is_private", False))
 
-    # 3. Filtres d'éligibilité --------------------------------------------
     if is_private:
         log.info("score_profile @%s : compte privé — skip.", u)
         return None
@@ -1398,55 +1287,23 @@ def score_profile(
         return None
     if media_count < MIN_MEDIA_COUNT:
         log.info(
-            "score_profile @%s : media_count=%d < %d — skip.",
+            "score_profile @%s : posts_count=%d < %d — skip.",
             u,
             media_count,
             MIN_MEDIA_COUNT,
         )
         return None
 
-    # 4. Historique --------------------------------------------------------
-    polite_sleep()
-    try:
-        medias = client.user_medias(str(user_id), amount=HISTORY_MEDIAS_TO_FETCH)
-    except (LoginRequired, PleaseWaitFewMinutes) as e:
-        raise DiscoverySessionLost(f"user_medias @{u}: {e}") from e
-    except (RateLimitError, ClientThrottledError) as e:
-        log.warning("score_profile @%s : rate limit user_medias (%s) — abandon.", u, e)
-        return None
-    except PrivateError as e:
-        log.info("score_profile @%s : médias inaccessibles (%s) — skip.", u, e)
-        return None
-    except Exception as e:
-        log.warning("score_profile @%s : erreur user_medias (%s) — abandon.", u, e)
+    raw_reels = get_recent_reels(u, context, max_reels=HISTORY_MEDIAS_TO_FETCH)
+    media_sampled_raw = media_count
+    reels = _playwright_reel_rows(raw_reels)
+    posts: list[dict[str, Any]] = []
+
+    if not reels:
+        log.info("score_profile @%s : aucun Reel récupéré — skip.", u)
         return None
 
-    if not medias:
-        log.info("score_profile @%s : aucun media retourné — skip.", u)
-        return None
-
-    # Total brut API (inchangé par le filtre épinglés) → ``media_sampled`` en sortie.
-    media_sampled_raw = len(medias)
-    medias = [m for m in medias if not _is_media_pinned(m)]
-    if not medias:
-        log.info(
-            "score_profile @%s : tous les médias sont épinglés (%d) — skip.",
-            u,
-            media_sampled_raw,
-        )
-        return None
-
-    rows = [_media_metric_row(m) for m in medias]
-    rows = [r for r in rows if isinstance(r.get("taken_at"), datetime)]
-    if not rows:
-        log.info("score_profile @%s : aucun media exploitable — skip.", u)
-        return None
-
-    # Segmentation Reels / Posts — ordre API préservé pour ``_remove_pinned_reels``.
-    total_medias = len(rows)
-    reels = [r for r in rows if str(r.get("product_type") or "") == REEL_PRODUCT_TYPE]
-    posts = [r for r in rows if str(r.get("product_type") or "") != REEL_PRODUCT_TYPE]
-
+    total_medias = len(reels) + len(posts)
     if total_medias < MIN_TOTAL_MEDIAS_REQUIRED:
         log.info(
             "score_profile @%s : %d média(s) au total (< %d) — historique trop maigre, skip.",
@@ -1458,16 +1315,7 @@ def score_profile(
 
     reels = _remove_pinned_reels(reels)
     reels.sort(key=lambda r: r["taken_at"])
-    posts.sort(key=lambda r: r["taken_at"])
-
-    # Cap les Posts aux 4 plus récents (non-épinglés). Les anciens posts
-    # tirent les médianes vers des conditions d'audience / d'algo obsolètes.
-    posts = posts[-MAX_POSTS_FOR_SCORING:]
     total_for_scoring = len(reels) + len(posts)
-
-    # ``_top_up_*`` doit s'exécuter AVANT toute métrique Reels (ratio_median,
-    # ratio_p90, view_trend) qui dépend du champ ``views``.
-    _top_up_reel_views_via_media_info(client, reels, log=log, username=u)
 
     # 6. Métriques agrégées -----------------------------------------------
     # ``posting_rhythm`` sur **Reels uniquement** (les Posts photos peuvent
@@ -2009,60 +1857,14 @@ def _fetch_followings(username: str, client: Any) -> list[str]:
 
 def _fetch_suggestions(
     username: str,
-    client: Any,
+    context: BrowserContext,
     max_results: int = 30,
 ) -> list[str]:
-    """Suggestions Instagram pour un seed, avec fallbacks progressifs.
-
-    1. ``discover_recommended_accounts_for_category_v1``
-    2. ``fetch_suggestion_details`` (``chaining`` si la signature l'exige)
-    3. ``_fetch_followings`` (followings du seed)
-
-    Ne lève jamais : retourne ``[]`` si tous les niveaux échouent.
-    """
-    log = _LOGGER
+    """Suggestions Instagram via Playwright (follow + vision « Voir tout »)."""
     s = (username or "").lstrip("@").strip()
-    if not s or client is None:
+    if not s or context is None:
         return []
-
-    try:
-        user_id = client.user_id_from_username(s)
-    except Exception as e:
-        log.debug(
-            "_fetch_suggestions user_id_from_username: %s: %s",
-            type(e).__name__,
-            e,
-        )
-        return []
-
-    user_id_str = str(user_id)
-
-    try:
-        polite_sleep(min_s=1, max_s=1)
-        payload = client.discover_recommended_accounts_for_category_v1(user_id_str)
-        names = _usernames_from_suggestion_payload(payload)
-        if names:
-            return _filter_suggestion_usernames(names, max_results=max_results)
-    except Exception as e:
-        log.debug("_fetch_suggestions niveau 1: %s: %s", type(e).__name__, e)
-
-    try:
-        polite_sleep(min_s=1, max_s=1)
-        names = _fetch_suggestion_details_usernames(client, user_id_str)
-        if names:
-            return _filter_suggestion_usernames(names, max_results=max_results)
-    except Exception as e:
-        log.debug("_fetch_suggestions niveau 2: %s: %s", type(e).__name__, e)
-
-    try:
-        polite_sleep(min_s=1, max_s=1)
-        log.warning("suggestions non disponibles pour @%s — fallback followings", s)
-        names = _fetch_followings(s, client)
-        return _filter_suggestion_usernames(names, max_results=max_results)
-    except Exception as e:
-        log.debug("_fetch_suggestions niveau 3: %s: %s", type(e).__name__, e)
-
-    return []
+    return get_suggested_accounts(s, context, max_results=max_results)
 
 
 # ---------------------------------------------------------------------------
@@ -2121,7 +1923,7 @@ def explore_network(
     watchlist: list[dict[str, Any]] | None = None,
     candidates: dict[str, Any] | None = None,
     db: dict[str, Any] | None = None,
-    client: Any | None = None,
+    context: BrowserContext | None = None,
     session: DiscoverySession | None = None,
     blacklist_path: Path | None = None,
     candidates_path: Path | None = None,
@@ -2155,8 +1957,6 @@ def explore_network(
         - Inactif 23h–8h, pause obligatoire 12h–14h.
         - Pause 30 min toutes les 2h d'activité.
 
-    Erreurs :
-        - ``DiscoverySessionLost`` → recovery déléguée au caller (run_discovery).
     """
     log = setup_discovery_logger()
     if not isinstance(domain, dict) or not domain.get("name"):
@@ -2196,12 +1996,9 @@ def explore_network(
         log.info("Domaine %s : aucun seed — skip.", domain_name)
         return
 
-    if not session.mock and client is None:
-        try:
-            client = get_client()
-        except InstagramAuthError as e:
-            log.error("Connexion Instagram impossible (%s) — abandon domaine.", e)
-            return
+    if not session.mock and context is None:
+        log.error("Context Playwright manquant — abandon domaine %s.", domain_name)
+        return
 
     # Sets initialisés **une seule fois** avant la boucle, puis mis à jour
     # en place par ``_score_one_in_domain`` au fur et à mesure.
@@ -2236,7 +2033,7 @@ def explore_network(
             watchlist_set=watchlist_set,
             blacklist_set=blacklist_set,
             seen_this_run=seen_this_run,
-            client=client,
+            context=context,
             session=session,
             blacklist_path=blacklist_path,
             candidates_path=candidates_path,
@@ -2250,7 +2047,7 @@ def explore_network(
             suggestions: list[str] = []
         else:
             suggestions = _fetch_suggestions(
-                seed_user, client, max_results=30
+                seed_user, context, max_results=30
             )
 
         for username in suggestions:
@@ -2269,7 +2066,7 @@ def explore_network(
                 watchlist_set=watchlist_set,
                 blacklist_set=blacklist_set,
                 seen_this_run=seen_this_run,
-                client=client,
+                context=context,
                 session=session,
                 blacklist_path=blacklist_path,
                 candidates_path=candidates_path,
@@ -2338,7 +2135,7 @@ def _score_one_in_domain(
     watchlist_set: set[str],
     blacklist_set: set[str],
     seen_this_run: set[str],
-    client: Any | None,
+    context: BrowserContext | None,
     session: DiscoverySession,
     blacklist_path: Path | None,
     candidates_path: Path | None,
@@ -2373,8 +2170,6 @@ def _score_one_in_domain(
           aucun scoring.
         - ``"scored"``  : scoring tenté (succès ou ``None`` = inéligible).
 
-    Lève ``DiscoverySessionLost`` si la session Instagram est perdue — la
-    recovery est déléguée au caller (``run_discovery``).
     """
     is_seed = parent_seed is None
 
@@ -2420,18 +2215,12 @@ def _score_one_in_domain(
             domain_name,
         )
 
-    try:
-        if session.mock:
-            result = _mock_score_profile(uname, domain)
-        else:
-            result = score_profile(
-                uname, domain, blacklist=blacklist, client=client
-            )
-    except DiscoverySessionLost:
-        # Stop net : le caller (run_discovery) appellera recovery. On
-        # n'ajoute PAS à ``seen_this_run`` — la recovery peut vouloir
-        # retenter ce username au prochain passage.
-        raise
+    if session.mock:
+        result = _mock_score_profile(uname, domain)
+    else:
+        result = score_profile(
+            uname, domain, blacklist=blacklist, context=context
+        )
 
     session.profiles_today += 1
     score_val = (result or {}).get("score")
@@ -2637,47 +2426,33 @@ def run_discovery(
         watchlist = []
 
     session = DiscoverySession(mock=mock, day_key=_today_key(_local_now()))
-    client = None
+    playwright_instance = None
+    context: BrowserContext | None = None
     if not mock:
         try:
-            client = get_client()
-        except InstagramAuthError as e:
-            log.error("Connexion Instagram impossible (%s) — abandon Discovery.", e)
+            playwright_instance = sync_playwright().start()
+            context = get_browser_context(playwright_instance)
+        except Exception as e:
+            log.error("Playwright / cookies Instagram KO (%s) — abandon Discovery.", e)
             return session
 
     try:
         for i, domain in enumerate(domains):
             seeds_override = domain.get("_seeds_override")
-            try:
-                explore_network(
-                    domain,
-                    blacklist=blacklist,
-                    watchlist=watchlist,
-                    candidates=candidates,
-                    db=db,
-                    client=client,
-                    session=session,
-                    blacklist_path=blacklist_path,
-                    candidates_path=candidates_path,
-                    db_path=db_path,
-                    seeds_path=seeds_path,
-                    seeds_override=seeds_override,
-                )
-            except DiscoverySessionLost as e:
-                log.warning(
-                    "Session perdue dans domaine %s (%s) — recovery.",
-                    domain.get("name"),
-                    e,
-                )
-                if mock:
-                    raise
-                try:
-                    client = recover_from_session_loss()
-                except WatcherStopRequested:
-                    log.error(
-                        "Recovery Instagram échouée — arrêt Discovery proprement."
-                    )
-                    return session
+            explore_network(
+                domain,
+                blacklist=blacklist,
+                watchlist=watchlist,
+                candidates=candidates,
+                db=db,
+                context=context,
+                session=session,
+                blacklist_path=blacklist_path,
+                candidates_path=candidates_path,
+                db_path=db_path,
+                seeds_path=seeds_path,
+                seeds_override=seeds_override,
+            )
 
             if i < len(domains) - 1:
                 wait_s = random.uniform(INTER_DOMAIN_MIN_S, INTER_DOMAIN_MAX_S)
@@ -2691,6 +2466,16 @@ def run_discovery(
     except KeyboardInterrupt:
         log.info("Interruption clavier — arrêt Discovery.")
     finally:
+        if context is not None:
+            try:
+                context.close()
+            except Exception:
+                pass
+        if playwright_instance is not None:
+            try:
+                playwright_instance.stop()
+            except Exception:
+                pass
         log.info(
             "=== Discovery terminée (profiles_today=%d, candidates=%d, blacklisted=%d) ===",
             session.profiles_today,
@@ -2707,7 +2492,7 @@ def score_and_persist(
     added_via: str = "manual",
     notify_threshold: float = DISCOVERY_NOTIFY_THRESHOLD,
     blacklist: dict[str, Any] | None = None,
-    client: Any | None = None,
+    context: BrowserContext | None = None,
     seeds_path: Path | None = None,
     db_path: Path | None = None,
     candidates_path: Path | None = None,
@@ -2770,21 +2555,14 @@ def score_and_persist(
     if mock:
         result = _mock_score_profile(username, domain)
     else:
-        if client is None:
-            try:
-                client = get_client()
-            except InstagramAuthError as e:
-                log.error(
-                    "score_and_persist @%s : client Instagram KO (%s).", username, e
-                )
-                return None
-        try:
-            result = score_profile(
-                username, domain, blacklist=blacklist, client=client
+        if context is None:
+            log.error(
+                "score_and_persist @%s : context Playwright manquant.", username
             )
-        except DiscoverySessionLost as e:
-            log.error("score_and_persist @%s : session perdue (%s).", username, e)
             return None
+        result = score_profile(
+            username, domain, blacklist=blacklist, context=context
+        )
 
     if result is None:
         log.info("score_and_persist @%s : filtré (None).", username)
@@ -2887,7 +2665,19 @@ def _main_cli() -> None:
     args = parser.parse_args()
 
     if args.score:
-        summary = score_and_persist(args.score, mock=args.mock)
+        if args.mock:
+            summary = score_and_persist(args.score, mock=True)
+        else:
+            with sync_playwright() as pw:
+                context = get_browser_context(pw)
+                try:
+                    summary = score_and_persist(
+                        args.score,
+                        mock=False,
+                        context=context,
+                    )
+                finally:
+                    context.close()
         _print_score_summary(summary, args.score)
         return
 

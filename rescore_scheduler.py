@@ -212,6 +212,7 @@ def run_rescore_cycle(
     stats["due_count"] = len(due)
     _LOG.info("rescore cycle : %d profil(s) dû(s).", len(due))
 
+    score_fn_injected = score_fn is not None
     if due and score_fn is None:
         from discovery import score_and_persist as _default_score_fn  # tardif (cycle)
         score_fn = _default_score_fn
@@ -221,100 +222,117 @@ def run_rescore_cycle(
         )
         notify_fn = _default_notify_fn
 
-    for i, profile in enumerate(due):
-        username = str(profile.get("username") or "").lstrip("@").strip().lower()
-        if not username:
-            continue
+    def _process_due(context: Any | None = None) -> None:
+        for i, profile in enumerate(due):
+            username = str(profile.get("username") or "").lstrip("@").strip().lower()
+            if not username:
+                continue
 
-        old_score, old_tier = _last_score(profile)
+            old_score, old_tier = _last_score(profile)
 
-        try:
-            summary = score_fn(
-                username,
-                added_via="rescore",
-                db_path=db_path,
-                seeds_path=seeds_path,
-                mock=mock,
-            )
-        except Exception as e:  # filet large : un profil ne stoppe pas le cycle
-            _LOG.warning(
-                "rescore @%s : score_and_persist a levé (%s).", username, e
-            )
-            stats["errors"] += 1
-            summary = None
+            score_kwargs: dict[str, Any] = {
+                "added_via": "rescore",
+                "db_path": db_path,
+                "seeds_path": seeds_path,
+                "mock": mock,
+            }
+            if context is not None:
+                score_kwargs["context"] = context
 
-        if summary is not None:
-            stats["processed"] += 1
-            res = summary.get("score_result") or {}
             try:
-                new_score = float(res.get("score") or 0.0)
-            except (TypeError, ValueError):
-                new_score = 0.0
-            new_tier = str(summary.get("tier") or "?")
+                summary = score_fn(username, **score_kwargs)
+            except Exception as e:  # filet large : un profil ne stoppe pas le cycle
+                _LOG.warning(
+                    "rescore @%s : score_and_persist a levé (%s).", username, e
+                )
+                stats["errors"] += 1
+                summary = None
 
-            if old_score is None or old_score <= 0:
+            if summary is not None:
+                stats["processed"] += 1
+                res = summary.get("score_result") or {}
+                try:
+                    new_score = float(res.get("score") or 0.0)
+                except (TypeError, ValueError):
+                    new_score = 0.0
+                new_tier = str(summary.get("tier") or "?")
+
+                if old_score is None or old_score <= 0:
+                    _LOG.info(
+                        "rescore @%s : pas de baseline (history vide ou score nul) — pas de notif.",
+                        username,
+                    )
+                else:
+                    variation = _pct_change(old_score, new_score)
+                    if variation >= RESCORE_RISE_THRESHOLD:
+                        try:
+                            notify_fn(
+                                username=username,
+                                old_score=old_score,
+                                new_score=new_score,
+                                old_tier=old_tier or "?",
+                                new_tier=new_tier,
+                                mock=mock,
+                            )
+                            stats["notified_rise"] += 1
+                        except Exception as e:
+                            _LOG.warning(
+                                "rescore @%s : notify rise a échoué (%s).",
+                                username,
+                                e,
+                            )
+                    elif variation <= RESCORE_DROP_THRESHOLD:
+                        try:
+                            notify_fn(
+                                username=username,
+                                old_score=old_score,
+                                new_score=new_score,
+                                old_tier=old_tier or "?",
+                                new_tier=new_tier,
+                                mock=mock,
+                            )
+                            stats["notified_drop"] += 1
+                        except Exception as e:
+                            _LOG.warning(
+                                "rescore @%s : notify drop a échoué (%s).",
+                                username,
+                                e,
+                            )
+                    else:
+                        _LOG.info(
+                            "rescore @%s : variation %+.1f%% — sous seuils, silence.",
+                            username,
+                            variation * 100.0,
+                        )
+            else:
                 _LOG.info(
-                    "rescore @%s : pas de baseline (history vide ou score nul) — pas de notif.",
+                    "rescore @%s : score_and_persist a renvoyé None (filtré).",
                     username,
                 )
-            else:
-                variation = _pct_change(old_score, new_score)
-                if variation >= RESCORE_RISE_THRESHOLD:
-                    try:
-                        notify_fn(
-                            username=username,
-                            old_score=old_score,
-                            new_score=new_score,
-                            old_tier=old_tier or "?",
-                            new_tier=new_tier,
-                            mock=mock,
-                        )
-                        stats["notified_rise"] += 1
-                    except Exception as e:
-                        _LOG.warning(
-                            "rescore @%s : notify rise a échoué (%s).",
-                            username,
-                            e,
-                        )
-                elif variation <= RESCORE_DROP_THRESHOLD:
-                    try:
-                        notify_fn(
-                            username=username,
-                            old_score=old_score,
-                            new_score=new_score,
-                            old_tier=old_tier or "?",
-                            new_tier=new_tier,
-                            mock=mock,
-                        )
-                        stats["notified_drop"] += 1
-                    except Exception as e:
-                        _LOG.warning(
-                            "rescore @%s : notify drop a échoué (%s).",
-                            username,
-                            e,
-                        )
-                else:
-                    _LOG.info(
-                        "rescore @%s : variation %+.1f%% — sous seuils, silence.",
-                        username,
-                        variation * 100.0,
-                    )
-        else:
-            _LOG.info(
-                "rescore @%s : score_and_persist a renvoyé None (filtré).",
-                username,
-            )
 
-        # Sleep aléatoire entre profils (pas après le dernier, et pas en mock).
-        is_last = i == len(due) - 1
-        if not is_last and not mock:
-            wait = rnd.uniform(RESCORE_SLEEP_MIN_S, RESCORE_SLEEP_MAX_S)
-            _LOG.info(
-                "rescore : pause %.0fs avant @%s suivant.",
-                wait,
-                due[i + 1].get("username") or "?",
-            )
-            sleep(wait)
+            is_last = i == len(due) - 1
+            if not is_last and not mock:
+                wait = rnd.uniform(RESCORE_SLEEP_MIN_S, RESCORE_SLEEP_MAX_S)
+                _LOG.info(
+                    "rescore : pause %.0fs avant @%s suivant.",
+                    wait,
+                    due[i + 1].get("username") or "?",
+                )
+                sleep(wait)
+
+    if mock or not due or score_fn_injected:
+        _process_due()
+    else:
+        from playwright.sync_api import sync_playwright
+
+        from scripts.instagram_browser import get_browser_context
+
+        with sync_playwright() as pw:
+            context = get_browser_context(pw)
+            try:
+                _process_due(context)
+            finally:
+                context.close()
 
     _LOG.info(
         "rescore cycle terminé : processed=%d rise=%d drop=%d errors=%d",
