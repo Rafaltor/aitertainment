@@ -9,11 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from instagrapi.exceptions import LoginRequired, PleaseWaitFewMinutes, RateLimitError
-
 from watcher import (
     DAY_INTERVAL_S,
     MAX_ACCOUNTS_PAUSE_S,
+    NEW_POST_VIEW_THRESHOLD,
     NIGHT_INTERVAL_S,
     PRIME_INTERVAL_S,
     check_new_post,
@@ -22,143 +21,121 @@ from watcher import (
 )
 
 
-def _fake_media(
+def _reel(
+    media_id: str,
+    view_count: int,
     *,
-    pk: str = "999",
-    code: str = "abc123",
-    caption: str = "Salut #street #mode",
-    product_type: str = "clips",
-    taken_at: datetime | None = None,
-    clips_metadata: dict | None = None,
-) -> MagicMock:
-    m = MagicMock()
-    m.pk = pk
-    m.code = code
-    m.caption_text = caption
-    m.product_type = product_type
-    m.taken_at = taken_at or datetime(2026, 5, 7, 12, 0, tzinfo=timezone.utc)
-    m.clips_metadata = clips_metadata or {"music_canonical_id": "music_xyz"}
-    return m
+    is_pinned: bool = False,
+    caption: str = "",
+    audio_id: str = "",
+) -> dict:
+    return {
+        "media_id": media_id,
+        "view_count": view_count,
+        "like_count": 0,
+        "comment_count": 0,
+        "share_count": 0,
+        "is_pinned": is_pinned,
+        "caption": caption,
+        "audio_id": audio_id,
+        "thumbnail_url": "",
+    }
 
 
 class CheckNewPostTest(unittest.TestCase):
-    @patch("watcher.time.sleep")
-    @patch("watcher._fetch_latest_media_instagram")
-    @patch("watcher.get_client")
-    def test_new_post_detected(
-        self,
-        mock_gc: MagicMock,
-        mock_fetch: MagicMock,
-        mock_sleep: MagicMock,
-    ) -> None:
-        mock_gc.return_value = MagicMock()
-        mock_fetch.return_value = _fake_media(pk="111")
+    def setUp(self) -> None:
+        self.context = MagicMock()
+
+    @patch("watcher.get_recent_reels")
+    def test_new_post_detected(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [
+            _reel("111", 500, caption="Salut #street #mode", audio_id="music_xyz"),
+        ]
         creator = {
             "username": "someone",
             "platform": "instagram",
             "last_post_id": "000",
         }
-        out = check_new_post(creator)
+        out = check_new_post(creator, self.context)
         self.assertIsNotNone(out)
         assert out is not None
         self.assertEqual(out["video_id"], "111")
         self.assertEqual(out["bootstrap"], False)
         self.assertIn("street", out["hashtags"])
         self.assertEqual(out["audio_id"], "music_xyz")
-        mock_sleep.assert_not_called()
+        mock_reels.assert_called_once_with("someone", self.context, max_reels=4)
 
-    @patch("watcher._fetch_latest_media_instagram")
-    @patch("watcher.get_client")
-    def test_same_post_returns_none(self, mock_gc: MagicMock, mock_fetch: MagicMock) -> None:
-        mock_gc.return_value = MagicMock()
-        mock_fetch.return_value = _fake_media(pk="999")
+    @patch("watcher.get_recent_reels")
+    def test_same_post_returns_none(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [_reel("999", 100)]
         creator = {"username": "u", "platform": "instagram", "last_post_id": "999"}
-        self.assertIsNone(check_new_post(creator))
+        self.assertIsNone(check_new_post(creator, self.context))
 
-    @patch("watcher._fetch_latest_media_instagram")
-    @patch("watcher.get_client")
-    def test_bootstrap(self, mock_gc: MagicMock, mock_fetch: MagicMock) -> None:
-        mock_gc.return_value = MagicMock()
-        mock_fetch.return_value = _fake_media(pk="777")
+    @patch("watcher.get_recent_reels")
+    def test_bootstrap(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [_reel("777", 800)]
         creator = {"username": "u", "platform": "instagram", "last_post_id": None}
-        out = check_new_post(creator)
+        out = check_new_post(creator, self.context)
         self.assertIsNotNone(out)
         assert out is not None
         self.assertTrue(out["bootstrap"])
 
-    @patch("watcher._fetch_latest_media_instagram")
-    @patch("watcher.get_client")
-    def test_user_not_found_returns_none(self, mock_gc: MagicMock, mock_fetch: MagicMock) -> None:
-        mock_gc.return_value = MagicMock()
-        mock_fetch.return_value = None  # fetch échoue (UserNotFound / privé / etc.)
+    @patch("watcher.get_recent_reels")
+    def test_no_reels_returns_none(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = []
         creator = {"username": "ghost", "platform": "instagram", "last_post_id": None}
-        self.assertIsNone(check_new_post(creator))
+        self.assertIsNone(check_new_post(creator, self.context))
 
-    @patch("watcher._fetch_latest_media_instagram")
-    @patch("watcher.get_client")
-    def test_tiktok_skipped(self, mock_gc: MagicMock, mock_fetch: MagicMock) -> None:
+    @patch("watcher.get_recent_reels")
+    def test_tiktok_skipped(self, mock_reels: MagicMock) -> None:
         creator = {"username": "x", "platform": "tiktok", "last_post_id": None}
-        self.assertIsNone(check_new_post(creator))
-        mock_gc.assert_not_called()
-        mock_fetch.assert_not_called()
+        self.assertIsNone(check_new_post(creator, self.context))
+        mock_reels.assert_not_called()
 
+    @patch("watcher.get_recent_reels")
+    def test_pinned_reels_skipped(self, mock_reels: MagicMock) -> None:
+        pinned_only = [_reel("pinned", 50, is_pinned=True)]
+        mock_reels.side_effect = [pinned_only, pinned_only]
+        creator = {"username": "u", "platform": "instagram", "last_post_id": None}
+        with self.assertLogs("aitertainment", level="INFO") as logs:
+            self.assertIsNone(check_new_post(creator, self.context))
+        self.assertEqual(mock_reels.call_count, 2)
+        mock_reels.assert_any_call("u", self.context, max_reels=4)
+        mock_reels.assert_any_call("u", self.context, max_reels=8)
+        self.assertTrue(
+            any("aucun reel non épinglé trouvé" in msg for msg in logs.output)
+        )
 
-class FetchLatestRetryUnitTest(unittest.TestCase):
-    """Tests directs de _fetch_latest_media_instagram (rate limit + session perdue)."""
+    @patch("watcher.get_recent_reels")
+    def test_pinned_retry_finds_non_pinned(self, mock_reels: MagicMock) -> None:
+        mock_reels.side_effect = [
+            [_reel("p1", 10, is_pinned=True), _reel("p2", 20, is_pinned=True)],
+            [_reel("p1", 10, is_pinned=True), _reel("fresh", 400)],
+        ]
+        creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out["video_id"], "fresh")
+        self.assertEqual(mock_reels.call_count, 2)
 
-    @patch("watcher.polite_sleep")
-    @patch("watcher.time.sleep")
-    def test_fetch_retries_once_on_rate_limit(
-        self, mock_sleep: MagicMock, mock_polite: MagicMock
-    ) -> None:
-        from watcher import _fetch_latest_media_instagram
+    @patch("watcher.get_recent_reels")
+    def test_high_views_returns_none(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [_reel("big", NEW_POST_VIEW_THRESHOLD + 1)]
+        creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
+        self.assertIsNone(check_new_post(creator, self.context))
 
-        client = MagicMock()
-        media = _fake_media(pk="42")
-
-        client.user_id_from_username.return_value = "123"
-
-        calls = {"n": 0}
-
-        def medias_side_effect(uid: str, amount: int = 1):
-            calls["n"] += 1
-            if calls["n"] == 1:
-                raise RateLimitError("slow down")
-            return [media]
-
-        client.user_medias.side_effect = medias_side_effect
-
-        out = _fetch_latest_media_instagram(client, "testuser")
-        self.assertIs(out, media)
-        mock_sleep.assert_called_once_with(30)
-        # polite_sleep est appelée avant chaque user_medias (2 tentatives)
-        self.assertEqual(mock_polite.call_count, 2)
-
-    @patch("watcher.polite_sleep")
-    def test_fetch_login_required_raises_session_lost(
-        self, mock_polite: MagicMock
-    ) -> None:
-        from watcher import _SessionLost, _fetch_latest_media_instagram
-
-        client = MagicMock()
-        client.user_id_from_username.return_value = "123"
-        client.user_medias.side_effect = LoginRequired("session expirée")
-
-        with self.assertRaises(_SessionLost):
-            _fetch_latest_media_instagram(client, "testuser")
-
-    @patch("watcher.polite_sleep")
-    def test_fetch_please_wait_raises_session_lost(
-        self, mock_polite: MagicMock
-    ) -> None:
-        from watcher import _SessionLost, _fetch_latest_media_instagram
-
-        client = MagicMock()
-        client.user_id_from_username.return_value = "123"
-        client.user_medias.side_effect = PleaseWaitFewMinutes("flagged")
-
-        with self.assertRaises(_SessionLost):
-            _fetch_latest_media_instagram(client, "testuser")
+    @patch("watcher.get_recent_reels")
+    def test_skips_pinned_uses_first_non_pinned(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [
+            _reel("pinned", 10, is_pinned=True),
+            _reel("fresh", 400, caption="new #drop"),
+        ]
+        creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out["video_id"], "fresh")
 
 
 class GetPollIntervalTest(unittest.TestCase):
@@ -272,6 +249,8 @@ class RunWatcherRealCycleTest(unittest.TestCase):
             encoding="utf-8",
         )
 
+    @patch("watcher.get_browser_context")
+    @patch("watcher.sync_playwright")
     @patch("watcher.notify_new_post")
     @patch("watcher._generate_for_post")
     @patch("watcher.check_new_post")
@@ -282,7 +261,11 @@ class RunWatcherRealCycleTest(unittest.TestCase):
         mock_check: MagicMock,
         mock_gen: MagicMock,
         mock_notify: MagicMock,
+        mock_pw: MagicMock,
+        mock_ctx: MagicMock,
     ) -> None:
+        mock_pw.return_value.start.return_value = MagicMock()
+        mock_ctx.return_value = MagicMock()
         mock_check.return_value = {
             "video_id": "fresh_post_id",
             "caption": "drop",
@@ -304,6 +287,8 @@ class RunWatcherRealCycleTest(unittest.TestCase):
         on_disk = json.loads(self.wl_path.read_text(encoding="utf-8"))
         self.assertEqual(on_disk["creators"][0]["last_post_id"], "fresh_post_id")
 
+    @patch("watcher.get_browser_context")
+    @patch("watcher.sync_playwright")
     @patch("watcher.notify_new_post")
     @patch("watcher._generate_for_post")
     @patch("watcher.check_new_post")
@@ -314,7 +299,11 @@ class RunWatcherRealCycleTest(unittest.TestCase):
         mock_check: MagicMock,
         mock_gen: MagicMock,
         mock_notify: MagicMock,
+        mock_pw: MagicMock,
+        mock_ctx: MagicMock,
     ) -> None:
+        mock_pw.return_value.start.return_value = MagicMock()
+        mock_ctx.return_value = MagicMock()
         # créateur en bootstrap
         self.wl_path.write_text(
             json.dumps(
@@ -378,6 +367,8 @@ class RunWatcherProtectionsTest(unittest.TestCase):
             json.dumps({"creators": creators}), encoding="utf-8"
         )
 
+    @patch("watcher.get_browser_context")
+    @patch("watcher.sync_playwright")
     @patch("watcher.notify_new_post")
     @patch("watcher._generate_for_post")
     @patch("watcher.check_new_post", return_value=None)
@@ -389,7 +380,11 @@ class RunWatcherProtectionsTest(unittest.TestCase):
         mock_check: MagicMock,
         mock_gen: MagicMock,
         mock_notify: MagicMock,
+        mock_pw: MagicMock,
+        mock_ctx: MagicMock,
     ) -> None:
+        mock_pw.return_value.start.return_value = MagicMock()
+        mock_ctx.return_value = MagicMock()
         # 4 comptes vérifiés ; seuil = 3 → une pause longue déclenchée
         self._write_watchlist(4)
         run_watcher(watchlist_path=self.wl_path, mock=False, max_cycles=1)
@@ -399,69 +394,6 @@ class RunWatcherProtectionsTest(unittest.TestCase):
             c for c in mock_sleep.call_args_list if c.args and c.args[0] == MAX_ACCOUNTS_PAUSE_S
         ]
         self.assertEqual(len(long_pauses), 1)
-
-    @patch("watcher.recover_from_session_loss")
-    @patch("watcher.check_new_post")
-    @patch("watcher.notify_new_post")
-    @patch("watcher._generate_for_post", return_value=["c1", "c2", "c3"])
-    @patch("watcher.time.sleep")
-    def test_session_lost_triggers_recovery_then_continues(
-        self,
-        mock_sleep: MagicMock,
-        mock_gen: MagicMock,
-        mock_notify: MagicMock,
-        mock_check: MagicMock,
-        mock_recover: MagicMock,
-    ) -> None:
-        from watcher import _SessionLost
-
-        self._write_watchlist(2)
-
-        def check_side_effect(creator):
-            if creator["username"] == "creator_0":
-                raise _SessionLost("session expirée")
-            return {
-                "video_id": "fresh",
-                "caption": "ok",
-                "hashtags": [],
-                "audio_id": None,
-                "url": "",
-                "posted_at": datetime.now(timezone.utc),
-                "bootstrap": False,
-            }
-
-        mock_check.side_effect = check_side_effect
-
-        run_watcher(watchlist_path=self.wl_path, mock=False, max_cycles=1)
-
-        mock_recover.assert_called_once()
-        # Le second créateur a quand même été traité après recovery
-        self.assertEqual(mock_check.call_count, 2)
-        mock_notify.assert_called_once()
-
-    @patch("watcher.recover_from_session_loss")
-    @patch("watcher.check_new_post")
-    @patch("watcher.time.sleep")
-    def test_watcher_stop_requested_breaks_loop(
-        self,
-        mock_sleep: MagicMock,
-        mock_check: MagicMock,
-        mock_recover: MagicMock,
-    ) -> None:
-        from instagram_client import WatcherStopRequested
-
-        from watcher import _SessionLost
-
-        self._write_watchlist(3)
-        mock_check.side_effect = _SessionLost("session perdue")
-        mock_recover.side_effect = WatcherStopRequested("recovery KO")
-
-        # max_cycles=10 mais le stop doit interrompre dès le 1er créateur
-        run_watcher(watchlist_path=self.wl_path, mock=False, max_cycles=10)
-
-        mock_recover.assert_called_once()
-        # Un seul check effectué avant l'arrêt forcé
-        self.assertEqual(mock_check.call_count, 1)
 
 
 def _sample_named_axes() -> dict[str, float]:

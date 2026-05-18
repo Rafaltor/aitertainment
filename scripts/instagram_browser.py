@@ -332,6 +332,30 @@ def _merge_caption_into_bucket(bucket: dict[str, Any], caption: str) -> None:
         bucket["caption"] = text
 
 
+def _is_pinned_from_clips_tab_ids(raw: Any) -> bool:
+    return bool(isinstance(raw, list) and len(raw) > 0)
+
+
+def _merge_pinned_into_bucket(bucket: dict[str, Any], is_pinned: bool | None) -> None:
+    if is_pinned is None:
+        return
+    bucket["is_pinned"] = is_pinned
+
+
+def _extract_pinned_from_graphql_window(window: str) -> bool | None:
+    match = re.search(
+        r'"clips_tab_pinned_user_ids"\s*:\s*(\[[^\]]*\])',
+        window,
+    )
+    if not match:
+        return None
+    try:
+        ids = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+    return _is_pinned_from_clips_tab_ids(ids)
+
+
 def _ingest_graphql_media_node(
     node: dict[str, Any],
     metrics_by_pk: dict[str, dict[str, Any]],
@@ -358,7 +382,12 @@ def _ingest_graphql_media_node(
             patch[key] = int(value)
 
     caption = _extract_caption_from_node(node)
-    if not patch and not caption:
+    has_pinned_field = "clips_tab_pinned_user_ids" in node
+    is_pinned: bool | None = None
+    if has_pinned_field:
+        is_pinned = _is_pinned_from_clips_tab_ids(node.get("clips_tab_pinned_user_ids"))
+
+    if not patch and not caption and not has_pinned_field:
         return
 
     normalized = _normalize_metric_bucket(patch) if patch else {}
@@ -368,6 +397,8 @@ def _ingest_graphql_media_node(
             _merge_metric_bucket(bucket, normalized)
         if caption:
             _merge_caption_into_bucket(bucket, caption)
+        if has_pinned_field:
+            _merge_pinned_into_bucket(bucket, is_pinned)
         if code:
             metrics_by_code[code] = dict(bucket)
     elif code:
@@ -376,6 +407,8 @@ def _ingest_graphql_media_node(
             _merge_metric_bucket(bucket, normalized)
         if caption:
             _merge_caption_into_bucket(bucket, caption)
+        if has_pinned_field:
+            _merge_pinned_into_bucket(bucket, is_pinned)
 
 
 def _walk_graphql_metrics(
@@ -437,19 +470,30 @@ def _ingest_metrics_from_graphql_text(
 
     code_re = re.compile(r'"(?:code|shortcode)"\s*:\s*"([A-Za-z0-9_-]+)"')
     pk_re = re.compile(r'"(?:pk|id)"\s*:\s*"?(\d+)"?')
+    pinned_ids = re.findall(
+        r'"clips_tab_pinned_user_ids"\s*:\s*(\[[^\]]*\])',
+        text,
+    )
+
     for match in code_re.finditer(text):
         code = match.group(1)
-        window = text[match.start() : match.start() + block_window]
+        window_start = max(0, match.start() - block_window)
+        window = text[window_start : match.start() + block_window]
         caption = _extract_caption_from_graphql_window(window)
+        is_pinned = _extract_pinned_from_graphql_window(window)
         if code in metrics_by_code:
             if caption:
                 _merge_caption_into_bucket(metrics_by_code[code], caption)
+            if is_pinned is not None:
+                _merge_pinned_into_bucket(metrics_by_code[code], is_pinned)
             continue
         pk_match = pk_re.search(window)
         if pk_match and pk_match.group(1) in metrics_by_pk:
             metrics_by_code[code] = dict(metrics_by_pk[pk_match.group(1)])
             if caption:
                 _merge_caption_into_bucket(metrics_by_code[code], caption)
+            if is_pinned is not None:
+                _merge_pinned_into_bucket(metrics_by_code[code], is_pinned)
             continue
         bucket = metrics_by_code.setdefault(code, {})
         patch: dict[str, int] = {}
@@ -461,6 +505,8 @@ def _ingest_metrics_from_graphql_text(
             _merge_metric_bucket(bucket, _normalize_metric_bucket(patch))
         if caption:
             _merge_caption_into_bucket(bucket, caption)
+        if is_pinned is not None:
+            _merge_pinned_into_bucket(bucket, is_pinned)
 
 
 def _metrics_bucket_for_dom_media_id(
@@ -1062,7 +1108,12 @@ def get_recent_reels(
         )
         page.set_viewport_size(_VIEWPORT)
         page.wait_for_load_state("load")
-        page.wait_for_timeout(5000)
+
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if len(metrics_by_code) >= max_reels:
+                break
+            page.wait_for_timeout(200)
 
         grid_rows = _collect_media_ids_from_grid(page, max_reels)
 
@@ -1076,6 +1127,7 @@ def get_recent_reels(
                 media_id, metrics_by_pk, metrics_by_code
             )
             caption = str(entry.get("caption") or "")
+            is_pinned = bool(entry.get("is_pinned", False))
             out.append(
                 {
                     "media_id": media_id,
@@ -1086,6 +1138,7 @@ def get_recent_reels(
                     "share_count": metrics["share_count"],
                     "reshare_count": 0,
                     "caption": caption,
+                    "is_pinned": is_pinned,
                 }
             )
     except Exception:
@@ -1266,6 +1319,63 @@ def _run_graphql_metrics_self_tests() -> None:
     print("_graphql_metrics : OK (2 reels par code court + captions)")
 
 
+def _run_graphql_pinned_self_tests() -> None:
+    """Vérifie clips_tab_pinned_user_ids → is_pinned par code court."""
+    sample = json.dumps(
+        {
+            "items": [
+                {
+                    "code": "DSDvH57CDnT",
+                    "view_count": 12000,
+                    "clips_tab_pinned_user_ids": ["17841400000000000"],
+                },
+                {
+                    "code": "UNPINNED01",
+                    "view_count": 5000,
+                    "clips_tab_pinned_user_ids": [],
+                },
+            ]
+        }
+    )
+    by_pk: dict[str, dict[str, Any]] = {}
+    by_code: dict[str, dict[str, Any]] = {}
+    _ingest_metrics_from_graphql_text(sample, by_pk, by_code)
+    _walk_graphql_metrics(json.loads(sample), by_pk, by_code)
+
+    failed: list[str] = []
+    if not by_code.get("DSDvH57CDnT", {}).get("is_pinned"):
+        failed.append("DSDvH57CDnT devrait être is_pinned=True")
+    if by_code.get("UNPINNED01", {}).get("is_pinned") is not False:
+        failed.append(f"UNPINNED01 → is_pinned={by_code.get('UNPINNED01', {}).get('is_pinned')!r}")
+    if failed:
+        print("_graphql_pinned : ÉCHEC", file=sys.stderr)
+        for line in failed:
+            print(line, file=sys.stderr)
+        sys.exit(1)
+    print("_graphql_pinned : OK (DSDvH57CDnT épinglé)")
+
+
+def _run_raikkonenaf_pinned_integration_test(context: BrowserContext) -> None:
+    """Test live : DSDvH57CDnT doit être is_pinned sur @raikkonenaf."""
+    reels = get_recent_reels("raikkonenaf", context, max_reels=20)
+    by_id = {str(r.get("media_id") or ""): r for r in reels}
+    target = "DSDvH57CDnT"
+    if target not in by_id:
+        print(
+            f"_raikkonenaf_pinned : ÉCHEC — {target} absent des {len(reels)} reels récupérés",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not by_id[target].get("is_pinned"):
+        print(
+            f"_raikkonenaf_pinned : ÉCHEC — {target} is_pinned="
+            f"{by_id[target].get('is_pinned')!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(f"_raikkonenaf_pinned : OK ({target} is_pinned=True)")
+
+
 def _run_parse_count_self_tests() -> None:
     """Tests rapides pour _parse_count (ex. ``73,7 k`` → 73700)."""
     cases: list[tuple[str, int]] = [
@@ -1297,6 +1407,7 @@ if __name__ == "__main__":
     _run_profile_graphql_self_tests()
     _run_reels_grid_scroll_self_tests()
     _run_graphql_metrics_self_tests()
+    _run_graphql_pinned_self_tests()
 
     from playwright.sync_api import sync_playwright
 
@@ -1306,6 +1417,7 @@ if __name__ == "__main__":
             if not _session_ok(context):
                 print("Session Instagram invalide ou non connectée.", file=sys.stderr)
                 sys.exit(1)
+            _run_raikkonenaf_pinned_integration_test(context)
             debug_profile("recrutestagiaire", context)
             data = get_profile_data("recrutestagiaire", context)
             print(json.dumps(data, ensure_ascii=False, indent=2))

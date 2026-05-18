@@ -30,7 +30,7 @@ PHASE WATCHER (ce fichier)
         1. Profil créateur (``t_type``, ``niche``) → déjà dans
            ``watchlist.json`` (ne change pas à chaque tick).
         2. Contexte vidéo (caption, hashtags, audio_id) → extrait du post
-           lui-même via ``instagrapi`` (session du compte dédié, sans commentaires).
+           via Playwright + GraphQL (``get_recent_reels``), sans commentaires.
 
 Conséquence : ``generate_comments(...)`` est appelé sans ``comments_sample``,
 le ton est piloté par le ``t_type`` figé en Discovery + les métadonnées du
@@ -38,7 +38,7 @@ nouveau reel.
 
 Ce fichier expose :
     - ``load_watchlist`` / ``save_watchlist`` : persistance de la watchlist.
-    - ``check_new_post`` : détection 1-shot via instagrapi.
+    - ``check_new_post`` : détection via Playwright + GraphQL (vues faibles).
     - ``get_poll_interval`` : intervalle de polling adaptatif (heure locale).
     - ``run_watcher`` : boucle principale (CLI : ``python watcher.py`` /
       ``python watcher.py --mock``).
@@ -59,34 +59,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from instagrapi.exceptions import (
-    ClientThrottledError,
-    LoginRequired,
-    PleaseWaitFewMinutes,
-    PrivateAccount,
-    PrivateError,
-    RateLimitError,
-    UserNotFound,
-)
+import sys
 
 import config
 from config import VALID_T_TYPES
-from instagram_client import (
-    InstagramAuthError,
-    WatcherStopRequested,
-    get_client,
-    polite_sleep,
-    recover_from_session_loss,
-    setup_watcher_logger,
-)
+from instagram_client import setup_watcher_logger
+from playwright.sync_api import BrowserContext, sync_playwright
+
+_PROJECT_ROOT = Path(__file__).resolve().parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from scripts.instagram_browser import get_browser_context, get_recent_reels
 
 _HASHTAG_RE = re.compile(r"#(\w+)")
 
-_PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_WATCHLIST_PATH = _PROJECT_ROOT / "watchlist.json"
 VECTOR_STORE_PATH = Path("data/vector_store.json")
 
 VALID_PLATFORMS = frozenset({"instagram", "tiktok"})
+NEW_POST_VIEW_THRESHOLD = 2000  # vues < seuil = post récent
 
 _LOGGER = logging.getLogger("aitertainment")
 
@@ -113,174 +105,19 @@ def _creator_niches(creator: dict[str, Any]) -> list[str]:
     return []
 
 
-def _media_permalink(media: Any) -> str:
-    code = str(getattr(media, "code", "") or "").strip()
-    if not code:
-        return ""
-    product = str(getattr(media, "product_type", "") or "").strip().lower()
-    if product == "clips":
-        return f"https://www.instagram.com/reel/{code}/"
-    return f"https://www.instagram.com/p/{code}/"
+def check_new_post(
+    creator: dict[str, Any], context: BrowserContext
+) -> dict[str, Any] | None:
+    """Détecte un nouveau Reel via Playwright (vues faibles, hors épinglés).
 
-
-def _taken_at_utc(media: Any) -> datetime:
-    t = getattr(media, "taken_at", None)
-    if isinstance(t, datetime):
-        if t.tzinfo is None:
-            return t.replace(tzinfo=timezone.utc)
-        return t.astimezone(timezone.utc)
-    return datetime.now(timezone.utc)
-
-
-def _extract_reel_music_id(media: Any) -> str | None:
-    """Audio associé au reel (``product_type == clips``), sinon ``None``."""
-    product = str(getattr(media, "product_type", "") or "").strip().lower()
-    if product != "clips":
-        return None
-
-    cm = getattr(media, "clips_metadata", None)
-    if cm is None:
-        return None
-
-    def _from_dict(d: dict[str, Any]) -> str | None:
-        mid = d.get("music_canonical_id")
-        if mid:
-            return str(mid)
-        mi = d.get("music_info")
-        if isinstance(mi, dict):
-            for k in ("id", "pk", "audio_cluster_id", "music_canonical_id"):
-                v = mi.get(k)
-                if v:
-                    return str(v)
-        oi = d.get("original_sound_info")
-        if isinstance(oi, dict):
-            for k in ("music_canonical_id", "audio_asset_id", "original_media_id"):
-                v = oi.get(k)
-                if v is not None:
-                    return str(v)
-        return None
-
-    if isinstance(cm, dict):
-        return _from_dict(cm)
-
-    mid = getattr(cm, "music_canonical_id", None)
-    if mid:
-        return str(mid)
-    mi = getattr(cm, "music_info", None)
-    if isinstance(mi, dict):
-        for k in ("id", "pk", "audio_cluster_id", "music_canonical_id"):
-            v = mi.get(k)
-            if v:
-                return str(v)
-    oi = getattr(cm, "original_sound_info", None)
-    if oi is not None:
-        for attr in ("music_canonical_id", "audio_asset_id", "original_media_id"):
-            v = getattr(oi, attr, None)
-            if v is not None:
-                return str(v)
-    return None
-
-
-class _SessionLost(Exception):
-    """Signal interne : la session est perdue, ``run_watcher`` doit déclencher
-    ``recover_from_session_loss`` (pause 15 min + retry login)."""
-
-
-def _fetch_latest_media_instagram(client: Any, username: str) -> Any | None:
-    """``user_medias(..., 1)`` avec :
-
-    - délai aléatoire ``IG_SLEEP_MIN..IG_SLEEP_MAX`` avant chaque tentative,
-    - retry unique sur rate limit court (``RateLimitError`` /
-      ``ClientThrottledError``) → sleep 30 s,
-    - propagation ``_SessionLost`` sur ``LoginRequired`` /
-      ``PleaseWaitFewMinutes`` → la boucle décidera de la pause longue +
-      retry login (cf. ``recover_from_session_loss``).
-    """
-    wlog = logging.getLogger("aitertainment.watcher")
-
-    for attempt in range(2):
-        try:
-            user_id = client.user_id_from_username(username)
-            polite_sleep()
-            medias = client.user_medias(str(user_id), amount=1)
-            if not medias:
-                wlog.info("check_new_post @%s : aucun média sur le profil", username)
-                return None
-            return medias[0]
-        except (RateLimitError, ClientThrottledError) as e:
-            if attempt == 0:
-                wlog.warning(
-                    "check_new_post @%s : rate limit court Instagram (%s), pause 30s puis retry",
-                    username,
-                    e,
-                )
-                time.sleep(30)
-                continue
-            wlog.warning(
-                "check_new_post @%s : rate limit après retry — abandon (%s)",
-                username,
-                e,
-            )
-            return None
-        except (LoginRequired, PleaseWaitFewMinutes) as e:
-            wlog.warning(
-                "check_new_post @%s : session Instagram perdue (%s) — recovery.",
-                username,
-                type(e).__name__,
-            )
-            raise _SessionLost(str(e)) from e
-        except UserNotFound as e:
-            wlog.warning("check_new_post @%s : compte inexistant (%s)", username, e)
-            return None
-        except PrivateAccount as e:
-            wlog.warning("check_new_post @%s : compte privé (%s)", username, e)
-            return None
-        except PrivateError as e:
-            wlog.warning(
-                "check_new_post @%s : médias inaccessibles (API privée) (%s)",
-                username,
-                e,
-            )
-            return None
-        except Exception as e:
-            wlog.warning(
-                "check_new_post @%s : erreur instagrapi inattendue (%s)",
-                username,
-                e,
-            )
-            return None
-
-    return None
-
-
-def check_new_post(creator: dict[str, Any]) -> dict[str, Any] | None:
-    """Détecte si ``creator`` a publié un média plus récent que ``last_post_id``.
-
-    Utilise **instagrapi** (session du compte dédié, cf. ``instagram_client``) :
-    pas d'Apify sur cette étape — coût réduit pour le polling fréquent.
-
-    Étapes :
-        1. ``get_client()`` — session réutilisée via ``session.json``.
-        2. ``user_id_from_username`` puis ``user_medias(..., amount=1)``.
-        3. Compare ``str(media.pk)`` à ``creator['last_post_id']``.
-
-    Rate limit Instagram : pause **30s** puis **une seule** nouvelle tentative ;
-    compte privé / inexistant / erreur API → ``None`` (log ``logs/watcher.log``).
-
-    Comportement identique au contrat précédent :
-        - identique → ``None`` ;
-        - différent ou ``last_post_id`` null (bootstrap) → dict avec ``video_id``
-          (alias stable du media pk), ``caption``, ``hashtags``, ``audio_id``,
-          ``url``, ``posted_at``, ``bootstrap``.
-
-    Cette fonction **ne modifie pas** ``watchlist.json``.
+    Compare le premier Reel non épinglé (vues sous seuil dynamique) à
+    ``last_post_id``. Ne modifie pas ``watchlist.json``.
     """
     if not isinstance(creator, dict):
         _LOGGER.warning("check_new_post : creator doit être un dict, reçu %s", type(creator).__name__)
         return None
 
-    username_raw = creator.get("username", "")
-    username = str(username_raw).lstrip("@").strip() if username_raw else ""
+    username = str(creator.get("username") or "").lstrip("@").strip()
     if not username:
         _LOGGER.warning("check_new_post : 'username' manquant dans creator")
         return None
@@ -288,70 +125,80 @@ def check_new_post(creator: dict[str, Any]) -> dict[str, Any] | None:
     platform = str(creator.get("platform", "") or "").strip().lower()
     if platform and platform != "instagram":
         _LOGGER.warning(
-            "check_new_post @%s : plateforme %r non supportée par instagrapi (skip)",
+            "check_new_post @%s : plateforme %r non supportée (skip)",
             username,
             platform,
         )
         return None
 
-    last_post_id_raw = creator.get("last_post_id")
-    last_post_id = str(last_post_id_raw).strip() if last_post_id_raw else None
-
-    setup_watcher_logger()
-    wlog = logging.getLogger("aitertainment.watcher")
-
     try:
-        client = get_client()
-    except InstagramAuthError as e:
-        wlog.warning("check_new_post @%s : connexion Instagram impossible (%s)", username, e)
+        reels = get_recent_reels(username, context, max_reels=4)
+    except Exception as e:
+        _LOGGER.warning("check_new_post @%s : erreur (%s)", username, e)
         return None
 
-    media = _fetch_latest_media_instagram(client, username)
-    if media is None:
+    if not reels:
         return None
 
-    media_id = str(getattr(media, "pk", "") or "").strip()
-    if not media_id:
-        wlog.warning("check_new_post @%s : média sans pk", username)
+    non_pinned = [r for r in reels if not r.get("is_pinned", False)]
+    if not non_pinned:
+        try:
+            reels = get_recent_reels(username, context, max_reels=8)
+        except Exception as e:
+            _LOGGER.warning("check_new_post @%s : erreur retry (%s)", username, e)
+            return None
+        non_pinned = [r for r in reels if not r.get("is_pinned", False)]
+
+    if not non_pinned:
+        _LOGGER.info("check_new_post @%s : aucun reel non épinglé trouvé", username)
         return None
 
-    if last_post_id is not None and media_id == last_post_id:
-        _LOGGER.debug(
-            "check_new_post @%s : pas de nouveau post (last_post_id=%s)",
-            username,
-            last_post_id,
-        )
-        return None
-
-    bootstrap = last_post_id is None
-    caption = str(getattr(media, "caption_text", "") or "")
-    hashtags = _hashtags_from_caption(caption)
-    audio_id = _extract_reel_music_id(media)
-    url = _media_permalink(media)
-    posted_at = _taken_at_utc(media)
-
-    if bootstrap:
-        wlog.info(
-            "check_new_post @%s : bootstrap (last_post_id null) -> media_id=%s",
-            username,
-            media_id,
-        )
+    views_list = [int(r["view_count"]) for r in non_pinned if int(r.get("view_count") or 0) > 0]
+    if len(views_list) >= 2:
+        avg_views = sum(views_list[1:]) / len(views_list[1:])
+        threshold = max(NEW_POST_VIEW_THRESHOLD, avg_views * 0.05)
     else:
-        wlog.info(
-            "check_new_post @%s : nouveau post media_id=%s (précédent %s)",
+        threshold = float(NEW_POST_VIEW_THRESHOLD)
+
+    first = non_pinned[0]
+    first_views = int(first.get("view_count") or 0)
+
+    if first_views >= threshold:
+        _LOGGER.debug(
+            "check_new_post @%s : pas de nouveau post (%d vues >= seuil %.0f)",
             username,
-            media_id,
-            last_post_id,
+            first_views,
+            threshold,
         )
+        return None
+
+    media_id = str(first.get("media_id") or "")
+    if not media_id:
+        return None
+
+    last_post_id = str(creator.get("last_post_id") or "")
+    if last_post_id and media_id == last_post_id:
+        return None
+
+    caption = str(first.get("caption") or "")
+    hashtags = _hashtags_from_caption(caption)
+
+    _LOGGER.info(
+        "check_new_post @%s : nouveau post détecté %s (%d vues < seuil %.0f)",
+        username,
+        media_id,
+        first_views,
+        threshold,
+    )
 
     return {
         "video_id": media_id,
         "caption": caption,
         "hashtags": hashtags,
-        "audio_id": audio_id,
-        "url": url,
-        "posted_at": posted_at,
-        "bootstrap": bootstrap,
+        "audio_id": str(first.get("audio_id") or ""),
+        "url": f"https://www.instagram.com/reel/{media_id}/",
+        "posted_at": datetime.now(timezone.utc),
+        "bootstrap": not bool(last_post_id),
     }
 
 
@@ -777,6 +624,7 @@ def _process_creator(
     mock: bool,
     log: logging.Logger,
     vector_store: dict[str, dict[str, Any]] | None = None,
+    context: BrowserContext | None = None,
 ) -> tuple[bool, bool]:
     """Traite un créateur.
 
@@ -798,8 +646,11 @@ def _process_creator(
     did_check = not mock  # le mock ne consomme rien côté Instagram
     if mock:
         post: dict[str, Any] | None = _mock_post(creator)
+    elif context is None:
+        log.warning("@%s : context Playwright manquant — skip.", username)
+        return False, False
     else:
-        post = check_new_post(creator)
+        post = check_new_post(creator, context)
 
     if post is None:
         return False, did_check
@@ -886,6 +737,12 @@ def run_watcher(
     log.info("vector_store chargé : %d comptes", len(vector_store))
     last_vector_store_reload = datetime.utcnow()
 
+    playwright_instance = None
+    context: BrowserContext | None = None
+    if not mock:
+        playwright_instance = sync_playwright().start()
+        context = get_browser_context(playwright_instance)
+
     try:
         while True:
             cycle += 1
@@ -906,25 +763,14 @@ def run_watcher(
                 log.warning("Watchlist vide — rien à surveiller ce cycle.")
 
             for i, creator in enumerate(creators):
-                # Recovery propagée : si la session est perdue pendant ce cycle,
-                # on tente recover_from_session_loss qui peut lever
-                # WatcherStopRequested (capture en dehors du for).
                 try:
                     changed, did_check = _process_creator(
                         creator,
                         mock=mock,
                         log=log,
                         vector_store=vector_store,
+                        context=context,
                     )
-                except _SessionLost as e:
-                    log.warning(
-                        "Session perdue pendant @%s : %s → recovery.",
-                        creator.get("username", "?"),
-                        e,
-                    )
-                    recover_from_session_loss()  # peut lever WatcherStopRequested
-                    log.info("Reconnexion réussie, on continue le cycle.")
-                    changed, did_check = False, False
                 except Exception as e:
                     log.exception(
                         "@%s : erreur non gérée pendant le traitement (%s)",
@@ -960,11 +806,16 @@ def run_watcher(
             interval = get_poll_interval()
             log.info("Cycle %d terminé. Pause %ds.", cycle, interval)
             time.sleep(0 if mock else interval)
-    except WatcherStopRequested as e:
-        log.error("Watcher stoppé proprement (recovery KO) : %s", e)
-        return
     except KeyboardInterrupt:
         log.info("Watcher arrêté (Ctrl+C).")
+    finally:
+        if context is not None:
+            context.close()
+            br = context.browser
+            if br:
+                br.close()
+        if playwright_instance is not None:
+            playwright_instance.stop()
 
 
 def _main_cli() -> None:
@@ -996,6 +847,7 @@ __all__ = [
     "DEFAULT_WATCHLIST_PATH",
     "VALID_T_TYPES",
     "VALID_PLATFORMS",
+    "NEW_POST_VIEW_THRESHOLD",
     "PRIME_INTERVAL_S",
     "DAY_INTERVAL_S",
     "NIGHT_INTERVAL_S",
