@@ -75,6 +75,86 @@ def polite_sleep(
         time.sleep(seconds + random.uniform(0.5, 1.5))
 
 
+_COMMENTS_UI_NOISE = (
+    "Ne pas suggérer",
+    "Masquer temporairement",
+    "Cette publication me met mal",
+    "suggérées dans le fil",
+    "Répondre",
+    "Voir les",
+    "Pour vous",
+    "Commentaires",
+    "Ajouter un commentaire",
+)
+_TIMESTAMP_RE = re.compile(r"^\d+\s*[jhdmywsJHDMYWS]")
+_USERNAME_RE = re.compile(r"^[a-zA-Z0-9._]{2,30}$")
+
+
+def _parse_dom_comment_likes(likes_line: str) -> int:
+    likes_clean = re.sub(r"[^\d]", "", likes_line.split("J")[0])
+    if not likes_clean:
+        return 0
+    try:
+        return int(likes_clean)
+    except ValueError:
+        return 0
+
+
+def parse_comments_from_dom_text(text: str) -> list[dict[str, Any]]:
+    """Parse le panneau commentaires Instagram (texte DOM) en entrées structurées.
+
+    Structure attendue par bloc (6 lignes) ::
+        username
+        espace (``\\xa0`` ou ligne vide)
+        timestamp (ex. ``2 j``)
+        texte du commentaire
+        likes + ``J'aime`` (ex. ``1\\u202f279\\xa0J'aime``)
+        ``Répondre``
+    """
+    if not text or not str(text).strip():
+        return []
+
+    results: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    lines = str(text).split("\n")
+    i = 0
+    while i < len(lines) - 5:
+        username_line = lines[i].strip()
+        space_line = lines[i + 1]
+        timestamp_line = lines[i + 2].strip() if i + 2 < len(lines) else ""
+        comment_line = lines[i + 3].strip() if i + 3 < len(lines) else ""
+        likes_line = lines[i + 4].strip() if i + 4 < len(lines) else ""
+
+        is_username = bool(_USERNAME_RE.match(username_line))
+        is_space = space_line.strip() == "" or space_line in (" ", "\xa0", "\u00a0")
+        is_timestamp = bool(_TIMESTAMP_RE.match(timestamp_line))
+        is_likes = bool(re.search(r"J.aime|like", likes_line, re.IGNORECASE))
+
+        if is_username and is_space and is_timestamp and is_likes:
+            like_count = _parse_dom_comment_likes(likes_line)
+            if not any(noise in comment_line for noise in _COMMENTS_UI_NOISE):
+                words = re.findall(r"[a-zA-ZÀ-ÿ]{2,}", comment_line)
+                lower = comment_line.lower()
+                has_link = any(x in lower for x in ("http", "www", ".com"))
+                if len(comment_line.split()) >= 2 and not has_link and len(words) >= 1:
+                    commenter = username_line.lstrip("@").lower()
+                    key = (commenter, comment_line.lower())
+                    if key not in seen:
+                        seen.add(key)
+                        results.append(
+                            {
+                                "username_commenter": commenter,
+                                "text": comment_line,
+                                "like_count": like_count,
+                            }
+                        )
+            i += 6
+        else:
+            i += 1
+
+    return results
+
+
 def _parse_count(text: str) -> int:
     """Parse un compteur Instagram (FR/EN : k/K, m/M, virgule décimale, espaces milliers).
 
@@ -406,47 +486,48 @@ def _lm_studio_vision_text(screenshot_path: Path | str, prompt: str) -> str:
         return ""
 
 
-def _is_valid_suggestion_username(candidate: str, target_username: str) -> bool:
-    u = candidate.strip().lstrip("@").lower()
-    if not u or u == target_username or u in _IG_RESERVED_USERNAMES:
-        return False
-    return True
+_SUGGESTION_RESERVED_USERNAMES = frozenset(
+    {
+        "instagram",
+        "meta",
+        "facebook",
+        "threads",
+        "explore",
+        "reels",
+        "stories",
+        "direct",
+        *_IG_RESERVED_USERNAMES,
+    }
+)
 
 
-def _merge_suggestions_graphql_text(
-    text: str, target_username: str, suggested_usernames: list[str]
+def _ingest_suggestion_usernames_from_graphql_text(
+    text: str,
+    target_username: str,
+    seen: set[str],
+    suggested_usernames: list[str],
 ) -> None:
-    lower = text.lower()
-    if "suggest" not in lower and "recommend" not in lower:
-        return
+    """Extrait les usernames d'une réponse GraphQL (sans filtre suggest/recommend)."""
     for raw in re.findall(r'"username"\s*:\s*"([^"]+)"', text):
         u = raw.strip().lstrip("@").lower()
-        if not _is_valid_suggestion_username(u, target_username):
+        if u == target_username:
             continue
-        if u not in suggested_usernames:
-            suggested_usernames.append(u)
-
-
-def _walk_suggestions_graphql(
-    data: Any, target_username: str, suggested_usernames: list[str]
-) -> None:
-    if isinstance(data, dict):
-        lower_keys = " ".join(str(k) for k in data.keys()).lower()
-        lower_blob = json.dumps(data, ensure_ascii=False).lower()
-        if "suggest" in lower_keys or "recommend" in lower_keys or "suggest" in lower_blob or "recommend" in lower_blob:
-            _merge_suggestions_graphql_text(lower_blob, target_username, suggested_usernames)
-        for value in data.values():
-            _walk_suggestions_graphql(value, target_username, suggested_usernames)
-    elif isinstance(data, list):
-        for item in data:
-            _walk_suggestions_graphql(item, target_username, suggested_usernames)
+        if u in _SUGGESTION_RESERVED_USERNAMES:
+            continue
+        if len(u) < 2 or ("." not in u and len(u) < 3):
+            continue
+        if u in seen:
+            continue
+        seen.add(u)
+        suggested_usernames.append(u)
 
 
 def _attach_graphql_suggestions_listener(
     page: Page, username: str
 ) -> list[str]:
-    """Écoute GraphQL et accumule les usernames suggérés."""
+    """Écoute GraphQL et accumule les usernames depuis toutes les réponses."""
     suggested_usernames: list[str] = []
+    seen: set[str] = set()
     target_username = username.lstrip("@").strip().lower()
 
     def on_response(response: Response) -> None:
@@ -456,12 +537,9 @@ def _attach_graphql_suggestions_listener(
             text = response.text()
         except Exception:
             return
-        _merge_suggestions_graphql_text(text, target_username, suggested_usernames)
-        try:
-            data = response.json()
-        except Exception:
-            return
-        _walk_suggestions_graphql(data, target_username, suggested_usernames)
+        _ingest_suggestion_usernames_from_graphql_text(
+            text, target_username, seen, suggested_usernames
+        )
 
     page.on("response", on_response)
     return suggested_usernames
@@ -966,14 +1044,45 @@ def get_suggested_accounts(
         page.wait_for_load_state("load")
         page.wait_for_timeout(4000)
 
-        out = suggested_usernames[:max_results]
-        log.info("get_suggested_accounts @%s : %d suggestions GraphQL", u, len(out))
-        return out
+        log.info(
+            "get_suggested_accounts @%s : %d usernames GraphQL capturés",
+            u,
+            len(suggested_usernames),
+        )
+        return suggested_usernames[:max_results]
     except Exception:
-        log.info("get_suggested_accounts @%s : 0 suggestions GraphQL", u)
+        log.info("get_suggested_accounts @%s : 0 usernames GraphQL capturés", u)
         return []
     finally:
         page.close()
+
+
+def _run_parse_comments_dom_self_tests() -> None:
+    sample = (
+        "alice\n"
+        "\xa0\n"
+        "2 j\n"
+        "Super sketch de fou rire\n"
+        "1\u202f234\xa0J\u2019aime\n"
+        "Répondre\n"
+        "bob\n"
+        "\xa0\n"
+        "1 sem\n"
+        "ok\n"
+        "12\xa0J'aime\n"
+        "Répondre\n"
+        "spam\n"
+        "\xa0\n"
+        "1 j\n"
+        "http://evil.com scam\n"
+        "99\xa0J'aime\n"
+        "Répondre\n"
+    )
+    parsed = parse_comments_from_dom_text(sample)
+    if len(parsed) != 1 or parsed[0]["like_count"] != 1234:
+        print(f"_parse_comments_dom : ÉCHEC → {parsed}", file=sys.stderr)
+        sys.exit(1)
+    print("_parse_comments_dom : OK")
 
 
 def _run_suggestions_graphql_self_tests() -> None:
@@ -993,8 +1102,8 @@ def _run_suggestions_graphql_self_tests() -> None:
         }
     )
     suggested: list[str] = []
-    _merge_suggestions_graphql_text(sample, "seed_one", suggested)
-    _walk_suggestions_graphql(json.loads(sample), "seed_one", suggested)
+    seen: set[str] = set()
+    _ingest_suggestion_usernames_from_graphql_text(sample, "seed_one", seen, suggested)
     if suggested != ["suggest_a", "suggest_b"]:
         print(f"_suggestions_graphql : ÉCHEC → {suggested}", file=sys.stderr)
         sys.exit(1)
@@ -1103,6 +1212,7 @@ def _run_parse_count_self_tests() -> None:
 
 if __name__ == "__main__":
     _run_parse_count_self_tests()
+    _run_parse_comments_dom_self_tests()
     _run_suggestions_graphql_self_tests()
     _run_profile_graphql_self_tests()
     _run_reels_grid_scroll_self_tests()
