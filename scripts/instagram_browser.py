@@ -274,7 +274,7 @@ def _merge_metric_bucket(bucket: dict[str, int], patch: dict[str, int]) -> None:
             bucket[key] = 0
 
 
-def _normalize_metric_bucket(raw: dict[str, int]) -> dict[str, int]:
+def _normalize_metric_bucket(raw: dict[str, Any]) -> dict[str, int]:
     view_count = int(raw.get("view_count") or 0)
     if not view_count:
         view_count = int(raw.get("play_count") or 0)
@@ -288,10 +288,54 @@ def _normalize_metric_bucket(raw: dict[str, int]) -> dict[str, int]:
     }
 
 
+def _unescape_json_string_fragment(fragment: str) -> str:
+    try:
+        return str(json.loads(f'"{fragment}"')).strip()
+    except json.JSONDecodeError:
+        return fragment.replace("\\n", "\n").replace('\\"', '"').strip()
+
+
+def _extract_caption_from_node(node: dict[str, Any]) -> str:
+    caption_obj = node.get("caption")
+    if isinstance(caption_obj, dict):
+        text = caption_obj.get("text")
+        if text is not None:
+            return str(text).strip()
+    caption_text = node.get("caption_text")
+    if caption_text is not None:
+        return str(caption_text).strip()
+    return ""
+
+
+def _extract_caption_from_graphql_window(window: str) -> str:
+    caption_match = re.search(
+        r'"caption"\s*:\s*\{\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        window,
+    )
+    if caption_match:
+        return _unescape_json_string_fragment(caption_match.group(1))
+    caption_text_match = re.search(
+        r'"caption_text"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        window,
+    )
+    if caption_text_match:
+        return _unescape_json_string_fragment(caption_text_match.group(1))
+    return ""
+
+
+def _merge_caption_into_bucket(bucket: dict[str, Any], caption: str) -> None:
+    text = (caption or "").strip()
+    if not text:
+        return
+    existing = str(bucket.get("caption") or "").strip()
+    if not existing or len(text) > len(existing):
+        bucket["caption"] = text
+
+
 def _ingest_graphql_media_node(
     node: dict[str, Any],
-    metrics_by_pk: dict[str, dict[str, int]],
-    metrics_by_code: dict[str, dict[str, int]],
+    metrics_by_pk: dict[str, dict[str, Any]],
+    metrics_by_code: dict[str, dict[str, Any]],
 ) -> None:
     pk: str | None = None
     for key in ("pk", "id"):
@@ -313,24 +357,31 @@ def _ingest_graphql_media_node(
         if isinstance(value, (int, float)):
             patch[key] = int(value)
 
-    if not patch:
+    caption = _extract_caption_from_node(node)
+    if not patch and not caption:
         return
 
-    normalized = _normalize_metric_bucket(patch)
+    normalized = _normalize_metric_bucket(patch) if patch else {}
     if pk:
         bucket = metrics_by_pk.setdefault(pk, {})
-        _merge_metric_bucket(bucket, normalized)
+        if patch:
+            _merge_metric_bucket(bucket, normalized)
+        if caption:
+            _merge_caption_into_bucket(bucket, caption)
         if code:
             metrics_by_code[code] = dict(bucket)
     elif code:
         bucket = metrics_by_code.setdefault(code, {})
-        _merge_metric_bucket(bucket, normalized)
+        if patch:
+            _merge_metric_bucket(bucket, normalized)
+        if caption:
+            _merge_caption_into_bucket(bucket, caption)
 
 
 def _walk_graphql_metrics(
     data: Any,
-    metrics_by_pk: dict[str, dict[str, int]],
-    metrics_by_code: dict[str, dict[str, int]],
+    metrics_by_pk: dict[str, dict[str, Any]],
+    metrics_by_code: dict[str, dict[str, Any]],
 ) -> None:
     if isinstance(data, dict):
         _ingest_graphql_media_node(data, metrics_by_pk, metrics_by_code)
@@ -343,8 +394,8 @@ def _walk_graphql_metrics(
 
 def _ingest_metrics_from_graphql_text(
     text: str,
-    metrics_by_pk: dict[str, dict[str, int]],
-    metrics_by_code: dict[str, dict[str, int]],
+    metrics_by_pk: dict[str, dict[str, Any]],
+    metrics_by_code: dict[str, dict[str, Any]],
 ) -> None:
     """Regex sur le JSON sérialisé : associe pk/id + code court aux métriques."""
     block_window = 800
@@ -389,45 +440,61 @@ def _ingest_metrics_from_graphql_text(
     for match in code_re.finditer(text):
         code = match.group(1)
         window = text[match.start() : match.start() + block_window]
+        caption = _extract_caption_from_graphql_window(window)
         if code in metrics_by_code:
+            if caption:
+                _merge_caption_into_bucket(metrics_by_code[code], caption)
             continue
         pk_match = pk_re.search(window)
         if pk_match and pk_match.group(1) in metrics_by_pk:
             metrics_by_code[code] = dict(metrics_by_pk[pk_match.group(1)])
+            if caption:
+                _merge_caption_into_bucket(metrics_by_code[code], caption)
             continue
+        bucket = metrics_by_code.setdefault(code, {})
         patch: dict[str, int] = {}
         for key in _GRAPHQL_METRIC_KEYS:
             metric_match = re.search(rf'"{key}"\s*:\s*(\d+)', window)
             if metric_match:
                 patch[key] = int(metric_match.group(1))
         if patch:
-            _merge_metric_bucket(
-                metrics_by_code.setdefault(code, {}),
-                _normalize_metric_bucket(patch),
-            )
+            _merge_metric_bucket(bucket, _normalize_metric_bucket(patch))
+        if caption:
+            _merge_caption_into_bucket(bucket, caption)
+
+
+def _metrics_bucket_for_dom_media_id(
+    media_id: str,
+    metrics_by_pk: dict[str, dict[str, Any]],
+    metrics_by_code: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    mid = media_id.strip()
+    if not mid:
+        return {}
+    if mid in metrics_by_code:
+        return metrics_by_code[mid]
+    if mid in metrics_by_pk:
+        return metrics_by_pk[mid]
+    return {}
 
 
 def _metrics_for_dom_media_id(
     media_id: str,
-    metrics_by_pk: dict[str, dict[str, int]],
-    metrics_by_code: dict[str, dict[str, int]],
+    metrics_by_pk: dict[str, dict[str, Any]],
+    metrics_by_code: dict[str, dict[str, Any]],
 ) -> dict[str, int]:
-    mid = media_id.strip()
-    if not mid:
+    bucket = _metrics_bucket_for_dom_media_id(media_id, metrics_by_pk, metrics_by_code)
+    if not bucket:
         return _empty_reel_metrics()
-    if mid in metrics_by_code:
-        return _normalize_metric_bucket(metrics_by_code[mid])
-    if mid in metrics_by_pk:
-        return _normalize_metric_bucket(metrics_by_pk[mid])
-    return _empty_reel_metrics()
+    return _normalize_metric_bucket(bucket)
 
 
 def _attach_graphql_metrics_listener(
     page: Page,
-) -> tuple[dict[str, dict[str, int]], dict[str, dict[str, int]]]:
-    """Écoute GraphQL et indexe les métriques par pk numérique et code court."""
-    metrics_by_pk: dict[str, dict[str, int]] = {}
-    metrics_by_code: dict[str, dict[str, int]] = {}
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Écoute GraphQL et indexe métriques + captions par pk numérique et code court."""
+    metrics_by_pk: dict[str, dict[str, Any]] = {}
+    metrics_by_code: dict[str, dict[str, Any]] = {}
 
     def on_response(response: Response) -> None:
         if "graphql" not in response.url:
@@ -1005,6 +1072,10 @@ def get_recent_reels(
         for row in grid_rows:
             media_id = row["media_id"]
             metrics = _metrics_for_dom_media_id(media_id, metrics_by_pk, metrics_by_code)
+            entry = _metrics_bucket_for_dom_media_id(
+                media_id, metrics_by_pk, metrics_by_code
+            )
+            caption = str(entry.get("caption") or "")
             out.append(
                 {
                     "media_id": media_id,
@@ -1014,6 +1085,7 @@ def get_recent_reels(
                     "comment_count": metrics["comment_count"],
                     "share_count": metrics["share_count"],
                     "reshare_count": 0,
+                    "caption": caption,
                 }
             )
     except Exception:
@@ -1156,34 +1228,42 @@ def _run_graphql_metrics_self_tests() -> None:
                     "view_count": 87300,
                     "like_count": 1063,
                     "comment_count": 12,
+                    "caption": {"text": "Premier reel caption"},
                 },
                 {
                     "pk": "3893326453836395927",
                     "code": "DYaMNJqMckX",
                     "play_count": 171000,
                     "like_count": 748,
+                    "caption_text": "Deuxième via caption_text",
                 },
             ]
         }
     )
-    by_pk: dict[str, dict[str, int]] = {}
-    by_code: dict[str, dict[str, int]] = {}
+    by_pk: dict[str, dict[str, Any]] = {}
+    by_code: dict[str, dict[str, Any]] = {}
     _ingest_metrics_from_graphql_text(sample, by_pk, by_code)
     _walk_graphql_metrics(json.loads(sample), by_pk, by_code)
 
     m1 = _metrics_for_dom_media_id("DYcbkPMM1cR", by_pk, by_code)
     m2 = _metrics_for_dom_media_id("DYaMNJqMckX", by_pk, by_code)
+    c1 = str(by_code.get("DYcbkPMM1cR", {}).get("caption") or "")
+    c2 = str(by_code.get("DYaMNJqMckX", {}).get("caption") or "")
     failed: list[str] = []
     if m1["view_count"] != 87300 or m1["like_count"] != 1063:
         failed.append(f"DYcbkPMM1cR → {m1}, attendu views=87300 likes=1063")
     if m2["view_count"] != 171000 or m2["like_count"] != 748:
         failed.append(f"DYaMNJqMckX → {m2}, attendu views=171000 likes=748")
+    if c1 != "Premier reel caption":
+        failed.append(f"DYcbkPMM1cR caption → {c1!r}")
+    if c2 != "Deuxième via caption_text":
+        failed.append(f"DYaMNJqMckX caption → {c2!r}")
     if failed:
         print("_graphql_metrics : ÉCHEC", file=sys.stderr)
         for line in failed:
             print(line, file=sys.stderr)
         sys.exit(1)
-    print("_graphql_metrics : OK (2 reels par code court)")
+    print("_graphql_metrics : OK (2 reels par code court + captions)")
 
 
 def _run_parse_count_self_tests() -> None:

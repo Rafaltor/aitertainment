@@ -21,6 +21,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from playwright.sync_api import BrowserContext, Page, sync_playwright
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from scripts.instagram_browser import (
+    get_browser_context,
+    get_profile_data,
+    get_recent_reels,
+    parse_comments_from_dom_text,
+    polite_sleep,
+)
+
 OLLAMA_EMBED_MODEL = "bge-m3"
 WHISPER_MODEL_SIZE = "small"
 REELS_PER_ACCOUNT = 5
@@ -42,7 +56,6 @@ NAMED_AXES = [
     "safe_vs_edgy",
 ]
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _LOG = logging.getLogger("aitertainment.embedder")
 _HASHTAG_RE = re.compile(r"#(\w+)")
 
@@ -83,51 +96,92 @@ def load_watchlist(path: Path | str | None = None) -> list[dict[str, Any]]:
     return out
 
 
-def download_audio(media_pk: Any, client: Any, tmp_dir: Path) -> Path | None:
-    """Télécharge un Reel et extrait l'audio en WAV mono 16 kHz."""
-    try:
-        video_path = client.video_download(str(media_pk), folder=str(tmp_dir))
-    except Exception as e:
-        _LOG.warning("video_download %s a échoué (%s) — skip audio.", media_pk, e)
-        return None
+def export_playwright_cookies(context: BrowserContext, cookie_file: Path) -> None:
+    """Exporte les cookies Playwright au format Netscape pour yt-dlp."""
+    cookies = context.cookies()
+    with cookie_file.open("w", encoding="utf-8") as fh:
+        fh.write("# Netscape HTTP Cookie File\n")
+        for c in cookies:
+            domain = c["domain"]
+            flag = "TRUE" if domain.startswith(".") else "FALSE"
+            secure = "TRUE" if c.get("secure") else "FALSE"
+            expires = c.get("expires", 0)
+            expiry = int(expires) if expires and expires > 0 else 0
+            fh.write(
+                f"{domain}\t{flag}\t{c['path']}\t{secure}\t{expiry}\t"
+                f"{c['name']}\t{c['value']}\n"
+            )
 
-    video = Path(video_path)
-    if not video.exists():
-        _LOG.warning("fichier vidéo absent après download (%s) — skip audio.", video_path)
-        return None
 
-    wav_path = tmp_dir / f"{video.stem}.wav"
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(video),
-        "-ar",
-        "16000",
-        "-ac",
-        "1",
-        "-f",
-        "wav",
-        str(wav_path),
-    ]
+def download_audio_from_reel(
+    media_id: str, context: BrowserContext, tmp_dir: Path
+) -> Path | None:
+    """Télécharge l'audio d'un Reel via yt-dlp et les cookies Playwright."""
+    cookie_file = tmp_dir / "cookies.txt"
+    export_playwright_cookies(context, cookie_file)
+
+    wav_path = tmp_dir / f"{media_id}.wav"
     try:
-        subprocess.run(
-            cmd,
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        result = subprocess.run(
+            [
+                "yt-dlp",
+                "--cookies",
+                str(cookie_file),
+                "--extract-audio",
+                "--audio-format",
+                "wav",
+                "--audio-quality",
+                "0",
+                "-o",
+                str(tmp_dir / "%(id)s.%(ext)s"),
+                "--quiet",
+                f"https://www.instagram.com/reel/{media_id}/",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
     except FileNotFoundError:
-        _LOG.warning("ffmpeg absent — transcription audio ignorée pour %s.", media_pk)
+        _LOG.warning("yt-dlp absent — transcription audio ignorée pour %s.", media_id)
         return None
-    except subprocess.CalledProcessError as e:
-        _LOG.warning("ffmpeg a échoué pour %s (%s) — skip audio.", media_pk, e)
+    except subprocess.TimeoutExpired:
+        _LOG.warning("yt-dlp timeout pour %s.", media_id)
         return None
 
-    if not wav_path.exists():
-        _LOG.warning("fichier WAV absent après ffmpeg (%s).", wav_path)
+    if result.returncode != 0:
+        stderr = (result.stderr or "")[:200]
+        _LOG.warning("yt-dlp échoué pour %s : %s", media_id, stderr)
         return None
-    return wav_path
+
+    if wav_path.exists():
+        return wav_path
+    wav_files = sorted(tmp_dir.glob("*.wav"))
+    return wav_files[0] if wav_files else None
+
+
+def _extract_comments_from_reel_page(page: Page) -> list[str]:
+    """Ouvre le panneau commentaires et retourne les textes parsés."""
+    try:
+        comment_btn = page.locator(
+            'svg[aria-label="Commenter"], svg[aria-label="Comment"]'
+        )
+        if comment_btn.count() == 0:
+            return []
+        comment_btn.first.click(timeout=10_000)
+        page.wait_for_timeout(2000)
+        panel_text = page.evaluate(
+            """() => {
+                const p = document.querySelector("div._aano") ||
+                          document.querySelector("[role=dialog]");
+                return p ? p.innerText : "";
+            }"""
+        )
+    except Exception as e:
+        _LOG.warning("extraction commentaires DOM échouée (%s).", e)
+        return []
+
+    parsed = parse_comments_from_dom_text(str(panel_text or ""))
+    return [str(c.get("text") or "").strip() for c in parsed if c.get("text")]
 
 
 def transcribe_audio(wav_path: Path | str | None) -> str:
@@ -158,8 +212,15 @@ def build_input_text(
     hashtags: list[str] | str,
     transcript: str,
     comments: list[str],
+    *,
+    biography: str = "",
+    niches: list[str] | None = None,
 ) -> str:
     """Assemble le texte unifié envoyé à bge-m3."""
+    niches_str = ", ".join(str(n).strip() for n in (niches or ["humour"]) if str(n).strip())
+    if not niches_str:
+        niches_str = "humour"
+
     caption_text = (caption or "").strip() or "(vide)"
     if isinstance(hashtags, list):
         hashtags_text = " ".join(h.strip() for h in hashtags if str(h).strip())
@@ -171,12 +232,20 @@ def build_input_text(
         comments_text = "\n".join(c.strip() for c in comments if str(c).strip())
     else:
         comments_text = "(vide)"
-    return (
-        f"[CAPTION] {caption_text}\n"
-        f"[HASHTAGS] {hashtags_text}\n"
-        f"[TRANSCRIPT] {transcript_text}\n"
-        f"[COMMENTS_RECEIVED] {comments_text}"
+
+    parts = [f"[NICHES] {niches_str}"]
+    bio = (biography or "").strip()
+    if bio:
+        parts.append(f"[BIOGRAPHY] {bio}")
+    parts.extend(
+        [
+            f"[CAPTION] {caption_text}",
+            f"[HASHTAGS] {hashtags_text}",
+            f"[TRANSCRIPT] {transcript_text}",
+            f"[COMMENTS_RECEIVED] {comments_text}",
+        ]
     )
+    return "\n".join(parts) + "\n"
 
 
 def embed_text(text: str) -> list[float] | None:
@@ -291,140 +360,77 @@ def save_vector_store(entries: list[dict[str, Any]], path: Path | str | None = N
     os.replace(tmp, p)
 
 
-def _attr(obj: Any, name: str, default: Any = None) -> Any:
-    if isinstance(obj, dict):
-        return obj.get(name, default)
-    return getattr(obj, name, default)
-
-
-def _is_reel(media: Any) -> bool:
-    media_type = str(_attr(media, "media_type", "") or "").lower()
-    product_type = str(_attr(media, "product_type", "") or "").lower()
-    return media_type in {"clip", "clips", "reel"} or product_type == "clips"
-
-
-def _extract_hashtags(caption: str, media: Any) -> list[str]:
-    tags: list[str] = []
-    seen: set[str] = set()
-    for source in (_attr(media, "hashtags", None), caption):
-        if isinstance(source, list):
-            for item in source:
-                tag = str(_attr(item, "name", item) or "").strip().lstrip("#")
-                if tag and tag not in seen:
-                    seen.add(tag)
-                    tags.append(tag)
-        elif isinstance(source, str):
-            for match in _HASHTAG_RE.findall(source):
-                if match not in seen:
-                    seen.add(match)
-                    tags.append(match)
-    return tags
-
-
-def _comment_text(comment: Any) -> str:
-    text = _attr(comment, "text", None)
-    if text is None:
-        text = _attr(comment, "comment", "")
-    return str(text or "").strip()
-
-
-def _is_rate_limit_error(exc: Exception) -> bool:
-    name = type(exc).__name__.lower()
-    message = str(exc).lower()
-    return (
-        "ratelimit" in name
-        or "throttle" in name
-        or "please wait" in message
-        or "rate limit" in message
-    )
-
-
-def _with_instagram_retry(action, log: logging.Logger):
-    try:
-        return action()
-    except Exception as exc:
-        if not _is_rate_limit_error(exc):
-            raise
-        log.warning("rate limit Instagram (%s) — pause 60s puis retry.", exc)
-        from instagram_client import polite_sleep
-
-        polite_sleep(min_s=60, max_s=60)
-        try:
-            return action()
-        except Exception as retry_exc:
-            log.warning("retry Instagram échoué (%s) — skip.", retry_exc)
-            return None
-
-
 def process_account(
     username: str,
     creator: dict[str, Any],
-    client: Any,
+    context: BrowserContext,
     pca_model: Any | None,
     tmp_dir: Path,
 ) -> dict[str, Any] | None:
-    """Pipeline complet d'embedding pour un compte watchlisté."""
-    del creator  # réservé aux extensions futures (niches, t_type, etc.)
+    """Pipeline complet d'embedding pour un compte watchlisté (Playwright)."""
     uname = str(username or "").lstrip("@").strip()
     if not uname:
         return None
 
-    user_id = _with_instagram_retry(
-        lambda: client.user_id_from_username(uname),
-        _LOG,
-    )
-    if user_id is None:
+    reels = get_recent_reels(uname, context, max_reels=REELS_PER_ACCOUNT)
+    if not reels:
+        _LOG.warning("@%s : aucun Reel récupéré — skip embedding.", uname)
         return None
 
-    medias = _with_instagram_retry(
-        lambda: client.user_medias(str(user_id), amount=REELS_PER_ACCOUNT),
-        _LOG,
-    )
-    if medias is None:
-        return None
+    profile_data = get_profile_data(uname, context)
+    biography = str(profile_data.get("biography") or "").strip() if profile_data else ""
+    niches_raw = creator.get("niches") or ["humour"]
+    niches = niches_raw if isinstance(niches_raw, list) else [str(niches_raw)]
 
-    reels = [media for media in medias or [] if _is_reel(media)]
-    captions: list[str] = []
+    captions = [str(r.get("caption") or "").strip() for r in reels if r.get("caption")]
+    caption_blob = "\n".join(captions)
     hashtags: list[str] = []
+    for caption in captions:
+        hashtags.extend(_HASHTAG_RE.findall(caption))
+    hashtags = list(dict.fromkeys(hashtags))
+
     transcripts: list[str] = []
     comments: list[str] = []
     seen_comments: set[str] = set()
 
-    for media in reels:
-        media_pk = _attr(media, "pk", None) or _attr(media, "id", None)
-        caption = str(_attr(media, "caption_text", "") or _attr(media, "caption", "") or "").strip()
-        if caption:
-            captions.append(caption)
-        hashtags.extend(_extract_hashtags(caption, media))
+    for reel in reels:
+        media_id = str(reel.get("media_id") or "").strip()
+        if not media_id:
+            continue
 
-        wav_path = download_audio(media_pk, client, tmp_dir)
+        wav_path = download_audio_from_reel(media_id, context, tmp_dir)
         transcript = transcribe_audio(wav_path)
         if transcript:
             transcripts.append(transcript)
 
-        if media_pk is not None:
-            raw_comments = _with_instagram_retry(
-                lambda pk=media_pk: client.media_comments(
-                    str(pk), amount=COMMENTS_PER_REEL
-                ),
-                _LOG,
+        page = context.new_page()
+        try:
+            page.goto(
+                f"https://www.instagram.com/reel/{media_id}/",
+                wait_until="domcontentloaded",
             )
-            if raw_comments is None:
-                raw_comments = []
-            for comment in raw_comments or []:
-                text = _comment_text(comment)
+            page.wait_for_load_state("load")
+            page.wait_for_timeout(2000)
+            for text in _extract_comments_from_reel_page(page)[:COMMENTS_PER_REEL]:
                 if text and text not in seen_comments:
                     seen_comments.add(text)
                     comments.append(text)
+        finally:
+            page.close()
 
         for path in tmp_dir.glob("*"):
             if path.is_file():
                 path.unlink(missing_ok=True)
 
-    hashtags = list(dict.fromkeys(tag for tag in hashtags if tag))
-    caption_blob = "\n".join(captions)
     transcript_blob = "\n---\n".join(transcripts)
-    text = build_input_text(caption_blob, hashtags, transcript_blob, comments)
+    text = build_input_text(
+        caption_blob,
+        hashtags,
+        transcript_blob,
+        comments,
+        biography=biography,
+        niches=niches,
+    )
     embedding_1024 = embed_text(text)
     if embedding_1024 is None:
         _LOG.error("embedding impossible pour @%s — compte ignoré.", uname)
@@ -500,33 +506,36 @@ def main(argv: list[str] | None = None) -> int:
         _LOG.info("=== Embedding terminé : %d comptes traités ===", len(creators))
         return 0
 
-    if str(_PROJECT_ROOT) not in sys.path:
-        sys.path.insert(0, str(_PROJECT_ROOT))
-    from instagram_client import get_client, polite_sleep
+    playwright_instance = sync_playwright().start()
+    context = get_browser_context(playwright_instance)
+    try:
+        for creator in creators:
+            username = str(creator.get("username") or "").lstrip("@").strip()
+            tmp_dir = Path(tempfile.mkdtemp(prefix="ait_embed_"))
+            try:
+                entry = process_account(username, creator, context, pca_model, tmp_dir)
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    client = get_client()
+            if entry is None:
+                continue
 
-    for creator in creators:
-        username = str(creator.get("username") or "").lstrip("@").strip()
-        tmp_dir = Path(tempfile.mkdtemp(prefix="ait_embed_"))
-        try:
-            entry = process_account(username, creator, client, pca_model, tmp_dir)
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-        if entry is None:
-            continue
-
-        vector_store = _upsert_vector_store(vector_store, entry)
-        processed += 1
-        sources = entry.get("sources") or {}
-        _LOG.info(
-            "✓ @%s embeddé (reels=%d, transcripts=%d)",
-            username,
-            sources.get("reels_analyzed", 0),
-            sources.get("transcripts_count", 0),
-        )
-        polite_sleep(min_s=3, max_s=3)
+            vector_store = _upsert_vector_store(vector_store, entry)
+            processed += 1
+            sources = entry.get("sources") or {}
+            _LOG.info(
+                "✓ @%s embeddé (reels=%d, transcripts=%d)",
+                username,
+                sources.get("reels_analyzed", 0),
+                sources.get("transcripts_count", 0),
+            )
+            polite_sleep(seconds=3)
+    finally:
+        context.close()
+        br = context.browser
+        if br:
+            br.close()
+        playwright_instance.stop()
 
     if args.refit_pca or len(vector_store) >= 10:
         pca_model = fit_pca(vector_store)

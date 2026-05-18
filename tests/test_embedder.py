@@ -21,15 +21,25 @@ class BuildInputTextTest(unittest.TestCase):
             ["humour", "sketch"],
             "transcript ici",
             ["comment un", "comment deux"],
+            biography="Bio du créateur",
+            niches=["humour", "sketch"],
         )
+        self.assertIn("[NICHES] humour, sketch", text)
+        self.assertIn("[BIOGRAPHY] Bio du créateur", text)
         self.assertIn("[CAPTION] caption ici", text)
         self.assertIn("[HASHTAGS] humour sketch", text)
         self.assertIn("[TRANSCRIPT] transcript ici", text)
         self.assertIn("[COMMENTS_RECEIVED] comment un\ncomment deux", text)
 
+    def test_empty_biography_omits_section(self) -> None:
+        text = embedder.build_input_text("x", [], "t", [], biography="")
+        self.assertNotIn("[BIOGRAPHY]", text)
+        self.assertIn("[NICHES] humour", text)
+
     def test_empty_caption_placeholder(self) -> None:
         text = embedder.build_input_text("", [], "", [])
         self.assertIn("[CAPTION] (vide)", text)
+        self.assertIn("[NICHES] humour", text)
 
     def test_hashtags_list_joined_with_space(self) -> None:
         text = embedder.build_input_text("x", ["alpha", "beta"], "t", ["c"])
@@ -134,18 +144,22 @@ class SaveVectorStoreTest(unittest.TestCase):
 
 
 class MainTest(unittest.TestCase):
-    def test_dry_run_skips_ollama_whisper_and_instagram(self) -> None:
+    def test_dry_run_skips_ollama_whisper_and_playwright(self) -> None:
         creators = [{"username": "alpha", "action": "validated"}]
         with patch.object(embedder, "load_watchlist", return_value=creators), patch.object(
             embedder, "load_vector_store", return_value=[]
-        ), patch.object(embedder, "load_pca", return_value=None), patch(
-            "instagram_client.get_client"
-        ) as mock_client, patch.object(embedder, "embed_text") as mock_embed, patch.object(
+        ), patch.object(embedder, "load_pca", return_value=None), patch.object(
+            embedder, "sync_playwright"
+        ) as mock_pw, patch.object(embedder, "get_browser_context") as mock_ctx, patch.object(
+            embedder, "process_account"
+        ) as mock_process, patch.object(embedder, "embed_text") as mock_embed, patch.object(
             embedder, "transcribe_audio"
         ) as mock_transcribe:
             code = embedder.main(["--dry-run"])
         self.assertEqual(code, 0)
-        mock_client.assert_not_called()
+        mock_pw.assert_not_called()
+        mock_ctx.assert_not_called()
+        mock_process.assert_not_called()
         mock_embed.assert_not_called()
         mock_transcribe.assert_not_called()
 
