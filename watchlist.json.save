@@ -1,0 +1,462 @@
+{
+  "creators": [
+    {
+      "username": "marrant_club",
+      "platform": "instagram",
+      "niches": [
+        "humour"
+      ],
+      "niche": "humour",
+      "t_type": "T2",
+      "engagement_baseline": 0.046396921029125876,
+      "last_post_id": null,
+      "added_at": "2026-05-08T23:17:04+00:00"
+    },
+    {
+      "username": "raikkonenaf",
+      "platform": "instagram",
+      "niches": [
+        "humour"
+      ],
+      "niche": "humour",
+      "t_type": "T2",
+      "engagement_baseline": 0.05605593503798183,
+      "last_post_id": null,
+      "added_at": "2026-05-09T08:23:29+00:00"
+    },
+    {
+      "username": "recrutestagiaire",
+      "platform": "instagram",
+      "niches": [
+        "humour"
+      ],
+      "niche": "humour",
+      "t_type": "T1",
+      "engagement_baseline": 0.052554744525547446,
+      "last_post_id": null,
+      "added_at": "2026-05-09T10:54:42+00:00"
+    },
+    {
+      "username": "realo.23",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "niche": "humour",
+      "t_type": "T1",
+      "engagement_baseline": 0.12398746752254318,
+      "last_post_id": null,
+      "added_at": "2026-05-09T16:09:30+00:00"
+    },
+    {
+      "username": "chreakk",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "niche": "humour",
+      "t_type": T2,
+      "engagement_baseline": 0.14541938602852308,
+      "last_post_id": null,
+      "added_at": "2026-05-18T12:46:16+00:00"
+    },
+    {
+      "username": "hamza.pvris",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "niche": "humour",
+      "t_type": T2b,
+      "engagement_baseline": 0.09362657986367715,
+      "last_post_id": null,
+      "added_at": "2026-05-18T12:46:22+00:00"
+    },
+    {
+      "username": "theoruslerouge",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "niche": "humour",
+      "t_type": T2,
+      "engagement_baseline": 0.05206545556598988,
+      "last_post_id": null,
+      "added_at": "2026-05-18T12:46:28+00:00"
+    },
+{
+      "username": "raafale
+    {
+      "username": "lokman.mh",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "stand_up",
+        "relatable"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 2.289186733303044,
+      "last_post_id": null,
+      "added_at": "2026-05-18T12:56:44+00:00"
+    },
+    {
+      "username": "babushkabibi",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "brainrot",
+        "absurde"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.08772187179111046,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:09:49+00:00"
+    },
+    {
+      "username": "sashacortesi",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "sketch",
+        "POV"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.07270305183271436,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:09:54+00:00"
+    },
+    {
+      "username": "gregreact",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "réaction",
+        "relatable"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.24537201399807274,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:10:37+00:00"
+    },
+    {
+      "username": "remi.idlt",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "sketch",
+        "stand_up"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.07995188018707253,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:10:39+00:00"
+    },
+    {
+      "username": "alainleroux_",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "stand_up",
+        "dark_humor"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.1412611717974181,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:17:51+00:00"
+    },
+    {
+      "username": "stranogui",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "sketch",
+        "absurde"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.09034077692486625,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:20:09+00:00"
+    },
+    {
+      "username": "louloutic",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "relatable",
+        "lifestyle"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.06342898829273083,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:36:22+00:00"
+    },
+    {
+      "username": "docteur.drew",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "vulgarisation",
+        "relatable"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.21395002974419988,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:38:24+00:00"
+    },
+    {
+      "username": "elian.ventre",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "sketch",
+        "imitation"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.07924722144391519,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:38:26+00:00"
+    },
+    {
+      "username": "sutuswing",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "brainrot",
+        "trend"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.0405425219941349,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:38:31+00:00"
+    },
+    {
+      "username": "anais.gadaud",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "relatable",
+        "lifestyle"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.04126280808640266,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:40:05+00:00"
+    },
+    {
+      "username": "jonas_respect",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "stand_up",
+        "réaction"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.12765620044402157,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:49:24+00:00"
+    },
+    {
+      "username": "nayrok_zip",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "stand_up",
+        "réaction"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.09069434740659413,
+      "last_post_id": null,
+      "added_at": "2026-05-18T13:49:31+00:00"
+    },
+    {
+      "username": "92johnmarston",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "gaming",
+        "réaction"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.10327210801605644,
+      "last_post_id": null,
+      "added_at": "2026-05-18T14:24:20+00:00"
+    },
+    {
+      "username": "dweezil_tiktok_pro",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "imitation",
+        "trend"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.08655123412931329,
+      "last_post_id": null,
+      "added_at": "2026-05-18T14:24:22+00:00"
+    },
+    {
+      "username": "71_cent",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "dark_humor",
+        "réaction"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.050909436077311104,
+      "last_post_id": null,
+      "added_at": "2026-05-18T14:24:24+00:00"
+    },
+    {
+      "username": "ouaissalut5",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "relatable",
+        "POV"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 1.4706232336754423,
+      "last_post_id": null,
+      "added_at": "2026-05-18T14:24:26+00:00"
+    },
+    {
+      "username": "baran_oga",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "sketch",
+        "trend"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.16704196076733208,
+      "last_post_id": null,
+      "added_at": "2026-05-18T14:24:29+00:00"
+    },
+    {
+      "username": "judemgmt",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "relatable",
+        "trend"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.369558599695586,
+      "last_post_id": null,
+      "added_at": "2026-05-18T22:25:45+00:00"
+    },
+    {
+      "username": "levivy13",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "sketch",
+        "réaction"
+      ],
+      "niche": "humour",
+      "t_type": null,
+      "engagement_baseline": 0.12726708845056445,
+      "last_post_id": null,
+      "added_at": "2026-05-19T06:20:36+00:00"
+    },
+    {
+      "username": "lc_robin",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "sketch",
+        "réaction"
+      ],
+      "niche": "humour",
+      "t_type": "T2b",
+      "engagement_baseline": 0.26518565835078134,
+      "last_post_id": null,
+      "added_at": "2026-05-19T06:23:02+00:00"
+    },
+    {
+      "username": "matt.chiappa",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "sketch",
+        "réaction"
+      ],
+      "niche": "humour",
+      "t_type": "T5",
+      "engagement_baseline": 0.2843911082474227,
+      "last_post_id": null,
+      "added_at": "2026-05-19T06:26:20+00:00"
+    },
+    {
+      "username": "lushe.wav",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "sketch",
+        "réaction"
+      ],
+      "niche": "humour",
+      "t_type": "T1",
+      "engagement_baseline": 0.17361856985809776,
+      "last_post_id": null,
+      "added_at": "2026-05-19T06:26:58+00:00"
+    },
+    {
+      "username": "matthieu_gx",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "sketch",
+        "réaction"
+      ],
+      "niche": "humour",
+      "t_type": "T1",
+      "engagement_baseline": 0.09645227843559383,
+      "last_post_id": null,
+      "added_at": "2026-05-19T06:30:17+00:00"
+    },
+    {
+      "username": "cossi_yt",
+      "platform": "instagram",
+      "niches": [
+        "humour",
+        "sketch",
+        "réaction"
+      ],
+      "niche": "humour",
+      "t_type": "T2",
+      "engagement_baseline": 0.046014246339979234,
+      "last_post_id": null,
+      "added_at": "2026-05-19T06:32:09+00:00"
+    }
+  ]
+}
