@@ -16,7 +16,7 @@ sur chacun.
 Particularités :
 
 - Entre chaque profil, ``sleep`` aléatoire de **5–15 minutes** (rescore lent
-  et non urgent — on évite de stresser instagrapi).
+  et non urgent — on évite de stresser Instagram / Playwright).
 - En **mock**, ni sleep ni Telegram réel.
 - Compare ``last_history_score`` (avant le rescore) au nouveau score :
 

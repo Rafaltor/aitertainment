@@ -50,7 +50,7 @@ Le fichier ``data/database.json`` a la structure suivante::
       }
     }
 
-Pas de réseau, pas d'appel instagrapi : c'est de la pure persistance + un peu
+Pas de réseau : c'est de la pure persistance + un peu
 de logique de tier / planning de rescore.
 """
 

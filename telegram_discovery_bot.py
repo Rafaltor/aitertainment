@@ -37,10 +37,12 @@ Flux
 1. ``discovery.explore_network`` détecte un candidat → appelle
    ``notify_candidate(candidate)``.
 2. L'humain reçoit le message + boutons.
-3. Action ``✅`` → ``add_to_watchlist`` + ``append_validation(action="validated")``.
-4. Action ``❌`` → ``append_validation(action="rejected")`` (déjà blacklisté).
+3. Action ``✅`` → ``add_to_watchlist`` + ``append_validation`` + retrait de
+   ``candidates.json``.
+4. Action ``❌`` → ``append_validation(action="rejected")`` + retrait de
+   ``candidates.json`` (déjà blacklisté en Discovery).
 5. Action ``✏️`` → menu T-types puis ``add_to_watchlist`` avec correction +
-   ``append_validation(action="corrected", t_type_original≠t_type_final)``.
+   ``append_validation`` + retrait de ``candidates.json``.
 6. Action ``👁`` → ouvre directement l'URL Instagram (bouton URL inline,
    aucun callback côté bot).
 
@@ -219,6 +221,46 @@ def _find_candidate(
         if str(c.get("username") or "").lstrip("@").lower() == target:
             return c
     return None
+
+
+def _remove_candidate(
+    username: str,
+    *,
+    candidates_path: Path | None = None,
+) -> bool:
+    """Retire un candidat de ``candidates.json`` après validation / rejet."""
+    from discovery import (  # tardif
+        DEFAULT_CANDIDATES_PATH,
+        DiscoveryIOError,
+        load_candidates,
+        save_candidates,
+    )
+
+    p = Path(candidates_path) if candidates_path else DEFAULT_CANDIDATES_PATH
+    target = username.lstrip("@").strip().lower()
+    if not target:
+        return False
+    try:
+        data = load_candidates(path=p)
+    except DiscoveryIOError:
+        return False
+    arr = data.get("candidates", [])
+    kept = [
+        c
+        for c in arr
+        if isinstance(c, dict)
+        and str(c.get("username") or "").lstrip("@").strip().lower() != target
+    ]
+    if len(kept) == len(arr):
+        return False
+    try:
+        save_candidates({"candidates": kept}, path=p)
+    except DiscoveryIOError as e:
+        _LOG.warning(
+            "remove_candidate : écriture impossible pour @%s (%s).", username, e
+        )
+        return False
+    return True
 
 
 def _domain_meta(
@@ -826,6 +868,7 @@ def _handle_validate(
         path=validations_path,
     )
     _persist_validation_in_db(username, t_final, db_path=db_path)
+    _remove_candidate(username, candidates_path=candidates_path)
     if added:
         return f"✅ @{username} ajouté à la watchlist (T-type {t_final})"
     return f"☑️ @{username} déjà dans la watchlist"
@@ -844,6 +887,7 @@ def _handle_reject(
         _validation_record(cand, action="rejected", t_type_final=None),
         path=validations_path,
     )
+    _remove_candidate(username, candidates_path=candidates_path)
     return f"❌ @{username} ignoré"
 
 
@@ -876,6 +920,7 @@ def _handle_set_ttype(
         path=validations_path,
     )
     _persist_validation_in_db(username, new_t_type, db_path=db_path)
+    _remove_candidate(username, candidates_path=candidates_path)
     if action == "corrected":
         suffix = f" (corrigé : {t_original} → {new_t_type})"
     else:

@@ -7,9 +7,7 @@
 
 *.pem
 *.key
-session.json
-
-# Instagram session (Playwright + instagrapi)
+# Instagram session Playwright (cookies exportés depuis le navigateur)
 data/instagram_cookies.json
 
 # =============================================================================

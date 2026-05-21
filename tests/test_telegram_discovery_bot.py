@@ -274,6 +274,9 @@ class HandleCallbackTest(unittest.TestCase):
         self.assertEqual(rec["t_type_final"], "T2")
         self.assertEqual(rec["score"], 742.0)
 
+        cands = json.loads(self.cand_path.read_text(encoding="utf-8"))
+        self.assertEqual(cands["candidates"], [])
+
     def test_reject_logs_only(self) -> None:
         result = bot.handle_callback(
             self._cq("r:promising_creator"),
@@ -289,6 +292,9 @@ class HandleCallbackTest(unittest.TestCase):
         self.assertEqual(wl["creators"], [])
         val = bot.load_validations(path=self.val_path)
         self.assertEqual(val["validations"][0]["action"], "rejected")
+
+        cands = json.loads(self.cand_path.read_text(encoding="utf-8"))
+        self.assertEqual(cands["candidates"], [])
 
     def test_modify_opens_t_type_menu(self) -> None:
         result = bot.handle_callback(
@@ -341,6 +347,9 @@ class HandleCallbackTest(unittest.TestCase):
         self.assertEqual(rec["action"], "corrected")
         self.assertEqual(rec["t_type_original"], "T2")
         self.assertEqual(rec["t_type_final"], "T4")
+
+        cands = json.loads(self.cand_path.read_text(encoding="utf-8"))
+        self.assertEqual(cands["candidates"], [])
 
     def test_set_ttype_same_as_original_is_validated_not_corrected(self) -> None:
         bot.handle_callback(

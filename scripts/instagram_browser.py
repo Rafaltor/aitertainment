@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""instagram_browser.py — navigation Instagram via Playwright (remplace instagrapi côté discovery)."""
+"""instagram_browser.py — navigation Instagram via Playwright (Discovery + Watcher)."""
 
 from __future__ import annotations
 

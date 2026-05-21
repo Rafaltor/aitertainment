@@ -63,7 +63,7 @@ import sys
 
 import config
 from config import VALID_T_TYPES
-from instagram_client import setup_watcher_logger
+from telegram_notify import setup_watcher_logger
 from playwright.sync_api import BrowserContext, sync_playwright
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
@@ -554,7 +554,7 @@ def notify_new_post(
     erreur réseau…). N'interrompt jamais la boucle en cas d'échec.
     """
     log = logging.getLogger("aitertainment.watcher")
-    from instagram_client import send_telegram_markdown
+    from telegram_notify import send_telegram_markdown
 
     username = str(creator.get("username") or "?")
     t_type = str(creator.get("t_type") or "?")

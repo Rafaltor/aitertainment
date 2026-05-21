@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from scripts import embedder
@@ -221,6 +222,140 @@ class LoadCreatorsFromDatabaseTest(unittest.TestCase):
             )
             creators = embedder.load_creators_from_database(db_path, tier="B")
         self.assertEqual([c["username"] for c in creators], ["tier_b"])
+
+
+class ExtractCaptionFromOgDescriptionTest(unittest.TestCase):
+    def test_real_instagram_format_with_closing_quote(self) -> None:
+        og = (
+            '7,117 likes, 33 comments - raikkonenaf le  May 19, 2026: '
+            '"🎵@juldetp - POW POW"'
+        )
+        self.assertEqual(
+            embedder._extract_caption_from_og_description(og),
+            "🎵@juldetp - POW POW",
+        )
+
+    def test_og_without_closing_quote(self) -> None:
+        og = '42 likes - user le 1 jan 2026: "caption sans guillemet fermant'
+        self.assertEqual(
+            embedder._extract_caption_from_og_description(og),
+            "caption sans guillemet fermant",
+        )
+
+    def test_empty_og_returns_empty(self) -> None:
+        self.assertEqual(embedder._extract_caption_from_og_description(""), "")
+
+    def test_get_caption_strips_trailing_quotes_and_dots(self) -> None:
+        mock_page = MagicMock()
+        mock_page.wait_for_load_state.return_value = None
+        mock_page.wait_for_timeout.return_value = None
+        mock_page.get_attribute.return_value = (
+            '10 likes - user le May 19, 2026: "caption avec résidu".'
+        )
+        mock_context = MagicMock()
+        mock_context.new_page.return_value = mock_page
+
+        caption = embedder._get_caption_from_reel_page("ABC123", mock_context)
+        self.assertEqual(caption, "caption avec résidu")
+
+
+class GetCaptionFromReelPageTest(unittest.TestCase):
+    def test_prefers_og_description_over_graphql(self) -> None:
+        media_id = "DYcbkPMM1cR"
+        mock_page = MagicMock()
+        mock_page.wait_for_load_state.return_value = None
+        mock_page.wait_for_timeout.return_value = None
+        mock_page.get_attribute.return_value = (
+            '42 likes, 3 comments - creator le 1 janvier 2026: "Caption depuis og meta"'
+        )
+        mock_context = MagicMock()
+        mock_context.new_page.return_value = mock_page
+
+        caption = embedder._get_caption_from_reel_page(media_id, mock_context)
+        self.assertEqual(caption, "Caption depuis og meta")
+        mock_page.on.assert_called_once()
+
+    def test_extracts_caption_matching_media_code(self) -> None:
+        media_id = "DYcbkPMM1cR"
+        payload = {
+            "data": {
+                "xdt_shortcode_media": {
+                    "code": media_id,
+                    "caption": {"text": "Premier reel avec assez de mots"},
+                }
+            }
+        }
+
+        mock_response = MagicMock()
+        mock_response.url = "https://www.instagram.com/graphql/query"
+        mock_response.text.return_value = json.dumps(payload)
+
+        mock_page = MagicMock()
+        mock_page.wait_for_load_state.return_value = None
+        mock_page.wait_for_timeout.return_value = None
+        mock_page.get_attribute.return_value = ""
+
+        def register_handler(event: str, handler: Any) -> None:
+            if event == "response":
+                handler(mock_response)
+
+        mock_page.on.side_effect = register_handler
+        mock_context = MagicMock()
+        mock_context.new_page.return_value = mock_page
+
+        caption = embedder._get_caption_from_reel_page(media_id, mock_context)
+        self.assertEqual(caption, "Premier reel avec assez de mots")
+        mock_page.goto.assert_called_once_with(
+            f"https://www.instagram.com/reel/{media_id}/"
+        )
+        mock_page.close.assert_called_once()
+
+    def test_get_attribute_timeout_falls_back_to_graphql(self) -> None:
+        media_id = "DYcbkPMM1cR"
+        payload = {
+            "data": {
+                "xdt_shortcode_media": {
+                    "code": media_id,
+                    "caption": {"text": "Caption depuis graphql fallback"},
+                }
+            }
+        }
+
+        mock_response = MagicMock()
+        mock_response.url = "https://www.instagram.com/graphql/query"
+        mock_response.text.return_value = json.dumps(payload)
+
+        mock_page = MagicMock()
+        mock_page.wait_for_load_state.return_value = None
+        mock_page.wait_for_timeout.return_value = None
+        mock_page.get_attribute.side_effect = TimeoutError("og:description timeout")
+
+        def register_handler(event: str, handler: Any) -> None:
+            if event == "response":
+                handler(mock_response)
+
+        mock_page.on.side_effect = register_handler
+        mock_context = MagicMock()
+        mock_context.new_page.return_value = mock_page
+
+        caption = embedder._get_caption_from_reel_page(media_id, mock_context)
+        self.assertEqual(caption, "Caption depuis graphql fallback")
+        mock_page.get_attribute.assert_called_once_with(
+            'meta[property="og:description"]',
+            "content",
+            timeout=5000,
+        )
+
+    def test_returns_empty_when_no_graphql_match(self) -> None:
+        mock_page = MagicMock()
+        mock_page.on.return_value = None
+        mock_page.get_attribute.return_value = ""
+        mock_context = MagicMock()
+        mock_context.new_page.return_value = mock_page
+
+        caption = embedder._get_caption_from_reel_page("UNKNOWN", mock_context)
+        self.assertEqual(caption, "")
+        mock_page.close.assert_called_once()
 
 
 class SaveVectorStoreTest(unittest.TestCase):

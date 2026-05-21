@@ -124,7 +124,7 @@ Vérifier les versions installées :
 
 ```bash
 python -c "from importlib.metadata import version; \
-  [print(p, '==', version(p)) for p in ['instagrapi', 'requests', 'python-dotenv']]"
+  [print(p, '==', version(p)) for p in ['playwright', 'requests', 'python-dotenv']]"
 ```
 
 ---
@@ -144,9 +144,24 @@ Champs **obligatoires** :
 | `TELEGRAM_CHAT_ID` | Démarre une conversation avec ton bot, puis : `curl https://api.telegram.org/bot<TOKEN>/getUpdates` → champ `chat.id` |
 | `TELEGRAM_DISCOVERY_TOKEN` | Idem, mais bot **séparé** pour Discovery |
 | `TELEGRAM_DISCOVERY_CHAT_ID` | Idem (souvent même chat_id que le bot #1, juste deux bots distincts) |
-| `IG_USERNAME` / `IG_PASSWORD` | Compte Instagram **dédié**. **JAMAIS** le compte perso. |
+| `data/instagram_cookies.json` | Cookies Playwright du compte Instagram **dédié** (export navigateur). **JAMAIS** le compte perso. Voir §6.1. |
 
-Champs **optionnels** : sleep ranges, quotas Discovery, modèle Ollama → tous ont des valeurs par défaut sensées (cf. `.env.example`).
+Champs **optionnels** : quotas Discovery, `MAX_ACCOUNTS_PER_SESSION`, modèle Ollama → valeurs par défaut dans `.env.example`.
+
+### 6.1 Cookies Instagram (Playwright)
+
+Le scraping passe par Chromium + cookies persistés (pas d'API mobile privée).
+
+1. Connecte-toi à Instagram dans Chrome avec le **compte dédié**.
+2. Exporte les cookies au format Playwright (extension type « EditThisCookie » / export DevTools, ou script maison) vers `data/instagram_cookies.json`.
+3. Format accepté : liste JSON `[{ "name": "sessionid", "value": "...", "domain": ".instagram.com", ... }]` ou objet `{"cookies": [...]}`.
+4. Vérifie la session :
+
+```bash
+python -c "from scripts.instagram_browser import test_session; print('OK' if test_session() else 'session expirée')"
+```
+
+Renouvelle les cookies si la commande échoue ou si Discovery/Watcher loguent « session expirée ».
 
 ---
 
@@ -242,7 +257,7 @@ Crée `~/Library/LaunchAgents/com.aitertainment.watcher.plist` :
     <key>StandardErrorPath</key>
     <string>/Users/paulm/Apps/aitertainment/logs/launchd_watcher.err.log</string>
 
-    <!-- Pour qu'instagrapi & dotenv trouvent les UTF-8 et le HOME -->
+    <!-- UTF-8 et logs non bufferisés -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>LANG</key>
@@ -435,6 +450,7 @@ sudo pmset -a autorestart 1
 | `data/validations.json` | `telegram_discovery_bot.py` | Feedback humain (validate / reject / corrected) |
 | `data/discovery_bot_state.json` | `telegram_discovery_bot.py` | Offset Telegram pour `getUpdates` |
 | `data/watchlist.json` | `watcher.py`, `scripts/embedder.py` | Créateurs surveillés (watcher + embeddings) |
+| `data/instagram_cookies.json` | `scripts/instagram_browser.py` | Session Playwright (non versionné) |
 | `seeds.json` (racine) | `discovery.py` | Domaines + comptes seed pour exploration |
 
 Toutes les écritures sont **atomiques** (`tempfile + replace`), donc safe en cas de coupure brutale (panne de courant Mac Mini, kill -9, etc.).
@@ -445,11 +461,11 @@ Toutes les écritures sont **atomiques** (`tempfile + replace`), donc safe en ca
 
 | Symptôme | Cause probable | Fix |
 |---|---|---|
-| `instagrapi non installé` | venv pas activé | `source .venv/bin/activate` |
+| `Fichier cookies introuvable` | `data/instagram_cookies.json` absent | Exporter les cookies (cf. §6.1) |
 | `Erreur HTTP Ollama: Connection refused` | daemon Ollama down | `brew services restart ollama` |
 | `TELEGRAM_DISCOVERY_TOKEN manquant` | `.env` pas chargé | Vérifier que `.env` est à la racine du projet, pas dans un sous-dossier |
 | Watcher tourne mais ne notifie rien | chat_id incorrect | `curl https://api.telegram.org/bot<TOKEN>/getUpdates` après avoir parlé au bot |
 | `launchctl: status 78` | `python` du venv introuvable | Vérifier le chemin absolu dans `ProgramArguments` |
-| Compte Instagram bloqué (challenge) | Pattern trop régulier | Augmenter `IG_SLEEP_MIN/MAX`, baisser `MAX_PROFILES_PER_DAY`, attendre 24-48h |
+| Compte Instagram bloqué (challenge) | Pattern trop régulier | Baisser `MAX_PROFILES_PER_DAY`, augmenter les pauses Discovery, renouveler les cookies, attendre 24-48h |
 
 Pour aller plus loin : `man launchd.plist`, `man launchctl`.

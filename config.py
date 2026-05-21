@@ -29,15 +29,7 @@ TELEGRAM_DISCOVERY_CHAT_ID = (
     or TELEGRAM_CHAT_ID
 )
 
-# Instagram (instagrapi) — utiliser un compte dédié, JAMAIS le compte personnel
-IG_USERNAME = os.environ.get("IG_USERNAME", "")
-IG_PASSWORD = os.environ.get("IG_PASSWORD", "")
-
-# Anti-détection Instagram (instagrapi)
-# Délai aléatoire (s) entre deux appels read sensibles (user_medias, etc.)
-IG_SLEEP_MIN = float(os.environ.get("IG_SLEEP_MIN", "1.5"))
-IG_SLEEP_MAX = float(os.environ.get("IG_SLEEP_MAX", "4.0"))
-# Nombre max de comptes vérifiés avant longue pause anti-flag
+# Anti-détection Instagram (Playwright) — pause longue tous les N comptes (Watcher)
 MAX_ACCOUNTS_PER_SESSION = int(os.environ.get("MAX_ACCOUNTS_PER_SESSION", "50"))
 
 # ----------------------------------------------------------------------------

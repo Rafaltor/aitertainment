@@ -32,7 +32,6 @@ from scripts.instagram_browser import (
     get_browser_context,
     get_profile_data,
     get_recent_reels,
-    get_reel_caption,
     parse_comments_from_dom_text,
     polite_sleep,
 )
@@ -224,6 +223,82 @@ def download_audio_from_reel(
         return wav_path
     wav_files = sorted(tmp_dir.glob("*.wav"))
     return wav_files[0] if wav_files else None
+
+
+def _extract_caption_from_og_description(og_desc: str) -> str:
+    """Extrait la caption depuis ``og:description`` (guillemets optionnels en fin)."""
+    text = (og_desc or "").strip()
+    if not text:
+        return ""
+    match = re.search(r':\s*"(.+?)"?\s*$', text)
+    if not match:
+        match = re.search(r':\s*"(.+)', text)
+    if not match:
+        return ""
+    return match.group(1).strip().rstrip('"')
+
+
+def _get_caption_from_reel_page(media_id: str, context: BrowserContext) -> str:
+    """Récupère la caption d'un Reel : og:description puis repli GraphQL."""
+    caption = ""
+    json_caption = ""
+
+    def on_response(response: Any) -> None:
+        nonlocal json_caption
+        if json_caption or "graphql" not in response.url:
+            return
+        try:
+            data = json.loads(response.text())
+        except Exception:
+            return
+
+        def walk(node: Any, depth: int = 0) -> None:
+            nonlocal json_caption
+            if depth > 15 or json_caption:
+                return
+            if isinstance(node, dict):
+                code = node.get("code") or node.get("shortcode")
+                cap = node.get("caption")
+                if code == media_id and cap and isinstance(cap, dict):
+                    t = cap.get("text", "")
+                    if t and len(str(t).split()) >= 2:
+                        json_caption = str(t)
+                        return
+                for v in node.values():
+                    walk(v, depth + 1)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item, depth + 1)
+
+        walk(data)
+
+    page = context.new_page()
+    try:
+        page.on("response", on_response)
+        page.goto(f"https://www.instagram.com/reel/{media_id}/")
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(3000)
+
+        try:
+            og_desc = (
+                page.get_attribute(
+                    'meta[property="og:description"]',
+                    "content",
+                    timeout=5000,
+                )
+                or ""
+            )
+        except Exception:
+            og_desc = ""
+        caption = _extract_caption_from_og_description(og_desc)
+
+        if not caption:
+            caption = json_caption
+    finally:
+        page.close()
+    if caption:
+        caption = caption.strip().rstrip('".').strip()
+    return caption
 
 
 def _extract_comments_from_reel_page(page: Page) -> list[str]:
@@ -486,7 +561,7 @@ def process_account(
         media_id = str(reel.get("media_id") or "").strip()
         if not media_id or str(reel.get("caption") or "").strip():
             continue
-        reel["caption"] = get_reel_caption(media_id, context)
+        reel["caption"] = _get_caption_from_reel_page(media_id, context)
         polite_sleep(1)
 
     profile_data = get_profile_data(uname, context)
