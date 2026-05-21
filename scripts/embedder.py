@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import requests
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -31,16 +32,20 @@ from scripts.instagram_browser import (
     get_browser_context,
     get_profile_data,
     get_recent_reels,
+    get_reel_caption,
     parse_comments_from_dom_text,
     polite_sleep,
 )
 
+LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "")
+LM_STUDIO_EMBED_MODEL = os.environ.get("LM_STUDIO_EMBED_MODEL", "")
 OLLAMA_EMBED_MODEL = "bge-m3"
 WHISPER_MODEL_SIZE = "small"
 REELS_PER_ACCOUNT = 5
 COMMENTS_PER_REEL = 30
 VECTOR_STORE_PATH = Path("data/vector_store.json")
 WATCHLIST_PATH = Path("data/watchlist.json")
+DATABASE_PATH = Path("data/database.json")
 PCA_MODEL_PATH = Path("data/pca_model.pkl")
 
 NAMED_AXES = [
@@ -94,6 +99,68 @@ def load_watchlist(path: Path | str | None = None) -> list[dict[str, Any]]:
             continue
         out.append(entry)
     return out
+
+
+def load_creators_from_database(
+    path: Path | str | None = None,
+    *,
+    tier: str | None = None,
+) -> list[dict[str, Any]]:
+    """Charge les profils non archivés depuis ``database.json``.
+
+    Si ``tier`` est ``A``, ``B`` ou ``C``, ne garde que ce tier.
+    """
+    p = _resolve_path(Path(path) if path is not None else DATABASE_PATH)
+    if not p.exists():
+        raise FileNotFoundError(f"database absente : {p}")
+
+    tier_filter = str(tier).strip().upper() if tier else None
+    if tier_filter and tier_filter not in ("A", "B", "C"):
+        raise ValueError(f"tier invalide : {tier!r} (attendu A, B ou C)")
+
+    data = json.loads(p.read_text(encoding="utf-8"))
+    profiles = data.get("profiles")
+    if not isinstance(profiles, dict):
+        raise ValueError(f'"profiles" invalide dans {p}')
+
+    out: list[dict[str, Any]] = []
+    for username, profile in profiles.items():
+        if not isinstance(profile, dict):
+            continue
+        if profile.get("archived", False):
+            continue
+        profile_tier = str(profile.get("tier") or "C").strip().upper()
+        if tier_filter and profile_tier != tier_filter:
+            continue
+        u = str(username).lstrip("@").strip().lower()
+        if not u:
+            continue
+        out.append(
+            {
+                "username": u,
+                "action": "validated",
+                "niches": profile.get("niches") or [],
+                "t_type": profile.get("t_type_final") or profile.get("t_type_original"),
+                "followers": profile.get("followers", 0),
+                "tier": profile.get("tier", "C"),
+            }
+        )
+    return out
+
+
+def load_creators(
+    source: str = "watchlist",
+    *,
+    watchlist_path: Path | str | None = None,
+    database_path: Path | str | None = None,
+    tier: str | None = None,
+) -> list[dict[str, Any]]:
+    """Charge la liste des créateurs selon ``source`` (``watchlist`` ou ``database``)."""
+    if source == "watchlist":
+        return load_watchlist(watchlist_path)
+    if source == "database":
+        return load_creators_from_database(database_path, tier=tier)
+    raise ValueError(f"source inconnue : {source!r} (attendu watchlist ou database)")
 
 
 def export_playwright_cookies(context: BrowserContext, cookie_file: Path) -> None:
@@ -248,8 +315,49 @@ def build_input_text(
     return "\n".join(parts) + "\n"
 
 
+def _validate_embedding_vector(vector: list[float]) -> list[float] | None:
+    if any(math.isnan(x) for x in vector):
+        _LOG.warning("embedding NaN détecté — entrée ignorée.")
+        return None
+    return vector
+
+
 def embed_text(text: str) -> list[float] | None:
-    """Appelle Ollama ``embed`` et retourne le vecteur 1024D."""
+    """Embedding 1024D via LM Studio (prioritaire) ou Ollama (fallback)."""
+    if LM_STUDIO_URL and LM_STUDIO_EMBED_MODEL:
+        text = text[:8000]
+        _LOG.debug("embed_text : %d caractères", len(text))
+        try:
+            resp = requests.post(
+                f"{LM_STUDIO_URL.rstrip('/')}/embeddings",
+                json={"model": LM_STUDIO_EMBED_MODEL, "input": text},
+                timeout=60,
+            )
+            if resp.status_code == 400:
+                _LOG.error(
+                    "LM Studio embed 400 — texte longueur=%d, début=%s",
+                    len(text),
+                    text[:100],
+                )
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+            vector = [float(x) for x in data["data"][0]["embedding"]]
+            return _validate_embedding_vector(vector)
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 400:
+                _LOG.error(
+                    "LM Studio embed 400 — texte longueur=%d, début=%s",
+                    len(text),
+                    text[:100],
+                )
+            else:
+                _LOG.error("LM Studio embed a échoué (%s).", e)
+            return None
+        except Exception as e:
+            _LOG.error("LM Studio embed a échoué (%s).", e)
+            return None
+
     try:
         import ollama
     except ImportError as e:
@@ -270,10 +378,7 @@ def embed_text(text: str) -> list[float] | None:
         return None
 
     vector = [float(x) for x in embeddings[0]]
-    if any(math.isnan(x) for x in vector):
-        _LOG.warning("embedding NaN détecté — entrée ignorée.")
-        return None
-    return vector
+    return _validate_embedding_vector(vector)
 
 
 def project_to_named_axes(
@@ -377,6 +482,13 @@ def process_account(
         _LOG.warning("@%s : aucun Reel récupéré — skip embedding.", uname)
         return None
 
+    for reel in reels:
+        media_id = str(reel.get("media_id") or "").strip()
+        if not media_id or str(reel.get("caption") or "").strip():
+            continue
+        reel["caption"] = get_reel_caption(media_id, context)
+        polite_sleep(1)
+
     profile_data = get_profile_data(uname, context)
     biography = str(profile_data.get("biography") or "").strip() if profile_data else ""
     niches_raw = creator.get("niches") or ["humour"]
@@ -465,6 +577,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Embedding des comptes watchlistés.")
     parser.add_argument("--account", help="Traiter un seul compte (@username).")
     parser.add_argument(
+        "--source",
+        choices=("watchlist", "database"),
+        default="watchlist",
+        help="watchlist (défaut) : data/watchlist.json ; database : profils non archivés.",
+    )
+    parser.add_argument(
+        "--tier",
+        choices=("A", "B", "C"),
+        default=None,
+        help="Avec --source database : ne traiter que ce tier (défaut : tous non archivés).",
+    )
+    parser.add_argument(
         "--refit-pca",
         action="store_true",
         help="Recalcule la PCA après traitement.",
@@ -478,11 +602,23 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
+    if args.tier and args.source != "database":
+        _LOG.error("--tier n'est utilisable qu'avec --source database.")
+        return 1
+
     try:
-        creators = load_watchlist()
-    except FileNotFoundError as exc:
+        creators = load_creators(args.source, tier=args.tier)
+    except (FileNotFoundError, ValueError) as exc:
         _LOG.error("%s", exc)
         return 1
+
+    if args.source == "database":
+        tier_label = args.tier or "tous"
+        _LOG.info(
+            "Source : database.json — %d profils tier %s",
+            len(creators),
+            tier_label,
+        )
 
     if args.account:
         target = args.account.lstrip("@").strip().lower()
@@ -492,7 +628,8 @@ def main(argv: list[str] | None = None) -> int:
             if str(creator.get("username") or "").lstrip("@").strip().lower() == target
         ]
         if not creators:
-            _LOG.error("Compte @%s introuvable dans la watchlist.", target)
+            source_label = "watchlist" if args.source == "watchlist" else "database"
+            _LOG.error("Compte @%s introuvable dans la %s.", target, source_label)
             return 1
 
     vector_store = load_vector_store()

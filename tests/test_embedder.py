@@ -51,17 +51,51 @@ class BuildInputTextTest(unittest.TestCase):
 
 
 class EmbedTextTest(unittest.TestCase):
+    @patch("scripts.embedder.requests.post")
+    def test_lm_studio_embedding_returns_vector(self, mock_post: MagicMock) -> None:
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = {"data": [{"embedding": [0.1, 0.2, 0.3]}]}
+        mock_post.return_value = mock_resp
+        with patch.object(embedder, "LM_STUDIO_URL", "http://127.0.0.1:1234/v1"), patch.object(
+            embedder, "LM_STUDIO_EMBED_MODEL", "bge-m3"
+        ):
+            result = embedder.embed_text("bonjour")
+        self.assertEqual(result, [0.1, 0.2, 0.3])
+        mock_post.assert_called_once_with(
+            "http://127.0.0.1:1234/v1/embeddings",
+            json={"model": "bge-m3", "input": "bonjour"},
+            timeout=60,
+        )
+
+    @patch("scripts.embedder.requests.post")
+    def test_lm_studio_nan_returns_none(self, mock_post: MagicMock) -> None:
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = {"data": [{"embedding": [float("nan"), 0.2]}]}
+        mock_post.return_value = mock_resp
+        with patch.object(embedder, "LM_STUDIO_URL", "http://127.0.0.1:1234/v1"), patch.object(
+            embedder, "LM_STUDIO_EMBED_MODEL", "bge-m3"
+        ), self.assertLogs("aitertainment.embedder", level="WARNING") as cm:
+            result = embedder.embed_text("bonjour")
+        self.assertIsNone(result)
+        self.assertTrue(any("NaN" in message for message in cm.output))
+
     def test_valid_embedding_returns_float_list(self) -> None:
         fake_ollama = MagicMock()
         fake_ollama.embed.return_value = {"embeddings": [[0.1, 0.2, 0.3]]}
-        with patch.dict(sys.modules, {"ollama": fake_ollama}):
+        with patch.object(embedder, "LM_STUDIO_URL", ""), patch.object(
+            embedder, "LM_STUDIO_EMBED_MODEL", ""
+        ), patch.dict(sys.modules, {"ollama": fake_ollama}):
             result = embedder.embed_text("bonjour")
         self.assertEqual(result, [0.1, 0.2, 0.3])
 
     def test_nan_embedding_returns_none_and_logs_warning(self) -> None:
         fake_ollama = MagicMock()
         fake_ollama.embed.return_value = {"embeddings": [[float("nan"), 0.2]]}
-        with patch.dict(sys.modules, {"ollama": fake_ollama}), self.assertLogs(
+        with patch.object(embedder, "LM_STUDIO_URL", ""), patch.object(
+            embedder, "LM_STUDIO_EMBED_MODEL", ""
+        ), patch.dict(sys.modules, {"ollama": fake_ollama}), self.assertLogs(
             "aitertainment.embedder", level="WARNING"
         ) as cm:
             result = embedder.embed_text("bonjour")
@@ -71,7 +105,9 @@ class EmbedTextTest(unittest.TestCase):
     def test_ollama_exception_returns_none(self) -> None:
         fake_ollama = MagicMock()
         fake_ollama.embed.side_effect = RuntimeError("ollama down")
-        with patch.dict(sys.modules, {"ollama": fake_ollama}):
+        with patch.object(embedder, "LM_STUDIO_URL", ""), patch.object(
+            embedder, "LM_STUDIO_EMBED_MODEL", ""
+        ), patch.dict(sys.modules, {"ollama": fake_ollama}):
             result = embedder.embed_text("bonjour")
         self.assertIsNone(result)
 
@@ -132,6 +168,61 @@ class FitPcaTest(unittest.TestCase):
             self.assertEqual(loaded.n_components, 10)
 
 
+class LoadCreatorsFromDatabaseTest(unittest.TestCase):
+    def test_skips_archived_and_builds_creator_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "database.json"
+            db_path.write_text(
+                json.dumps(
+                    {
+                        "profiles": {
+                            "active_one": {
+                                "archived": False,
+                                "niches": ["humour"],
+                                "t_type_original": "T2",
+                                "t_type_final": "T3",
+                                "followers": 1200,
+                                "tier": "B",
+                            },
+                            "archived_one": {
+                                "archived": True,
+                                "niches": [],
+                                "tier": "C",
+                            },
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            creators = embedder.load_creators_from_database(db_path)
+        self.assertEqual(len(creators), 1)
+        entry = creators[0]
+        self.assertEqual(entry["username"], "active_one")
+        self.assertEqual(entry["action"], "validated")
+        self.assertEqual(entry["niches"], ["humour"])
+        self.assertEqual(entry["t_type"], "T3")
+        self.assertEqual(entry["followers"], 1200)
+        self.assertEqual(entry["tier"], "B")
+
+    def test_tier_filter_keeps_matching_profiles_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "database.json"
+            db_path.write_text(
+                json.dumps(
+                    {
+                        "profiles": {
+                            "tier_a": {"archived": False, "tier": "A", "niches": []},
+                            "tier_b": {"archived": False, "tier": "B", "niches": []},
+                            "tier_c_archived": {"archived": True, "tier": "C", "niches": []},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            creators = embedder.load_creators_from_database(db_path, tier="B")
+        self.assertEqual([c["username"] for c in creators], ["tier_b"])
+
+
 class SaveVectorStoreTest(unittest.TestCase):
     def test_atomic_write_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -146,7 +237,7 @@ class SaveVectorStoreTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     def test_dry_run_skips_ollama_whisper_and_playwright(self) -> None:
         creators = [{"username": "alpha", "action": "validated"}]
-        with patch.object(embedder, "load_watchlist", return_value=creators), patch.object(
+        with patch.object(embedder, "load_creators", return_value=creators), patch.object(
             embedder, "load_vector_store", return_value=[]
         ), patch.object(embedder, "load_pca", return_value=None), patch.object(
             embedder, "sync_playwright"
@@ -166,13 +257,49 @@ class MainTest(unittest.TestCase):
     def test_unknown_account_exits_with_clear_message(self) -> None:
         with patch.object(
             embedder,
-            "load_watchlist",
+            "load_creators",
             return_value=[{"username": "known", "action": "validated"}],
         ), self.assertLogs("aitertainment.embedder", level="ERROR") as cm:
             code = embedder.main(["--account", "@missing"])
         self.assertEqual(code, 1)
         self.assertTrue(
             any("Compte @missing introuvable dans la watchlist." in message for message in cm.output)
+        )
+
+    def test_dry_run_database_source_logs_count(self) -> None:
+        creators = [{"username": "alpha", "action": "validated"}]
+        with patch.object(
+            embedder, "load_creators", return_value=creators
+        ) as mock_load, patch.object(embedder, "load_vector_store", return_value=[]), patch.object(
+            embedder, "load_pca", return_value=None
+        ), self.assertLogs("aitertainment.embedder", level="INFO") as cm:
+            code = embedder.main(["--dry-run", "--source", "database"])
+        self.assertEqual(code, 0)
+        mock_load.assert_called_once_with("database", tier=None)
+        self.assertTrue(
+            any("Source : database.json — 1 profils tier tous" in m for m in cm.output)
+        )
+
+    def test_dry_run_database_tier_b_logs_tier_label(self) -> None:
+        creators = [{"username": "alpha", "action": "validated", "tier": "B"}]
+        with patch.object(
+            embedder, "load_creators", return_value=creators
+        ) as mock_load, patch.object(embedder, "load_vector_store", return_value=[]), patch.object(
+            embedder, "load_pca", return_value=None
+        ), self.assertLogs("aitertainment.embedder", level="INFO") as cm:
+            code = embedder.main(["--dry-run", "--source", "database", "--tier", "B"])
+        self.assertEqual(code, 0)
+        mock_load.assert_called_once_with("database", tier="B")
+        self.assertTrue(
+            any("Source : database.json — 1 profils tier B" in m for m in cm.output)
+        )
+
+    def test_tier_without_database_source_exits(self) -> None:
+        with self.assertLogs("aitertainment.embedder", level="ERROR") as cm:
+            code = embedder.main(["--dry-run", "--tier", "A"])
+        self.assertEqual(code, 1)
+        self.assertTrue(
+            any("--tier n'est utilisable qu'avec --source database" in m for m in cm.output)
         )
 
 

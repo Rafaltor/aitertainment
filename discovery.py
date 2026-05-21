@@ -1454,6 +1454,32 @@ def score_profile(
     }
 
 
+def build_dedup_key(media_id: str, text: str) -> str:
+    return f"{media_id}||{text.strip().lower()}"
+
+
+def load_raw_comments(path: Path) -> tuple[list[dict], set[str]]:
+    if not path.exists():
+        return [], set()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    entries = data if isinstance(data, list) else []
+    keys = {
+        build_dedup_key(e["media_id"], e["text"])
+        for e in entries
+        if e.get("media_id") and e.get("text")
+    }
+    return entries, keys
+
+
+def save_raw_comments(entries: list[dict], path: Path) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(
+        json.dumps(entries, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
 def _collect_top_comments(
     username: str,
     context: BrowserContext,
@@ -1465,7 +1491,6 @@ def _collect_top_comments(
 ) -> int:
     """Collecte les commentaires les plus likés (max 5 reels × 3) via Playwright."""
     from modules.classifier import ClassificationError, CommentClassifier
-    from scripts.collect_comments import build_dedup_key, load_raw_comments, save_raw_comments
 
     u = (username or "").lstrip("@").strip()
     reels_for_comments = [
@@ -1480,7 +1505,8 @@ def _collect_top_comments(
     if not u or not reels_to_visit:
         return 0
 
-    entries, dedup_keys = load_raw_comments(raw_comments_path)
+    comments_path = raw_comments_path or DEFAULT_RAW_COMMENTS_PATH
+    entries, dedup_keys = load_raw_comments(comments_path)
     classifier = CommentClassifier()
     collected = 0
     page = context.new_page()
@@ -1576,7 +1602,7 @@ def _collect_top_comments(
         page.close()
 
     if collected:
-        save_raw_comments(entries, raw_comments_path)
+        save_raw_comments(entries, comments_path)
     return collected
 
 
@@ -2756,6 +2782,21 @@ def score_and_persist(
 
     notified = False
     score = float(result.get("score") or 0.0)
+    domain_name = str(domain.get("name") or "unknown")
+    if blacklist is None:
+        blacklist = {"profiles": []}
+    if score > float(notify_threshold):
+        outcome = "candidate"
+    else:
+        outcome = "rejected"
+    _record_seen(
+        blacklist,
+        username,
+        outcome=outcome,
+        domain_name=domain_name,
+        score=score,
+        mock=mock,
+    )
     if (
         not mock
         and context is not None

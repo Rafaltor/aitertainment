@@ -12,6 +12,41 @@ from unittest.mock import MagicMock, patch
 from scripts import label_comments
 
 
+class BuildUserPromptTest(unittest.TestCase):
+    def test_without_creator_context_uses_legacy_format(self) -> None:
+        prompt = label_comments._build_user_prompt("hello", ["humour"], None)
+        self.assertIn("Classifie ce commentaire Instagram", prompt)
+        self.assertIn("Niches: humour", prompt)
+        self.assertNotIn("Profil du créateur", prompt)
+
+    def test_with_named_axes_includes_style_section(self) -> None:
+        prompt = label_comments._build_user_prompt(
+            "super",
+            ["humour"],
+            {
+                "t_type_profile": "T2",
+                "niches": ["humour", "sketch"],
+                "named_axes": {
+                    "scripted_vs_raw": 0.11,
+                    "energy_level": 0.44,
+                    "mainstream_vs_niche": 0.99,
+                },
+            },
+        )
+        self.assertIn("Niches du contenu: humour, sketch", prompt)
+        self.assertIn("T-type dominant: T2", prompt)
+        self.assertIn("Style: scripted=0.11, energie=0.44, mainstream=0.99", prompt)
+        self.assertIn("Label (T1/T2/T2b/T3a/T3b/T4/T5):", prompt)
+
+    def test_empty_named_axes_omits_style_section(self) -> None:
+        prompt = label_comments._build_user_prompt(
+            "super",
+            ["humour"],
+            {"t_type_profile": "T3b", "niches": ["humour"], "named_axes": {}},
+        )
+        self.assertNotIn("Style:", prompt)
+
+
 class ClassifyCommentTest(unittest.TestCase):
     def _chat_response(self, content: str) -> dict[str, object]:
         return {"message": {"content": content}}
@@ -53,6 +88,70 @@ class ClassifyCommentTest(unittest.TestCase):
         with patch.dict(sys.modules, {"ollama": fake_ollama}):
             result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
         self.assertIsNone(result)
+
+    def test_creator_context_passed_to_ollama_messages(self) -> None:
+        fake_ollama = MagicMock()
+        fake_ollama.chat.return_value = {"message": {"content": "T4"}}
+        ctx = {
+            "t_type_profile": "T2",
+            "niches": ["humour"],
+            "named_axes": {"scripted_vs_raw": 0.5, "energy_level": 0.6, "mainstream_vs_niche": 0.7},
+        }
+        with patch.dict(sys.modules, {"ollama": fake_ollama}):
+            result = label_comments.classify_comment(
+                "comment test",
+                ["humour"],
+                "qwen2.5:7b",
+                creator_context=ctx,
+            )
+        self.assertEqual(result, "T4")
+        user_msg = fake_ollama.chat.call_args.kwargs["messages"][1]["content"]
+        self.assertIn("T-type dominant: T2", user_msg)
+        self.assertIn("Style: scripted=0.50", user_msg)
+
+    @patch("scripts.label_comments.requests.post")
+    def test_lm_studio_returns_t2(self, mock_post: MagicMock) -> None:
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "T2"}}]
+        }
+        mock_post.return_value = mock_resp
+        with patch.object(label_comments, "LM_STUDIO_URL", "http://127.0.0.1:1234"):
+            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
+        self.assertEqual(result, "T2")
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args.kwargs
+        self.assertEqual(call_kwargs["json"]["temperature"], 0.0)
+        self.assertEqual(call_kwargs["json"]["max_tokens"], 50)
+        self.assertEqual(call_kwargs["json"]["thinking"], {"type": "disabled"})
+        self.assertEqual(
+            call_kwargs["json"]["chat_template_kwargs"], {"enable_thinking": False}
+        )
+
+    @patch("scripts.label_comments.requests.post")
+    def test_lm_studio_uses_reasoning_content_when_content_empty(
+        self, mock_post: MagicMock
+    ) -> None:
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "", "reasoning_content": "T3b"}}]
+        }
+        mock_post.return_value = mock_resp
+        with patch.object(label_comments, "LM_STUDIO_URL", "http://127.0.0.1:1234"):
+            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
+        self.assertEqual(result, "T3b")
+
+    @patch("scripts.label_comments.requests.post")
+    def test_lm_studio_request_failure_returns_none(self, mock_post: MagicMock) -> None:
+        mock_post.side_effect = RuntimeError("connection refused")
+        with patch.object(label_comments, "LM_STUDIO_URL", "http://127.0.0.1:1234"), self.assertLogs(
+            "aitertainment.label_comments", level="WARNING"
+        ) as cm:
+            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
+        self.assertIsNone(result)
+        self.assertTrue(any("LM Studio" in message for message in cm.output))
 
 
 class BuildTrainingEntryTest(unittest.TestCase):
@@ -176,18 +275,34 @@ class MainTest(unittest.TestCase):
                 "t_type": "T2",
             }
         ]
+        watchlist = {"alpha": {"username": "alpha", "t_type": "T2"}}
+        vector_store = {
+            "alpha": {
+                "username": "alpha",
+                "named_axes": {
+                    "scripted_vs_raw": 0.1,
+                    "energy_level": 0.2,
+                    "mainstream_vs_niche": 0.3,
+                },
+            }
+        }
         with patch.object(label_comments, "load_raw_comments", return_value=raw), patch.object(
             label_comments, "load_training_comments", return_value=(existing, {key})
-        ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
+        ), patch.object(label_comments, "load_watchlist", return_value=watchlist), patch.object(
+            label_comments, "load_vector_store", return_value=vector_store
+        ), patch.object(
             label_comments, "classify_comment", return_value="T4"
         ) as classify_mock, patch.object(
             label_comments, "save_training_comments"
         ) as save_mock, patch.object(
-            label_comments, "_ensure_ollama_available", return_value=True
+            label_comments, "_ensure_llm_available", return_value=True
         ):
             code = label_comments.main(["--force"])
         self.assertEqual(code, 0)
         classify_mock.assert_called_once()
+        ctx = classify_mock.call_args.kwargs["creator_context"]
+        self.assertEqual(ctx["t_type_profile"], "T2")
+        self.assertEqual(ctx["named_axes"]["energy_level"], 0.2)
         save_mock.assert_called_once()
         saved = save_mock.call_args.args[0]
         self.assertEqual(saved[0]["t_type"], "T4")
@@ -200,14 +315,17 @@ class MainTest(unittest.TestCase):
         with patch.object(label_comments, "load_raw_comments", return_value=raw), patch.object(
             label_comments, "load_training_comments", return_value=([], set())
         ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
+            label_comments, "load_vector_store", return_value={}
+        ), patch.object(
             label_comments, "classify_comment", return_value="T2"
         ) as classify_mock, patch.object(
             label_comments, "save_training_comments"
-        ), patch.object(label_comments, "_ensure_ollama_available", return_value=True):
+        ), patch.object(label_comments, "_ensure_llm_available", return_value=True):
             code = label_comments.main(["--account", "@beta"])
         self.assertEqual(code, 0)
         self.assertEqual(classify_mock.call_count, 1)
         self.assertEqual(classify_mock.call_args.args[0], "beta text")
+        self.assertIn("creator_context", classify_mock.call_args.kwargs)
 
 
 class SaveTrainingCommentsTest(unittest.TestCase):

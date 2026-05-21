@@ -79,9 +79,6 @@ data/*
 !data/.gitkeep
 !data/*.example.json
 
-# Watchlist racine (doublon possible avec data/watchlist.json)
-watchlist.json
-
 # Modèles / embeddings régénérables
 pca_model.pkl
 data/pca_model.pkl

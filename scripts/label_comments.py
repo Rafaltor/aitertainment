@@ -15,11 +15,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import requests
+
+LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "")
 OLLAMA_MODEL = "qwen2.5:7b"
 VALID_TTYPES = {"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"}
 RAW_COMMENTS_PATH = Path("data/raw_comments.json")
 TRAINING_COMMENTS_PATH = Path("data/training_comments.json")
 WATCHLIST_PATH = Path("data/watchlist.json")
+VECTOR_STORE_PATH = Path("data/vector_store.json")
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _LOG = logging.getLogger("aitertainment.label_comments")
@@ -107,18 +111,85 @@ def load_watchlist(path: Path | str | None = None) -> dict[str, dict[str, Any]]:
     return out
 
 
+def load_vector_store(path: Path | str | None = None) -> dict[str, dict[str, Any]]:
+    """Charge ``vector_store.json`` indexé par username."""
+    p = _resolve_path(Path(path) if path is not None else VECTOR_STORE_PATH)
+    if not p.exists():
+        return {}
+
+    data = json.loads(p.read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        entries = [entry for entry in data if isinstance(entry, dict)]
+    elif isinstance(data, dict):
+        raw_entries = data.get("entries") or data.get("profiles") or []
+        entries = [entry for entry in raw_entries if isinstance(entry, dict)]
+    else:
+        entries = []
+
+    out: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        username = str(entry.get("username") or "").lstrip("@").strip().lower()
+        if username:
+            out[username] = entry
+    return out
+
+
+def _build_user_prompt(
+    text: str,
+    niches: list[str],
+    creator_context: dict[str, Any] | None,
+) -> str:
+    if not creator_context:
+        return (
+            "Classifie ce commentaire Instagram.\n"
+            f"Commentaire: {text}\n"
+            f"Niches: {', '.join(niches)}\n"
+            "Réponds avec exactement un de ces labels : T1 T2 T2b T3a T3b T4 T5"
+        )
+
+    ctx_niches = creator_context.get("niches") or niches
+    if isinstance(ctx_niches, list):
+        niches_str = ", ".join(str(n) for n in ctx_niches)
+    else:
+        niches_str = str(ctx_niches)
+
+    t_type_profile = creator_context.get("t_type_profile")
+    lines = [
+        f"Commentaire: {text}",
+        f"Niches du contenu: {niches_str}",
+        "Profil du créateur:",
+        f"  - T-type dominant: {t_type_profile or ''}",
+    ]
+
+    named_axes = creator_context.get("named_axes") or {}
+    if isinstance(named_axes, dict) and named_axes:
+        scripted = float(named_axes.get("scripted_vs_raw") or 0)
+        energy = float(named_axes.get("energy_level") or 0)
+        mainstream = float(named_axes.get("mainstream_vs_niche") or 0)
+        lines.append(
+            f"  - Style: scripted={scripted:.2f}, energie={energy:.2f}, "
+            f"mainstream={mainstream:.2f}"
+        )
+
+    lines.append("Label (T1/T2/T2b/T3a/T3b/T4/T5):")
+    return "\n".join(lines)
+
+
+def _extract_t_type_from_content(content: str) -> str | None:
+    for token in _TOKEN_RE.findall(content):
+        if token in VALID_TTYPES:
+            return token
+    return None
+
+
 def classify_comment(
     text: str,
     niches: list[str],
     ollama_model: str,
+    *,
+    creator_context: dict[str, Any] | None = None,
 ) -> str | None:
-    """Classifie un commentaire via Ollama et retourne un T-type valide."""
-    try:
-        import ollama
-    except ImportError as exc:
-        _LOG.warning("ollama indisponible (%s).", exc)
-        return None
-
+    """Classifie un commentaire via LM Studio (distant) ou Ollama (local)."""
     system_prompt = (
         "Tu es un expert en analyse de commentaires Instagram.\n"
         "Réponds UNIQUEMENT avec le T-type, rien d'autre.\n"
@@ -126,40 +197,68 @@ def classify_comment(
         "T3a=question/curiosité, T3b=partage expérience, T4=référence\n"
         "communautaire, T5=contenu généré (suite/collab)"
     )
-    user_prompt = (
-        "Classifie ce commentaire Instagram.\n"
-        f"Commentaire: {text}\n"
-        f"Niches: {', '.join(niches)}\n"
-        "Réponds avec exactement un de ces labels : T1 T2 T2b T3a T3b T4 T5"
-    )
+    user_prompt = _build_user_prompt(text, niches, creator_context)
 
-    try:
-        response = ollama.chat(
-            model=ollama_model,
-            messages=[
+    content = ""
+
+    if LM_STUDIO_URL:
+        lm_model = os.environ.get("LM_STUDIO_MODEL", "qwen/qwen3.6-35b-a3b")
+        payload = {
+            "model": lm_model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-        )
-    except Exception as exc:
-        _LOG.warning("classify_comment : appel Ollama échoué (%s).", exc)
-        return None
-
-    content = ""
-    if isinstance(response, dict):
-        message = response.get("message") or {}
-        if isinstance(message, dict):
+            "max_tokens": 50,
+            "temperature": 0.0,
+            "thinking": {"type": "disabled"},
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
+        try:
+            resp = requests.post(
+                f"{LM_STUDIO_URL.rstrip('/')}/chat/completions",
+                json=payload,
+                timeout=60,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            message = data["choices"][0]["message"]
             content = str(message.get("content") or "")
-        else:
-            content = str(getattr(message, "content", "") or "")
+            if not content:
+                content = str(message.get("reasoning_content") or "")
+        except Exception as exc:
+            _LOG.warning("classify_comment : appel LM Studio échoué (%s).", exc)
+            return None
     else:
-        message = getattr(response, "message", None)
-        content = str(getattr(message, "content", "") or "")
+        try:
+            import ollama
+        except ImportError as exc:
+            _LOG.warning("ollama indisponible (%s).", exc)
+            return None
 
-    for token in _TOKEN_RE.findall(content):
-        if token in VALID_TTYPES:
-            return token
-    return None
+        try:
+            response = ollama.chat(
+                model=ollama_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+        except Exception as exc:
+            _LOG.warning("classify_comment : appel Ollama échoué (%s).", exc)
+            return None
+
+        if isinstance(response, dict):
+            message = response.get("message") or {}
+            if isinstance(message, dict):
+                content = str(message.get("content") or "")
+            else:
+                content = str(getattr(message, "content", "") or "")
+        else:
+            message = getattr(response, "message", None)
+            content = str(getattr(message, "content", "") or "")
+
+    return _extract_t_type_from_content(content)
 
 
 def build_training_entry(
@@ -204,7 +303,9 @@ def save_training_comments(
     os.replace(tmp, p)
 
 
-def _ensure_ollama_available() -> bool:
+def _ensure_llm_available() -> bool:
+    if LM_STUDIO_URL:
+        return True
     try:
         import ollama  # noqa: F401
     except ImportError as exc:
@@ -232,7 +333,8 @@ def main(argv: list[str] | None = None) -> int:
 
     raw_entries = load_raw_comments()
     training_entries, existing_keys = load_training_comments()
-    watchlist = load_watchlist()
+    watchlist = load_watchlist(WATCHLIST_PATH)
+    vector_store = load_vector_store(VECTOR_STORE_PATH)
 
     pending = []
     for raw_entry in raw_entries:
@@ -268,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    if not _ensure_ollama_available():
+    if not _ensure_llm_available():
         return 1
 
     training_by_key = {
@@ -282,8 +384,19 @@ def main(argv: list[str] | None = None) -> int:
         text = str(raw_entry.get("text") or "")
         niches = list(raw_entry.get("niches") or ["humour"])
         username = str(raw_entry.get("username") or "").lstrip("@").strip()
+        username_key = username.lower()
 
-        t_type = classify_comment(text, niches, OLLAMA_MODEL)
+        creator_context = {
+            "t_type_profile": watchlist.get(username_key, {}).get("t_type"),
+            "niches": raw_entry.get("niches") or ["humour"],
+            "named_axes": vector_store.get(username_key, {}).get("named_axes", {}),
+        }
+        t_type = classify_comment(
+            text,
+            niches,
+            OLLAMA_MODEL,
+            creator_context=creator_context,
+        )
         if t_type is None:
             _LOG.warning("@%s commentaire non classifié, skip", username)
             continue

@@ -434,7 +434,7 @@ sudo pmset -a autorestart 1
 | `data/discovery_session.json` | `discovery.py` | Compteur de quota humain quotidien |
 | `data/validations.json` | `telegram_discovery_bot.py` | Feedback humain (validate / reject / corrected) |
 | `data/discovery_bot_state.json` | `telegram_discovery_bot.py` | Offset Telegram pour `getUpdates` |
-| `watchlist.json` (racine) | `watcher.py` | Créateurs surveillés en temps réel par le Watcher |
+| `data/watchlist.json` | `watcher.py`, `scripts/embedder.py` | Créateurs surveillés (watcher + embeddings) |
 | `seeds.json` (racine) | `discovery.py` | Domaines + comptes seed pour exploration |
 
 Toutes les écritures sont **atomiques** (`tempfile + replace`), donc safe en cas de coupure brutale (panne de courant Mac Mini, kill -9, etc.).

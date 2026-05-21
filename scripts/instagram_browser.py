@@ -1092,10 +1092,65 @@ def _scroll_reels_grid_until_loaded(
     return grid_rows
 
 
+def get_reel_caption(media_id: str, context: BrowserContext) -> str:
+    """Récupère la caption d'un Reel via interception GraphQL sur /reel/{id}/."""
+    mid = str(media_id or "").strip()
+    if not mid:
+        return ""
+
+    caption = ""
+
+    def capture(response: Response) -> None:
+        nonlocal caption
+        if "graphql" not in response.url or caption:
+            return
+        try:
+            text = response.text()
+            if mid not in text:
+                return
+            idx = text.find(mid)
+            if idx < 0:
+                return
+            window = text[idx : idx + 2000]
+            matches = re.findall(
+                r'"(?:caption_text|text)"\s*:\s*"((?:[^"\\]|\\.){5,500})"',
+                window,
+            )
+            for raw in matches:
+                decoded = _unescape_json_string_fragment(raw)
+                if len(decoded.split()) >= 3 and "Ne pas suggérer" not in decoded:
+                    caption = decoded
+                    break
+        except Exception:
+            pass
+
+    page = context.new_page()
+    try:
+        page.on("response", capture)
+        page.goto(
+            f"{BASE_URL}/reel/{mid}/",
+            timeout=_REQUEST_TIMEOUT_MS,
+            wait_until="domcontentloaded",
+        )
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(3000)
+    except Exception:
+        pass
+    finally:
+        page.close()
+
+    return caption
+
+
 def get_recent_reels(
     username: str, context: BrowserContext, max_reels: int = 5
 ) -> list[dict[str, Any]]:
-    """Reels récents : media_ids (DOM) + métriques (interception GraphQL)."""
+    """Reels récents : media_ids (DOM) + métriques (interception GraphQL).
+
+    Les captions manquantes ne sont pas récupérées ici (pas de visite
+    /reel/{id}/ — trop lent pour le scoring discovery). Utiliser
+    ``get_reel_caption()`` depuis l'embedder (1x/semaine).
+    """
     page = context.new_page()
     out: list[dict[str, Any]] = []
     try:
@@ -1141,6 +1196,7 @@ def get_recent_reels(
                     "is_pinned": is_pinned,
                 }
             )
+        # caption vide : pas de get_reel_caption() ici (réservé à l'embedder).
     except Exception:
         return []
     finally:

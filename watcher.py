@@ -74,7 +74,7 @@ from scripts.instagram_browser import get_browser_context, get_recent_reels
 
 _HASHTAG_RE = re.compile(r"#(\w+)")
 
-DEFAULT_WATCHLIST_PATH = _PROJECT_ROOT / "watchlist.json"
+DEFAULT_WATCHLIST_PATH = _PROJECT_ROOT / "data" / "watchlist.json"
 VECTOR_STORE_PATH = Path("data/vector_store.json")
 
 VALID_PLATFORMS = frozenset({"instagram", "tiktok"})
