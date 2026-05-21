@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 from scripts import embedder
@@ -50,8 +51,126 @@ class BuildInputTextTest(unittest.TestCase):
         text = embedder.build_input_text("x", ["tag"], "t", [])
         self.assertIn("[COMMENTS_RECEIVED] (vide)", text)
 
+    def test_comments_include_like_counts(self) -> None:
+        text = embedder.build_input_text(
+            "x",
+            [],
+            "t",
+            [{"text": "super reel", "comment_likes": 42}],
+        )
+        self.assertIn("[COMMENTS_RECEIVED] [42 likes] super reel", text)
+
+
+class EnsureCommentsForAccountTest(unittest.TestCase):
+    def test_collects_and_reloads_all_comments(self) -> None:
+        reels = [{"media_id": "ABC", "comment_count": 10}]
+        after = (
+            [{"text": "hi", "comment_likes": 1, "media_id": "ABC"}],
+            {"ABC": [{"text": "hi", "comment_likes": 1, "media_id": "ABC"}]},
+        )
+        with patch.object(
+            embedder,
+            "comments_for_account_from_raw",
+            side_effect=[([], {}), after],
+        ), patch.object(embedder, "collect_top_comments", return_value=2) as mock_collect:
+            comments, _, source = embedder.ensure_comments_for_account(
+                "user", reels, MagicMock(), ["humour"]
+            )
+        mock_collect.assert_called_once()
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(source, "raw_comments.json+playwright")
+
+    def test_uses_raw_only_when_collect_adds_nothing(self) -> None:
+        existing = (
+            [{"text": "x", "comment_likes": 2, "media_id": "Z"}],
+            {"Z": [{"text": "x", "comment_likes": 2, "media_id": "Z"}]},
+        )
+        with patch.object(
+            embedder, "comments_for_account_from_raw", return_value=existing
+        ), patch.object(embedder, "collect_top_comments", return_value=0):
+            comments, _, source = embedder.ensure_comments_for_account(
+                "user", [], MagicMock(), "humour"
+            )
+        self.assertEqual(source, "raw_comments.json")
+        self.assertEqual(comments, existing[0])
+
+
+class CommentsFromRawTest(unittest.TestCase):
+    def test_returns_all_stored_comments_for_account(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "raw_comments.json"
+            entries = [
+                {
+                    "username": "creator",
+                    "media_id": "A",
+                    "text": "c1",
+                    "comment_likes": 1,
+                },
+                {
+                    "username": "creator",
+                    "media_id": "B",
+                    "text": "c2",
+                    "comment_likes": 9,
+                },
+                {
+                    "username": "other",
+                    "media_id": "Z",
+                    "text": "nope",
+                    "comment_likes": 99,
+                },
+            ]
+            path.write_text(json.dumps(entries), encoding="utf-8")
+            rows, by_media = embedder.comments_for_account_from_raw("creator", path)
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["text"], "c2")
+        self.assertEqual(rows[0]["comment_likes"], 9)
+        self.assertEqual(len(by_media["A"]), 1)
+        self.assertEqual(len(by_media["B"]), 1)
+
+    def test_keeps_same_text_on_different_reels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "raw_comments.json"
+            path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "username": "u",
+                            "media_id": "X",
+                            "text": "dup",
+                            "comment_likes": 5,
+                        },
+                        {
+                            "username": "u",
+                            "media_id": "Y",
+                            "text": "dup",
+                            "comment_likes": 3,
+                        },
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            rows, by_media = embedder.comments_for_account_from_raw("u", path)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(len(by_media["X"]), 1)
+        self.assertEqual(len(by_media["Y"]), 1)
+
 
 class EmbedTextTest(unittest.TestCase):
+    def test_embedding_config_ok(self) -> None:
+        with patch.object(embedder, "LM_STUDIO_URL", "http://127.0.0.1:1234/v1"), patch.object(
+            embedder, "LM_STUDIO_EMBED_MODEL", "my-embed-model"
+        ):
+            self.assertTrue(embedder.embedding_config_ok())
+
+    def test_missing_config_returns_none(self) -> None:
+        with patch.object(embedder, "LM_STUDIO_URL", ""), patch.object(
+            embedder, "LM_STUDIO_EMBED_MODEL", ""
+        ), self.assertLogs("aitertainment.embedder", level="ERROR") as cm:
+            result = embedder.embed_text("bonjour")
+        self.assertIsNone(result)
+        self.assertTrue(any("LM_STUDIO_EMBED_MODEL" in message for message in cm.output))
+
     @patch("scripts.embedder.requests.post")
     def test_lm_studio_embedding_returns_vector(self, mock_post: MagicMock) -> None:
         mock_resp = MagicMock()
@@ -59,14 +178,14 @@ class EmbedTextTest(unittest.TestCase):
         mock_resp.json.return_value = {"data": [{"embedding": [0.1, 0.2, 0.3]}]}
         mock_post.return_value = mock_resp
         with patch.object(embedder, "LM_STUDIO_URL", "http://127.0.0.1:1234/v1"), patch.object(
-            embedder, "LM_STUDIO_EMBED_MODEL", "bge-m3"
+            embedder, "LM_STUDIO_EMBED_MODEL", "my-embed-model"
         ):
             result = embedder.embed_text("bonjour")
         self.assertEqual(result, [0.1, 0.2, 0.3])
         mock_post.assert_called_once_with(
             "http://127.0.0.1:1234/v1/embeddings",
-            json={"model": "bge-m3", "input": "bonjour"},
-            timeout=60,
+            json={"model": "my-embed-model", "input": "bonjour"},
+            timeout=120,
         )
 
     @patch("scripts.embedder.requests.post")
@@ -76,41 +195,11 @@ class EmbedTextTest(unittest.TestCase):
         mock_resp.json.return_value = {"data": [{"embedding": [float("nan"), 0.2]}]}
         mock_post.return_value = mock_resp
         with patch.object(embedder, "LM_STUDIO_URL", "http://127.0.0.1:1234/v1"), patch.object(
-            embedder, "LM_STUDIO_EMBED_MODEL", "bge-m3"
+            embedder, "LM_STUDIO_EMBED_MODEL", "my-embed-model"
         ), self.assertLogs("aitertainment.embedder", level="WARNING") as cm:
             result = embedder.embed_text("bonjour")
         self.assertIsNone(result)
         self.assertTrue(any("NaN" in message for message in cm.output))
-
-    def test_valid_embedding_returns_float_list(self) -> None:
-        fake_ollama = MagicMock()
-        fake_ollama.embed.return_value = {"embeddings": [[0.1, 0.2, 0.3]]}
-        with patch.object(embedder, "LM_STUDIO_URL", ""), patch.object(
-            embedder, "LM_STUDIO_EMBED_MODEL", ""
-        ), patch.dict(sys.modules, {"ollama": fake_ollama}):
-            result = embedder.embed_text("bonjour")
-        self.assertEqual(result, [0.1, 0.2, 0.3])
-
-    def test_nan_embedding_returns_none_and_logs_warning(self) -> None:
-        fake_ollama = MagicMock()
-        fake_ollama.embed.return_value = {"embeddings": [[float("nan"), 0.2]]}
-        with patch.object(embedder, "LM_STUDIO_URL", ""), patch.object(
-            embedder, "LM_STUDIO_EMBED_MODEL", ""
-        ), patch.dict(sys.modules, {"ollama": fake_ollama}), self.assertLogs(
-            "aitertainment.embedder", level="WARNING"
-        ) as cm:
-            result = embedder.embed_text("bonjour")
-        self.assertIsNone(result)
-        self.assertTrue(any("NaN" in message for message in cm.output))
-
-    def test_ollama_exception_returns_none(self) -> None:
-        fake_ollama = MagicMock()
-        fake_ollama.embed.side_effect = RuntimeError("ollama down")
-        with patch.object(embedder, "LM_STUDIO_URL", ""), patch.object(
-            embedder, "LM_STUDIO_EMBED_MODEL", ""
-        ), patch.dict(sys.modules, {"ollama": fake_ollama}):
-            result = embedder.embed_text("bonjour")
-        self.assertIsNone(result)
 
 
 class ProjectToNamedAxesTest(unittest.TestCase):
@@ -120,6 +209,17 @@ class ProjectToNamedAxesTest(unittest.TestCase):
         self.assertEqual(set(axes), set(embedder.NAMED_AXES))
         self.assertTrue(all(value == 0.0 for value in axes.values()))
         self.assertTrue(any("PCA non disponible" in message for message in cm.output))
+
+    def test_pca_dim_mismatch_returns_zeros_without_crash(self) -> None:
+        from sklearn.decomposition import PCA
+
+        vectors = [[float(i + j) for j in range(12)] for i in range(10)]
+        model = PCA(n_components=10)
+        model.fit(vectors)
+        with self.assertLogs("aitertainment.embedder", level="WARNING") as cm:
+            axes = embedder.project_to_named_axes([0.1] * 1024, model)
+        self.assertTrue(all(value == 0.0 for value in axes.values()))
+        self.assertTrue(any("PCA ignorée" in message for message in cm.output))
 
     def test_valid_pca_returns_named_axes_between_zero_and_one(self) -> None:
         from sklearn.decomposition import PCA
@@ -150,6 +250,29 @@ class FitPcaTest(unittest.TestCase):
             for i in range(9)
         ]
         self.assertIsNone(embedder.fit_pca(store))
+
+    def test_fit_pca_ignores_mixed_dimensions(self) -> None:
+        store = [
+            {
+                "username": f"u{i}",
+                "embedding_raw": [float(i + j) for j in range(12)],
+            }
+            for i in range(10)
+        ]
+        store.append({"username": "small", "embedding_raw": [1.0] * 8})
+        with self.assertLogs("aitertainment.embedder", level="WARNING"):
+            model = embedder.fit_pca(store, target_dim=12)
+        self.assertIsNotNone(model)
+        self.assertEqual(embedder._pca_input_dim(model), 12)
+
+    def test_fit_pca_target_dim_requires_ten_at_that_dim(self) -> None:
+        store = [
+            {"username": f"u{i}", "embedding_raw": [float(i)] * 1024}
+            for i in range(3)
+        ]
+        with self.assertLogs("aitertainment.embedder", level="WARNING") as cm:
+            self.assertIsNone(embedder.fit_pca(store, target_dim=1024))
+        self.assertTrue(any("10 minimum" in message for message in cm.output))
 
     def test_ten_or_more_entries_fits_and_writes_pickle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -242,6 +365,24 @@ class ExtractCaptionFromOgDescriptionTest(unittest.TestCase):
             "caption sans guillemet fermant",
         )
 
+    def test_og_without_quotes_after_colon(self) -> None:
+        og = "120 likes, 2 comments - user le May 19, 2026: POW POW sans guillemets"
+        self.assertEqual(
+            embedder._extract_caption_from_og_description(og),
+            "POW POW sans guillemets",
+        )
+
+    def test_graphql_text_window_extracts_caption(self) -> None:
+        mid = "DYcbkPMM1cR"
+        blob = (
+            '{"code":"DYcbkPMM1cR","caption":{"text":"Audio only track name"},'
+            '"caption_text":"ignored"}'
+        )
+        self.assertEqual(
+            embedder._caption_from_graphql_text_window(blob, mid),
+            "Audio only track name",
+        )
+
     def test_empty_og_returns_empty(self) -> None:
         self.assertEqual(embedder._extract_caption_from_og_description(""), "")
 
@@ -252,11 +393,21 @@ class ExtractCaptionFromOgDescriptionTest(unittest.TestCase):
         mock_page.get_attribute.return_value = (
             '10 likes - user le May 19, 2026: "caption avec résidu".'
         )
-        mock_context = MagicMock()
-        mock_context.new_page.return_value = mock_page
-
-        caption = embedder._get_caption_from_reel_page("ABC123", mock_context)
+        with _mock_reel_page_no_comments():
+            mock_context = MagicMock()
+            mock_context.new_page.return_value = mock_page
+            caption = embedder._get_caption_from_reel_page("ABC123", mock_context)
         self.assertEqual(caption, "caption avec résidu")
+
+
+def _mock_reel_page_no_comments():
+    """Pas de panneau commentaires / DOM caption pendant les tests caption."""
+    return patch.multiple(
+        embedder,
+        navigate_to_reel_page=MagicMock(return_value=True),
+        click_reel_comment_button=MagicMock(return_value=None),
+        extract_reel_caption_from_dom=MagicMock(return_value=""),
+    )
 
 
 class GetCaptionFromReelPageTest(unittest.TestCase):
@@ -268,10 +419,10 @@ class GetCaptionFromReelPageTest(unittest.TestCase):
         mock_page.get_attribute.return_value = (
             '42 likes, 3 comments - creator le 1 janvier 2026: "Caption depuis og meta"'
         )
-        mock_context = MagicMock()
-        mock_context.new_page.return_value = mock_page
-
-        caption = embedder._get_caption_from_reel_page(media_id, mock_context)
+        with _mock_reel_page_no_comments():
+            mock_context = MagicMock()
+            mock_context.new_page.return_value = mock_page
+            caption = embedder._get_caption_from_reel_page(media_id, mock_context)
         self.assertEqual(caption, "Caption depuis og meta")
         mock_page.on.assert_called_once()
 
@@ -294,20 +445,16 @@ class GetCaptionFromReelPageTest(unittest.TestCase):
         mock_page.wait_for_load_state.return_value = None
         mock_page.wait_for_timeout.return_value = None
         mock_page.get_attribute.return_value = ""
-
         def register_handler(event: str, handler: Any) -> None:
             if event == "response":
                 handler(mock_response)
 
         mock_page.on.side_effect = register_handler
-        mock_context = MagicMock()
-        mock_context.new_page.return_value = mock_page
-
-        caption = embedder._get_caption_from_reel_page(media_id, mock_context)
+        with _mock_reel_page_no_comments():
+            mock_context = MagicMock()
+            mock_context.new_page.return_value = mock_page
+            caption = embedder._get_caption_from_reel_page(media_id, mock_context)
         self.assertEqual(caption, "Premier reel avec assez de mots")
-        mock_page.goto.assert_called_once_with(
-            f"https://www.instagram.com/reel/{media_id}/"
-        )
         mock_page.close.assert_called_once()
 
     def test_get_attribute_timeout_falls_back_to_graphql(self) -> None:
@@ -329,16 +476,15 @@ class GetCaptionFromReelPageTest(unittest.TestCase):
         mock_page.wait_for_load_state.return_value = None
         mock_page.wait_for_timeout.return_value = None
         mock_page.get_attribute.side_effect = TimeoutError("og:description timeout")
-
         def register_handler(event: str, handler: Any) -> None:
             if event == "response":
                 handler(mock_response)
 
         mock_page.on.side_effect = register_handler
-        mock_context = MagicMock()
-        mock_context.new_page.return_value = mock_page
-
-        caption = embedder._get_caption_from_reel_page(media_id, mock_context)
+        with _mock_reel_page_no_comments():
+            mock_context = MagicMock()
+            mock_context.new_page.return_value = mock_page
+            caption = embedder._get_caption_from_reel_page(media_id, mock_context)
         self.assertEqual(caption, "Caption depuis graphql fallback")
         mock_page.get_attribute.assert_called_once_with(
             'meta[property="og:description"]',
@@ -350,12 +496,39 @@ class GetCaptionFromReelPageTest(unittest.TestCase):
         mock_page = MagicMock()
         mock_page.on.return_value = None
         mock_page.get_attribute.return_value = ""
-        mock_context = MagicMock()
-        mock_context.new_page.return_value = mock_page
-
-        caption = embedder._get_caption_from_reel_page("UNKNOWN", mock_context)
+        with _mock_reel_page_no_comments(), patch.object(
+            embedder, "navigate_to_reel_page", return_value=True
+        ):
+            mock_context = MagicMock()
+            mock_context.new_page.return_value = mock_page
+            caption = embedder._get_caption_from_reel_page("UNKNOWN", mock_context)
         self.assertEqual(caption, "")
         mock_page.close.assert_called_once()
+
+
+class ParseCommentsDomFlexibleTest(unittest.TestCase):
+    def test_reel_dialog_panel_layout(self) -> None:
+        from scripts.instagram_browser import parse_comments_from_dom_text
+
+        panel = (
+            "judemgmt\n"
+            "@noahpdillon about @lucamadar in berlin for church electronic\n"
+            "\n"
+            "luca@judemgmt.com\n"
+            "7 sem\n"
+            "Voir la traduction\n"
+            "loevasoltani\n"
+            "🙏🙏🙏🙏🙏\n"
+            "7 semRépondre\n"
+            "shadrinsky\n"
+            "@lucamadar 🥹🥹🥹\n"
+            "6 sem1 J'aimeRépondre\n"
+        )
+        parsed = parse_comments_from_dom_text(panel)
+        self.assertEqual(len(parsed), 2)
+        self.assertEqual(parsed[0]["text"], "🙏🙏🙏🙏🙏")
+        self.assertEqual(parsed[1]["text"], "@lucamadar 🥹🥹🥹")
+        self.assertEqual(parsed[1]["like_count"], 1)
 
 
 class SaveVectorStoreTest(unittest.TestCase):
@@ -374,7 +547,10 @@ class MainTest(unittest.TestCase):
         creators = [{"username": "alpha", "action": "validated"}]
         with patch.object(embedder, "load_creators", return_value=creators), patch.object(
             embedder, "load_vector_store", return_value=[]
-        ), patch.object(embedder, "load_pca", return_value=None), patch.object(
+        ), patch.object(embedder, "_infer_embedding_dim", return_value=4096), patch.object(
+            embedder, "embedding_config_ok", return_value=True
+        ), patch.object(
+            embedder, "load_pca", return_value=None), patch.object(
             embedder, "sync_playwright"
         ) as mock_pw, patch.object(embedder, "get_browser_context") as mock_ctx, patch.object(
             embedder, "process_account"

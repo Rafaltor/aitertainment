@@ -173,8 +173,8 @@ CANDIDATE_SCORE_THRESHOLD = DISCOVERY_NOTIFY_THRESHOLD
 
 # Collecte commentaires Playwright (profils score > seuil, avant notif Telegram)
 TOP_COMMENTS_COLLECT_SCORE_THRESHOLD = 400.0
-TOP_COMMENTS_REELS_MAX = 5
-TOP_COMMENTS_PER_REEL = 3
+TOP_COMMENTS_REELS_MAX = 3  # reels avec le plus de comment_count
+TOP_COMMENTS_PER_REEL = 999  # legacy : plus de plafond par reel (tous les parsés)
 DEFAULT_RAW_COMMENTS_PATH = DEFAULT_DATA_DIR / "raw_comments.json"
 
 # Suggestions Instagram (``discover/*``) en source principale ; followings du
@@ -1489,121 +1489,18 @@ def _collect_top_comments(
     log: logging.Logger,
     raw_comments_path: Path | None = None,
 ) -> int:
-    """Collecte les commentaires les plus likés (max 5 reels × 3) via Playwright."""
-    from modules.classifier import ClassificationError, CommentClassifier
+    """Collecte tous les commentaires visibles (3 reels les plus commentés) via Playwright."""
+    from scripts.instagram_browser import collect_top_comments
 
-    u = (username or "").lstrip("@").strip()
-    reels_for_comments = [
-        r for r in (reels or []) if str(r.get("media_id") or "").strip()
-    ]
-    reels_sorted = sorted(
-        reels_for_comments,
-        key=lambda r: int(r.get("comment_count") or 0),
-        reverse=True,
+    return collect_top_comments(
+        username,
+        context,
+        reels,
+        niches,
+        raw_comments_path=raw_comments_path or DEFAULT_RAW_COMMENTS_PATH,
+        classify=True,
+        logger=log,
     )
-    reels_to_visit = reels_sorted[:TOP_COMMENTS_REELS_MAX]
-    if not u or not reels_to_visit:
-        return 0
-
-    comments_path = raw_comments_path or DEFAULT_RAW_COMMENTS_PATH
-    entries, dedup_keys = load_raw_comments(comments_path)
-    classifier = CommentClassifier()
-    collected = 0
-    page = context.new_page()
-
-    try:
-        for reel in reels_to_visit:
-            media_id = str(reel.get("media_id") or "").strip()
-            view_count = int(reel.get("view_count") or reel.get("views") or 0)
-            try:
-                page.goto(
-                    f"{BASE_URL}/reel/{media_id}/",
-                    timeout=15_000,
-                    wait_until="domcontentloaded",
-                )
-                page.wait_for_load_state("load")
-                page.wait_for_timeout(2000)
-
-                comment_btn = page.locator(
-                    'svg[aria-label="Commenter"], svg[aria-label="Comment"]'
-                )
-                if comment_btn.count() == 0:
-                    log.warning(
-                        "Collecte commentaires @%s reel %s : bouton commentaire absent.",
-                        u,
-                        media_id,
-                    )
-                    continue
-                comment_btn.first.click(timeout=10_000)
-                page.wait_for_timeout(2000)
-
-                panel_text = page.evaluate(
-                    """() => {
-                        const p = document.querySelector("div._aano") ||
-                                  document.querySelector("[role=dialog]");
-                        return p ? p.innerText : "";
-                    }"""
-                )
-                parsed = parse_comments_from_dom_text(str(panel_text or ""))
-                top_comments = sorted(
-                    parsed, key=lambda c: int(c.get("like_count") or 0), reverse=True
-                )[:TOP_COMMENTS_PER_REEL]
-
-                for comment in top_comments:
-                    comment_text = str(comment.get("text") or "").strip()
-                    if not comment_text:
-                        continue
-                    try:
-                        clf = classifier.classify([comment_text], niches=niches)
-                        t_type = str(clf.get("type") or "")
-                    except (ValueError, ClassificationError) as e:
-                        log.warning(
-                            "Collecte commentaires @%s reel %s : classify KO (%s).",
-                            u,
-                            media_id,
-                            e,
-                        )
-                        continue
-
-                    dedup_key = build_dedup_key(media_id, comment_text)
-                    if dedup_key in dedup_keys:
-                        continue
-                    dedup_keys.add(dedup_key)
-                    entries.append(
-                        {
-                            "media_id": media_id,
-                            "username": u,
-                            "niches": list(niches) if isinstance(niches, list) else [niches],
-                            "text": comment_text,
-                            "comment_likes": int(comment.get("like_count") or 0),
-                            "views": view_count,
-                            "comment_to_like_ratio": 0.0,
-                            "caption": "",
-                            "hashtags": [],
-                            "audio_id": "",
-                            "t_type": t_type,
-                            "t_type_profile": None,
-                            "llm_validated": True,
-                            "collected_at": datetime.now(timezone.utc)
-                            .replace(microsecond=0)
-                            .isoformat(),
-                        }
-                    )
-                    collected += 1
-            except Exception as e:
-                log.warning(
-                    "Collecte commentaires @%s reel %s : erreur (%s).",
-                    u,
-                    media_id,
-                    e,
-                )
-            polite_sleep(seconds=1)
-    finally:
-        page.close()
-
-    if collected:
-        save_raw_comments(entries, comments_path)
-    return collected
 
 
 # =============================================================================

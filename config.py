@@ -78,6 +78,12 @@ OLLAMA_URL = (
 ).strip()
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b").strip()
 
+# LM Studio — embeddings profils (``scripts/embedder.py`` uniquement)
+LM_STUDIO_URL = (
+    os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1") or ""
+).strip().rstrip("/")
+LM_STUDIO_EMBED_MODEL = os.environ.get("LM_STUDIO_EMBED_MODEL", "").strip()
+
 VALID_T_TYPES = frozenset({"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"})
 
 # ----------------------------------------------------------------------------

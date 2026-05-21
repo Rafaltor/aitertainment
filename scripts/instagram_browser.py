@@ -11,6 +11,7 @@ import random
 import re
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,9 @@ _REELS_GRID_COLUMNS = 5
 _REELS_GRID_ROW_HEIGHT_PX = 430
 _REELS_SCROLL_WAIT_MS = 2_000
 _REQUEST_TIMEOUT_MS = 15_000
+RAW_COMMENTS_PATH = Path("data/raw_comments.json")
+COMMENTS_COLLECT_REELS_MAX = 3
+COMMENTS_PANEL_SCROLL_ROUNDS = 6
 _GRAPHQL_METRIC_KEYS = (
     "view_count",
     "play_count",
@@ -89,9 +93,530 @@ _COMMENTS_UI_NOISE = (
 _TIMESTAMP_RE = re.compile(r"^\d+\s*[jhdmywsJHDMYWS]")
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._]{2,30}$")
 
+# Icônes commentaire reel (FR prioritaire — context Playwright en locale fr-FR).
+_REEL_COMMENT_ARIA_LABELS = (
+    "Commentaire",
+    "Commenter",
+    "Comment",
+    "Comments",
+    "Commentaires",
+)
+
+_REEL_COMMENTS_PANEL_SELECTORS = (
+    'div[role="dialog"] ul',
+    "div._aano",
+    '[role="dialog"]',
+    "section ul",
+)
+
+_COMMENT_META_RE = re.compile(
+    r"\d+\s*(?:sem|j|h|min|mois|s\b)|Répondre|J.aime|like",
+    re.IGNORECASE,
+)
+
+
+def _reel_page_has_shell(page: Page) -> bool:
+    """True si la page reel a un DOM Instagram (pas le shell vide /reel/ direct)."""
+    try:
+        if len(page.content()) < 5000:
+            return False
+        return page.locator("svg").count() > 3
+    except Exception:
+        return False
+
+
+def _reel_link_locator(page: Page, media_id: str):
+    mid = str(media_id or "").strip()
+    return page.locator(
+        f'a[href*="/reel/{mid}"], a[href*="/p/{mid}"], a[href*="{mid}"]'
+    )
+
+
+def _scroll_reels_grid_to_find_link(page: Page, media_id: str, *, max_rounds: int = 10) -> bool:
+    """Scroll la grille /reels/ jusqu'à trouver un lien vers ``media_id``."""
+    mid = str(media_id or "").strip()
+    if not mid:
+        return False
+    page.evaluate("window.scrollTo(0, 0)")
+    page.wait_for_timeout(800)
+    for _ in range(max_rounds):
+        if _reel_link_locator(page, mid).count() > 0:
+            return True
+        page.evaluate("window.scrollBy(0, 450)")
+        page.wait_for_timeout(1200)
+    return _reel_link_locator(page, mid).count() > 0
+
+
+def navigate_to_reel_page(
+    page: Page,
+    media_id: str,
+    username: str = "",
+    *,
+    timeout_ms: int = _REQUEST_TIMEOUT_MS,
+    reels_grid_loaded: bool = False,
+) -> bool:
+    """Charge un reel. Préfère la grille ``/{user}/reels/`` (``/reel/{id}/`` seul est souvent vide)."""
+    mid = str(media_id or "").strip()
+    if not mid:
+        return False
+
+    page.set_viewport_size(_VIEWPORT)
+    u = str(username or "").lstrip("@").strip()
+
+    if u and not reels_grid_loaded:
+        try:
+            page.goto(
+                f"{BASE_URL}/{u}/reels/",
+                timeout=timeout_ms,
+                wait_until="domcontentloaded",
+            )
+            page.wait_for_load_state("load")
+            page.wait_for_timeout(2500)
+        except Exception as e:
+            log.warning("reel %s : accès @%s/reels/ échoué (%s).", mid, u, e)
+            return False
+
+    if u:
+        try:
+            if not _scroll_reels_grid_to_find_link(page, mid):
+                log.warning(
+                    "reel %s : lien absent sur @%s/reels/ (même après scroll).",
+                    mid,
+                    u,
+                )
+                return False
+            _reel_link_locator(page, mid).first.click(timeout=10_000)
+            page.wait_for_timeout(4000)
+            if _reel_page_has_shell(page):
+                return True
+            log.warning("reel %s : clic grille @%s mais DOM toujours vide.", mid, u)
+            return False
+        except Exception as e:
+            log.warning("reel %s : ouverture via grille @%s échouée (%s).", mid, u, e)
+            return False
+
+    try:
+        page.goto(
+            f"{BASE_URL}/reel/{mid}/",
+            timeout=timeout_ms,
+            wait_until="domcontentloaded",
+        )
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(3000)
+        if _reel_page_has_shell(page):
+            return True
+    except Exception:
+        pass
+
+    log.warning("reel %s : page vide (pas de username pour la grille).", mid)
+    return False
+
+
+def open_reels_grid(page: Page, username: str, *, timeout_ms: int = _REQUEST_TIMEOUT_MS) -> bool:
+    """Ouvre ``/{username}/reels/`` (à réutiliser pour plusieurs reels)."""
+    u = str(username or "").lstrip("@").strip()
+    if not u:
+        return False
+    page.set_viewport_size(_VIEWPORT)
+    try:
+        page.goto(
+            f"{BASE_URL}/{u}/reels/",
+            timeout=timeout_ms,
+            wait_until="domcontentloaded",
+        )
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(2500)
+        return True
+    except Exception as e:
+        log.warning("grille @%s/reels/ inaccessible (%s).", u, e)
+        return False
+
+
+def return_to_reels_grid(page: Page, username: str) -> bool:
+    """Revenir à la grille reels après avoir ouvert un reel."""
+    u = str(username or "").lstrip("@").strip()
+    if not u:
+        return False
+    try:
+        if f"/{u}/reels" in (page.url or ""):
+            return True
+        page.go_back(wait_until="domcontentloaded", timeout=15_000)
+        page.wait_for_timeout(2000)
+        if f"/{u}/reels" in (page.url or ""):
+            return True
+    except Exception:
+        pass
+    return open_reels_grid(page, u)
+
+
+def build_comment_dedup_key(media_id: str, text: str) -> str:
+    return f"{media_id}||{text.strip().lower()}"
+
+
+def load_raw_comments_file(
+    path: Path | str | None = None,
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Charge ``raw_comments.json`` et retourne ``(entries, clés dédup)``."""
+    p = Path(path) if path is not None else RAW_COMMENTS_PATH
+    if not p.exists():
+        return [], set()
+    data = json.loads(p.read_text(encoding="utf-8"))
+    entries = data if isinstance(data, list) else []
+    keys = {
+        build_comment_dedup_key(str(e["media_id"]), str(e["text"]))
+        for e in entries
+        if isinstance(e, dict) and e.get("media_id") and e.get("text")
+    }
+    return entries, keys
+
+
+def save_raw_comments_file(entries: list[dict[str, Any]], path: Path | str | None = None) -> None:
+    p = Path(path) if path is not None else RAW_COMMENTS_PATH
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(p)
+
+
+def collect_top_comments(
+    username: str,
+    context: BrowserContext,
+    reels: list[dict[str, Any]],
+    niches: list[str] | str,
+    *,
+    raw_comments_path: Path | str | None = None,
+    classify: bool = True,
+    logger: logging.Logger | None = None,
+) -> int:
+    """Collecte tous les commentaires visibles sur les 3 reels les plus commentés."""
+    log_cb = logger or log
+    u = (username or "").lstrip("@").strip()
+    reels_sorted = sorted(
+        [r for r in (reels or []) if str(r.get("media_id") or "").strip()],
+        key=lambda r: int(r.get("comment_count") or 0),
+        reverse=True,
+    )
+    reels_to_visit = reels_sorted[:COMMENTS_COLLECT_REELS_MAX]
+    if not u or not reels_to_visit:
+        return 0
+
+    entries, dedup_keys = load_raw_comments_file(raw_comments_path)
+    classifier = None
+    if classify:
+        try:
+            from modules.classifier import CommentClassifier
+
+            classifier = CommentClassifier()
+        except Exception as e:
+            log_cb.warning(
+                "Collecte commentaires @%s : classifier indisponible (%s) — "
+                "commentaires non classifiés.",
+                u,
+                e,
+            )
+            classify = False
+
+    niches_list = list(niches) if isinstance(niches, list) else [str(niches)]
+    candidates: list[dict[str, Any]] = []
+    page = context.new_page()
+
+    try:
+        if not open_reels_grid(page, u):
+            return 0
+
+        for reel in reels_to_visit:
+            media_id = str(reel.get("media_id") or "").strip()
+            view_count = int(reel.get("view_count") or reel.get("views") or 0)
+            try:
+                if not navigate_to_reel_page(
+                    page, media_id, u, reels_grid_loaded=True
+                ):
+                    log_cb.warning(
+                        "Collecte commentaires @%s reel %s : page non chargée.",
+                        u,
+                        media_id,
+                    )
+                    continue
+
+                clicked = click_reel_comment_button(page)
+                if not clicked:
+                    log_cb.warning(
+                        "Collecte commentaires @%s reel %s : bouton absent. "
+                        "aria-labels : %s",
+                        u,
+                        media_id,
+                        _list_reel_page_aria_labels(page)[:25] or "(aucun)",
+                    )
+                    return_to_reels_grid(page, u)
+                    continue
+
+                page.wait_for_timeout(2000)
+                panel_text = extract_reel_comments_panel_text(page)
+                parsed = parse_comments_from_dom_text(str(panel_text or ""))
+                for comment in parsed:
+                    text = str(comment.get("text") or "").strip()
+                    if not text:
+                        continue
+                    candidates.append(
+                        {
+                            "media_id": media_id,
+                            "views": view_count,
+                            "text": text,
+                            "like_count": int(comment.get("like_count") or 0),
+                        }
+                    )
+            except Exception as e:
+                log_cb.warning(
+                    "Collecte commentaires @%s reel %s : erreur (%s).",
+                    u,
+                    media_id,
+                    e,
+                )
+            finally:
+                return_to_reels_grid(page, u)
+            polite_sleep(seconds=1)
+
+        collected = 0
+
+        for comment in candidates:
+            media_id = str(comment.get("media_id") or "").strip()
+            comment_text = str(comment.get("text") or "").strip()
+            view_count = int(comment.get("views") or 0)
+
+            t_type = ""
+            llm_validated = False
+            if classify and classifier is not None:
+                try:
+                    from modules.classifier import ClassificationError
+
+                    clf = classifier.classify([comment_text], niches=niches_list)
+                    t_type = str(clf.get("type") or "")
+                    llm_validated = True
+                except (ValueError, ClassificationError) as e:
+                    log_cb.warning(
+                        "Collecte commentaires @%s reel %s : classify KO (%s).",
+                        u,
+                        media_id,
+                        e,
+                    )
+                    continue
+
+            dedup_key = build_comment_dedup_key(media_id, comment_text)
+            if dedup_key in dedup_keys:
+                continue
+            dedup_keys.add(dedup_key)
+            entries.append(
+                {
+                    "media_id": media_id,
+                    "username": u,
+                    "niches": niches_list,
+                    "text": comment_text,
+                    "comment_likes": int(comment.get("like_count") or 0),
+                    "views": view_count,
+                    "comment_to_like_ratio": 0.0,
+                    "caption": "",
+                    "hashtags": [],
+                    "audio_id": "",
+                    "t_type": t_type or None,
+                    "t_type_profile": None,
+                    "llm_validated": llm_validated,
+                    "collected_at": datetime.now(timezone.utc)
+                    .replace(microsecond=0)
+                    .isoformat(),
+                }
+            )
+            collected += 1
+    finally:
+        page.close()
+
+    if collected:
+        save_raw_comments_file(entries, raw_comments_path)
+    if candidates:
+        reels_with_data = len({c.get("media_id") for c in candidates if c.get("media_id")})
+        log_cb.info(
+            "Collecte commentaires @%s : %d nouveau(x) enregistré(s) "
+            "(%d parsé(s) sur %d reel(s)).",
+            u,
+            collected,
+            len(candidates),
+            reels_with_data,
+        )
+    return collected
+
+
+def _list_reel_page_aria_labels(page: Page, limit: int = 40) -> list[str]:
+    """Debug : aria-labels visibles sur la page reel (diagnostic sélecteurs)."""
+    try:
+        raw = page.evaluate(
+            """(limit) => {
+                const out = [];
+                document.querySelectorAll("[aria-label]").forEach((el) => {
+                    const a = el.getAttribute("aria-label");
+                    if (a && !out.includes(a)) out.push(a);
+                });
+                return out.slice(0, limit);
+            }""",
+            limit,
+        )
+        return [str(x) for x in raw] if isinstance(raw, list) else []
+    except Exception:
+        return []
+
+
+def click_reel_comment_button(page: Page) -> str | None:
+    """Ouvre le panneau commentaires. Retourne le aria-label cliqué ou None."""
+    for label in _REEL_COMMENT_ARIA_LABELS:
+        for selector in (
+            f'button:has(svg[aria-label="{label}"])',
+            f'div[role="button"]:has(svg[aria-label="{label}"])',
+            f'svg[aria-label="{label}"]',
+            f'[aria-label="{label}"]',
+        ):
+            loc = page.locator(selector)
+            if loc.count() == 0:
+                continue
+            try:
+                loc.first.click(timeout=10_000)
+                return label
+            except Exception:
+                continue
+
+    try:
+        page.get_by_role(
+            "button",
+            name=re.compile(r"comment", re.IGNORECASE),
+        ).first.click(timeout=10_000)
+        return "role=button(name~/comment/i)"
+    except Exception:
+        pass
+
+    try:
+        clicked_label = page.evaluate(
+            """() => {
+                const labels = %s;
+                for (const label of labels) {
+                    const svg = document.querySelector(
+                        'svg[aria-label="' + label + '"]'
+                    );
+                    if (!svg) continue;
+                    const btn = svg.closest('div[role="button"]')
+                        || svg.closest('button')
+                        || svg.parentElement;
+                    if (btn) { btn.click(); return label; }
+                }
+                return null;
+            }"""
+            % json.dumps(list(_REEL_COMMENT_ARIA_LABELS))
+        )
+        return str(clicked_label) if clicked_label else None
+    except Exception:
+        return None
+
+
+def extract_reel_comments_panel_text(
+    page: Page,
+    *,
+    scroll_rounds: int = COMMENTS_PANEL_SCROLL_ROUNDS,
+) -> str:
+    """Texte brut du panneau commentaires (scroll pour charger plus de lignes)."""
+    try:
+        for _ in range(max(0, scroll_rounds)):
+            page.evaluate(
+                """() => {
+                    const dialog = document.querySelector('[role="dialog"]');
+                    if (!dialog) return;
+                    const scrollable = dialog.querySelector('ul')
+                        || dialog.querySelector('div[style*="overflow"]')
+                        || dialog;
+                    scrollable.scrollTop = scrollable.scrollHeight;
+                }"""
+            )
+            page.wait_for_timeout(700)
+        return str(
+            page.evaluate(
+                """(selectors) => {
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (el && el.innerText && el.innerText.trim().length > 20) {
+                            return el.innerText;
+                        }
+                    }
+                    return "";
+                }""",
+                list(_REEL_COMMENTS_PANEL_SELECTORS),
+            )
+            or ""
+        )
+    except Exception:
+        return ""
+
+
+def extract_reel_caption_from_dom(page: Page) -> str:
+    """Repli caption depuis le DOM visible (dialog reel ou article)."""
+    try:
+        dialog_lines = page.evaluate(
+            """() => {
+                const ul = document.querySelector('div[role="dialog"] ul');
+                if (!ul) return [];
+                return (ul.innerText || "").split("\\n").map((s) => s.trim());
+            }"""
+        )
+        if isinstance(dialog_lines, list):
+            for line in dialog_lines[1:10]:
+                s = str(line or "").strip()
+                if len(s) < 8 or len(s) > 2200:
+                    continue
+                if _TIMESTAMP_RE.match(s) or _COMMENT_META_RE.search(s):
+                    continue
+                if any(
+                    x in s
+                    for x in (
+                        "Voir la traduction",
+                        "Suivre",
+                        "Audio d'origine",
+                        "Aimé par",
+                    )
+                ):
+                    continue
+                if "@" in s or len(s.split()) >= 4:
+                    return s
+    except Exception:
+        pass
+
+    try:
+        text = page.evaluate(
+            """() => {
+                const article = document.querySelector("article");
+                if (!article) return "";
+                const skip = /likes?|comment|J'aime|partager|enregistr|écouter|audio/i;
+                const nodes = article.querySelectorAll(
+                    'h1, span[dir="auto"], div[dir="auto"]'
+                );
+                for (const el of nodes) {
+                    const t = (el.innerText || "").trim();
+                    if (t.length < 8 || t.length > 2200) continue;
+                    if (skip.test(t)) continue;
+                    if (/^@[\\w.]+$/.test(t)) continue;
+                    return t;
+                }
+                return "";
+            }"""
+        )
+        return str(text or "").strip()
+    except Exception:
+        return ""
+
 
 def _parse_dom_comment_likes(likes_line: str) -> int:
-    likes_clean = re.sub(r"[^\d]", "", likes_line.split("J")[0])
+    line = str(likes_line or "")
+    m = re.search(
+        r"(\d[\d\s\u202f\xa0.,]*)\s*J['\u2019]?aime",
+        line,
+        re.IGNORECASE,
+    )
+    if m:
+        return _parse_count(m.group(1))
+    likes_clean = re.sub(r"[^\d]", "", line.split("J")[0])
     if not likes_clean:
         return 0
     try:
@@ -100,16 +625,71 @@ def _parse_dom_comment_likes(likes_line: str) -> int:
         return 0
 
 
+def _parse_comments_dom_flexible(text: str) -> list[dict[str, Any]]:
+    """Parse le panneau commentaires layout actuel (lignes collées type ``7 semRépondre``)."""
+    lines = [ln.strip() for ln in str(text).split("\n") if ln.strip()]
+    if not lines:
+        return []
+
+    start = 0
+    for idx, ln in enumerate(lines):
+        if "Voir la traduction" in ln:
+            start = idx + 1
+            break
+
+    results: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    i = start
+    while i < len(lines):
+        user_line = lines[i]
+        if not _USERNAME_RE.match(user_line):
+            i += 1
+            continue
+
+        commenter = user_line.lstrip("@").lower()
+        i += 1
+        comment_parts: list[str] = []
+        like_count = 0
+
+        while i < len(lines):
+            line = lines[i]
+            if _COMMENT_META_RE.search(line):
+                if re.search(r"J.aime|like", line, re.IGNORECASE):
+                    like_count = _parse_dom_comment_likes(line)
+                i += 1
+                break
+            if not any(noise in line for noise in _COMMENTS_UI_NOISE):
+                comment_parts.append(line)
+            i += 1
+
+        comment_line = " ".join(comment_parts).strip()
+        if not comment_line or any(noise in comment_line for noise in _COMMENTS_UI_NOISE):
+            continue
+        lower = comment_line.lower()
+        if any(x in lower for x in ("http", "www", ".com")):
+            continue
+        if len(comment_line) < 2:
+            continue
+
+        key = (commenter, comment_line.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append(
+            {
+                "username_commenter": commenter,
+                "text": comment_line,
+                "like_count": like_count,
+            }
+        )
+
+    return results
+
+
 def parse_comments_from_dom_text(text: str) -> list[dict[str, Any]]:
     """Parse le panneau commentaires Instagram (texte DOM) en entrées structurées.
 
-    Structure attendue par bloc (6 lignes) ::
-        username
-        espace (``\\xa0`` ou ligne vide)
-        timestamp (ex. ``2 j``)
-        texte du commentaire
-        likes + ``J'aime`` (ex. ``1\\u202f279\\xa0J'aime``)
-        ``Répondre``
+    Structure legacy par bloc (6 lignes) ou layout reel dialog (flexible).
     """
     if not text or not str(text).strip():
         return []
@@ -152,7 +732,9 @@ def parse_comments_from_dom_text(text: str) -> list[dict[str, Any]]:
         else:
             i += 1
 
-    return results
+    if results:
+        return results
+    return _parse_comments_dom_flexible(text)
 
 
 def _parse_count(text: str) -> int:
