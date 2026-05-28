@@ -1498,7 +1498,7 @@ def _collect_top_comments(
         reels,
         niches,
         raw_comments_path=raw_comments_path or DEFAULT_RAW_COMMENTS_PATH,
-        classify=True,
+        classify=False,
         logger=log,
     )
 

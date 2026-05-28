@@ -218,6 +218,31 @@ class FormatCommentsSampleTest(unittest.TestCase):
         self.assertEqual(_format_comments_sample(["", "  ", None]), "(aucun commentaire disponible)")
 
 
+class GenerateAlpacaFinetunedTest(unittest.TestCase):
+    @patch("modules.classifier.config.OLLAMA_GENERATOR_MODEL", "aitertainment-generator")
+    @patch("modules.classifier._http_post")
+    def test_finetuned_path_uses_alpaca_prompt(self, mock_post: MagicMock) -> None:
+        mock_post.side_effect = [
+            _ollama_json_response("mdr trop vrai"),
+            _ollama_json_response("la ref est folle"),
+            _ollama_json_response("j'ai dead"),
+        ]
+        out = generate_comments(
+            {"type": "T2", "confidence": 0.9},
+            [],
+            niches=["humour"],
+            t_type_profile="T2b",
+            video_context={"caption": "test", "hashtags": ["humour"]},
+        )
+        self.assertEqual(len(out), 3)
+        self.assertEqual(out[0], "mdr trop vrai")
+        body = mock_post.call_args_list[0].kwargs["json_body"]
+        self.assertEqual(body["model"], "aitertainment-generator")
+        self.assertIn("### Instruction:", body["prompt"])
+        self.assertIn("T-type commentateur: T2b", body["prompt"])
+        self.assertTrue(body["prompt"].endswith("### Response:\n"))
+
+
 class GenerateWithNamedAxesTest(unittest.TestCase):
     @staticmethod
     def _capture_prompt(mock_post: MagicMock) -> str:

@@ -78,6 +78,11 @@ OLLAMA_URL = (
 ).strip()
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b").strip()
 
+# Modèle Ollama fine-tuné pour ``generate_comments`` (format Alpaca).
+# Si défini, le pipeline utilise 3 appels « un commentaire » au lieu du JSON legacy.
+# Ex. : ``aitertainment-generator`` après ``ollama create`` (cf. deploy/Modelfile).
+OLLAMA_GENERATOR_MODEL = os.environ.get("OLLAMA_GENERATOR_MODEL", "").strip()
+
 # LM Studio — embeddings profils (``scripts/embedder.py`` uniquement)
 LM_STUDIO_URL = (
     os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1") or ""

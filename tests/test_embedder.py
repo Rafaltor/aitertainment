@@ -94,6 +94,25 @@ class EnsureCommentsForAccountTest(unittest.TestCase):
         self.assertEqual(source, "raw_comments.json")
         self.assertEqual(comments, existing[0])
 
+    def test_skip_playwright_when_incremental(self) -> None:
+        existing = (
+            [{"text": "x", "comment_likes": 2, "media_id": "Z"}],
+            {"Z": [{"text": "x", "comment_likes": 2, "media_id": "Z"}]},
+        )
+        with patch.object(
+            embedder, "comments_for_account_from_raw", return_value=existing
+        ), patch.object(embedder, "collect_top_comments", return_value=0) as mock_collect:
+            comments, _, source = embedder.ensure_comments_for_account(
+                "user",
+                [],
+                MagicMock(),
+                "humour",
+                skip_playwright=True,
+            )
+        mock_collect.assert_not_called()
+        self.assertEqual(source, "raw_comments.json")
+        self.assertEqual(comments, existing[0])
+
 
 class CommentsFromRawTest(unittest.TestCase):
     def test_returns_all_stored_comments_for_account(self) -> None:
@@ -203,93 +222,24 @@ class EmbedTextTest(unittest.TestCase):
 
 
 class ProjectToNamedAxesTest(unittest.TestCase):
-    def test_pca_none_returns_zeros_with_warning(self) -> None:
+    def test_no_anchors_returns_zeros_with_warning(self) -> None:
         with self.assertLogs("aitertainment.embedder", level="WARNING") as cm:
             axes = embedder.project_to_named_axes([0.1] * 8, None)
         self.assertEqual(set(axes), set(embedder.NAMED_AXES))
         self.assertTrue(all(value == 0.0 for value in axes.values()))
-        self.assertTrue(any("PCA non disponible" in message for message in cm.output))
+        self.assertTrue(any("Ancres d'axes indisponibles" in message for message in cm.output))
 
-    def test_pca_dim_mismatch_returns_zeros_without_crash(self) -> None:
-        from sklearn.decomposition import PCA
-
-        vectors = [[float(i + j) for j in range(12)] for i in range(10)]
-        model = PCA(n_components=10)
-        model.fit(vectors)
-        with self.assertLogs("aitertainment.embedder", level="WARNING") as cm:
-            axes = embedder.project_to_named_axes([0.1] * 1024, model)
-        self.assertTrue(all(value == 0.0 for value in axes.values()))
-        self.assertTrue(any("PCA ignorée" in message for message in cm.output))
-
-    def test_valid_pca_returns_named_axes_between_zero_and_one(self) -> None:
-        from sklearn.decomposition import PCA
-
-        vectors = [[float(i + j) for j in range(12)] for i in range(10)]
-        model = PCA(n_components=10)
-        model.fit(vectors)
-        axes = embedder.project_to_named_axes(vectors[0], model)
+    def test_anchor_projection_returns_bounded_scores(self) -> None:
+        anchors = {
+            axis: {
+                "low": [1.0 if i == idx else 0.0 for i in range(8)],
+                "high": [0.0 if i == idx else 1.0 for i in range(8)],
+            }
+            for idx, axis in enumerate(embedder.NAMED_AXES)
+        }
+        axes = embedder.project_to_named_axes([0.5] * 8, anchors)
         self.assertEqual(set(axes), set(embedder.NAMED_AXES))
         self.assertTrue(all(0.0 <= value <= 1.0 for value in axes.values()))
-
-    def test_min_max_normalization_spans_zero_to_one(self) -> None:
-        from sklearn.decomposition import PCA
-
-        vectors = [[float(i + j) for j in range(12)] for i in range(10)]
-        model = PCA(n_components=10)
-        model.fit(vectors)
-        axes = embedder.project_to_named_axes(vectors[3], model)
-        values = list(axes.values())
-        self.assertAlmostEqual(min(values), 0.0, places=6)
-        self.assertAlmostEqual(max(values), 1.0, places=6)
-
-
-class FitPcaTest(unittest.TestCase):
-    def test_less_than_ten_entries_returns_none(self) -> None:
-        store = [
-            {"username": f"u{i}", "embedding_raw": [float(i)] * 12}
-            for i in range(9)
-        ]
-        self.assertIsNone(embedder.fit_pca(store))
-
-    def test_fit_pca_ignores_mixed_dimensions(self) -> None:
-        store = [
-            {
-                "username": f"u{i}",
-                "embedding_raw": [float(i + j) for j in range(12)],
-            }
-            for i in range(10)
-        ]
-        store.append({"username": "small", "embedding_raw": [1.0] * 8})
-        with self.assertLogs("aitertainment.embedder", level="WARNING"):
-            model = embedder.fit_pca(store, target_dim=12)
-        self.assertIsNotNone(model)
-        self.assertEqual(embedder._pca_input_dim(model), 12)
-
-    def test_fit_pca_target_dim_requires_ten_at_that_dim(self) -> None:
-        store = [
-            {"username": f"u{i}", "embedding_raw": [float(i)] * 1024}
-            for i in range(3)
-        ]
-        with self.assertLogs("aitertainment.embedder", level="WARNING") as cm:
-            self.assertIsNone(embedder.fit_pca(store, target_dim=1024))
-        self.assertTrue(any("10 minimum" in message for message in cm.output))
-
-    def test_ten_or_more_entries_fits_and_writes_pickle(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            pca_path = Path(tmp) / "pca_model.pkl"
-            store = [
-                {"username": f"u{i}", "embedding_raw": [float(i + j) for j in range(12)]}
-                for i in range(10)
-            ]
-            with patch.object(embedder, "PCA_MODEL_PATH", Path("pca_model.pkl")), patch.object(
-                embedder, "_resolve_path", return_value=pca_path
-            ):
-                model = embedder.fit_pca(store)
-            self.assertIsNotNone(model)
-            self.assertTrue(pca_path.exists())
-            with pca_path.open("rb") as fh:
-                loaded = pickle.load(fh)
-            self.assertEqual(loaded.n_components, 10)
 
 
 class LoadCreatorsFromDatabaseTest(unittest.TestCase):
@@ -345,6 +295,35 @@ class LoadCreatorsFromDatabaseTest(unittest.TestCase):
             )
             creators = embedder.load_creators_from_database(db_path, tier="B")
         self.assertEqual([c["username"] for c in creators], ["tier_b"])
+
+    def test_tier_filter_includes_archived_profiles_of_that_tier(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "database.json"
+            db_path.write_text(
+                json.dumps(
+                    {
+                        "profiles": {
+                            "tier_b_archived": {
+                                "archived": True,
+                                "tier": "B",
+                                "niches": [],
+                            },
+                            "tier_c_archived": {
+                                "archived": True,
+                                "tier": "C",
+                                "niches": [],
+                            },
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            tier_c = embedder.load_creators_from_database(db_path, tier="C")
+            tier_b = embedder.load_creators_from_database(db_path, tier="B")
+            all_active = embedder.load_creators_from_database(db_path)
+        self.assertEqual([c["username"] for c in tier_c], ["tier_c_archived"])
+        self.assertEqual([c["username"] for c in tier_b], ["tier_b_archived"])
+        self.assertEqual(all_active, [])
 
 
 class ExtractCaptionFromOgDescriptionTest(unittest.TestCase):
@@ -550,8 +529,8 @@ class MainTest(unittest.TestCase):
         ), patch.object(embedder, "_infer_embedding_dim", return_value=4096), patch.object(
             embedder, "embedding_config_ok", return_value=True
         ), patch.object(
-            embedder, "load_pca", return_value=None), patch.object(
-            embedder, "sync_playwright"
+            embedder, "ensure_axis_anchors", return_value=None
+        ), patch.object(embedder, "sync_playwright"
         ) as mock_pw, patch.object(embedder, "get_browser_context") as mock_ctx, patch.object(
             embedder, "process_account"
         ) as mock_process, patch.object(embedder, "embed_text") as mock_embed, patch.object(
@@ -582,7 +561,7 @@ class MainTest(unittest.TestCase):
         with patch.object(
             embedder, "load_creators", return_value=creators
         ) as mock_load, patch.object(embedder, "load_vector_store", return_value=[]), patch.object(
-            embedder, "load_pca", return_value=None
+            embedder, "ensure_axis_anchors", return_value=None
         ), self.assertLogs("aitertainment.embedder", level="INFO") as cm:
             code = embedder.main(["--dry-run", "--source", "database"])
         self.assertEqual(code, 0)
@@ -596,7 +575,7 @@ class MainTest(unittest.TestCase):
         with patch.object(
             embedder, "load_creators", return_value=creators
         ) as mock_load, patch.object(embedder, "load_vector_store", return_value=[]), patch.object(
-            embedder, "load_pca", return_value=None
+            embedder, "ensure_axis_anchors", return_value=None
         ), self.assertLogs("aitertainment.embedder", level="INFO") as cm:
             code = embedder.main(["--dry-run", "--source", "database", "--tier", "B"])
         self.assertEqual(code, 0)

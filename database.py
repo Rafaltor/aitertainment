@@ -519,6 +519,33 @@ def validate_profile(
     return profile
 
 
+def merge_profile_pipeline(
+    db: dict[str, Any],
+    username: str,
+    patch: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Fusionne ``patch`` dans ``profiles[username].pipeline`` (création si besoin).
+
+    Champs typiques : ``comments_count``, ``comments_fingerprint``,
+    ``embedded_at``, ``labeled_count``, ``labeled_at``.
+    """
+    if not patch:
+        return None
+    profiles = db.get("profiles")
+    if not isinstance(profiles, dict):
+        raise DatabaseIOError('"profiles" doit être un dict non absent')
+    key = _normalize_username(username)
+    profile = profiles.get(key)
+    if not isinstance(profile, dict):
+        return None
+    pipeline = profile.get("pipeline")
+    if not isinstance(pipeline, dict):
+        pipeline = {}
+        profile["pipeline"] = pipeline
+    pipeline.update(patch)
+    return profile
+
+
 __all__ = [
     "DB_PATH",
     "DEFAULT_DATA_DIR",
@@ -530,6 +557,7 @@ __all__ = [
     "compute_tier",
     "get_profiles_due_for_rescore",
     "load_db",
+    "merge_profile_pipeline",
     "promote_tier",
     "save_db",
     "upsert_profile",

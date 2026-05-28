@@ -115,12 +115,35 @@ _COMMENT_META_RE = re.compile(
 )
 
 
-def _reel_page_has_shell(page: Page) -> bool:
-    """True si la page reel a un DOM Instagram (pas le shell vide /reel/ direct)."""
+def _looks_like_profile_not_reel(page: Page) -> bool:
+    """True si on est sur le profil (highlights) et pas sur l'overlay reel."""
+    try:
+        url = (page.url or "").rstrip("/")
+        if re.search(r"instagram\.com/[^/?#]+/?$", url):
+            return True
+        labels = _list_reel_page_aria_labels(page)
+        if any("à la une" in (lab or "").lower() for lab in labels):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _reel_page_has_shell(page: Page, media_id: str = "") -> bool:
+    """True si l'overlay reel est ouvert (URL reel ou bouton Commentaire visible)."""
+    mid = str(media_id or "").strip()
     try:
         if len(page.content()) < 5000:
             return False
-        return page.locator("svg").count() > 3
+        url = page.url or ""
+        if mid and (f"/reel/{mid}" in url or f"/p/{mid}" in url):
+            return True
+        if "/reel/" in url or re.search(r"/p/[A-Za-z0-9_-]+", url):
+            return True
+        for label in _REEL_COMMENT_ARIA_LABELS:
+            if page.locator(f'svg[aria-label="{label}"]').count() > 0:
+                return True
+        return False
     except Exception:
         return False
 
@@ -154,6 +177,7 @@ def navigate_to_reel_page(
     *,
     timeout_ms: int = _REQUEST_TIMEOUT_MS,
     reels_grid_loaded: bool = False,
+    direct_only: bool = False,
 ) -> bool:
     """Charge un reel. Préfère la grille ``/{user}/reels/`` (``/reel/{id}/`` seul est souvent vide)."""
     mid = str(media_id or "").strip()
@@ -162,6 +186,24 @@ def navigate_to_reel_page(
 
     page.set_viewport_size(_VIEWPORT)
     u = str(username or "").lstrip("@").strip()
+
+    if direct_only:
+        try:
+            page.goto(
+                f"{BASE_URL}/reel/{mid}/",
+                timeout=timeout_ms,
+                wait_until="domcontentloaded",
+            )
+            page.wait_for_load_state("load")
+            page.wait_for_timeout(3000)
+            if _reel_page_has_shell(page, mid):
+                return True
+            blocked = _instagram_page_blocked(page)
+            if blocked:
+                log.warning("reel %s : URL directe bloquée (%s).", mid, blocked)
+        except Exception as e:
+            log.warning("reel %s : URL directe échouée (%s).", mid, e)
+        return False
 
     if u and not reels_grid_loaded:
         try:
@@ -187,13 +229,16 @@ def navigate_to_reel_page(
                 return False
             _reel_link_locator(page, mid).first.click(timeout=10_000)
             page.wait_for_timeout(4000)
-            if _reel_page_has_shell(page):
+            if _reel_page_has_shell(page, mid):
                 return True
-            log.warning("reel %s : clic grille @%s mais DOM toujours vide.", mid, u)
-            return False
+            log.warning(
+                "reel %s : clic grille @%s sans overlay reel — repli /reel/%s/.",
+                mid,
+                u,
+                mid,
+            )
         except Exception as e:
             log.warning("reel %s : ouverture via grille @%s échouée (%s).", mid, u, e)
-            return False
 
     try:
         page.goto(
@@ -203,13 +248,48 @@ def navigate_to_reel_page(
         )
         page.wait_for_load_state("load")
         page.wait_for_timeout(3000)
-        if _reel_page_has_shell(page):
+        if _reel_page_has_shell(page, mid):
             return True
+        blocked = _instagram_page_blocked(page)
+        if blocked:
+            log.warning("reel %s : /reel/ bloqué (%s).", mid, blocked)
+    except Exception as e:
+        log.warning("reel %s : /reel/ échoué (%s).", mid, e)
+
+    log.warning("reel %s : overlay reel introuvable.", mid)
+    return False
+
+
+def _instagram_page_blocked(page: Page) -> str | None:
+    """``login`` | ``private`` | ``unavailable`` si la page n'est pas exploitable."""
+    url = (page.url or "").lower()
+    if "/accounts/login" in url:
+        return "login"
+    try:
+        if page.locator('input[name="username"]').count() > 0 and page.locator(
+            'input[name="password"]'
+        ).count() > 0:
+            return "login"
     except Exception:
         pass
+    try:
+        snippet = (page.inner_text("body", timeout=4_000) or "")[:3000].lower()
+    except Exception:
+        snippet = ""
+    if "log in" in snippet or "connectez-vous" in snippet or "se connecter" in snippet:
+        return "login"
+    if "this account is private" in snippet or "compte est privé" in snippet:
+        return "private"
+    if "page isn't available" in snippet or "n'est pas disponible" in snippet:
+        return "unavailable"
+    if "sorry" in snippet and "available" in snippet:
+        return "unavailable"
+    return None
 
-    log.warning("reel %s : page vide (pas de username pour la grille).", mid)
-    return False
+
+def session_ok(context: BrowserContext) -> bool:
+    """True si les cookies Instagram permettent de naviguer (pas de mur login)."""
+    return _session_ok(context)
 
 
 def open_reels_grid(page: Page, username: str, *, timeout_ms: int = _REQUEST_TIMEOUT_MS) -> bool:
@@ -226,6 +306,10 @@ def open_reels_grid(page: Page, username: str, *, timeout_ms: int = _REQUEST_TIM
         )
         page.wait_for_load_state("load")
         page.wait_for_timeout(2500)
+        blocked = _instagram_page_blocked(page)
+        if blocked:
+            log.warning("grille @%s/reels/ : page bloquée (%s).", u, blocked)
+            return False
         return True
     except Exception as e:
         log.warning("grille @%s/reels/ inaccessible (%s).", u, e)
@@ -321,20 +405,40 @@ def collect_top_comments(
     page = context.new_page()
 
     try:
-        if not open_reels_grid(page, u):
-            return 0
+        grid_ok = open_reels_grid(page, u)
+        if not grid_ok:
+            log_cb.warning(
+                "Collecte commentaires @%s : grille /reels/ KO — repli /reel/{{id}}/ direct.",
+                u,
+            )
 
         for reel in reels_to_visit:
             media_id = str(reel.get("media_id") or "").strip()
             view_count = int(reel.get("view_count") or reel.get("views") or 0)
             try:
-                if not navigate_to_reel_page(
-                    page, media_id, u, reels_grid_loaded=True
-                ):
-                    log_cb.warning(
-                        "Collecte commentaires @%s reel %s : page non chargée.",
+                if grid_ok:
+                    loaded = navigate_to_reel_page(
+                        page, media_id, u, reels_grid_loaded=True
+                    )
+                else:
+                    loaded = navigate_to_reel_page(
+                        page, media_id, u, direct_only=True
+                    )
+                if loaded and _looks_like_profile_not_reel(page):
+                    log_cb.info(
+                        "Collecte @%s reel %s : profil/highlights détecté — /reel/ direct.",
                         u,
                         media_id,
+                    )
+                    loaded = navigate_to_reel_page(
+                        page, media_id, u, direct_only=True
+                    )
+                if not loaded:
+                    log_cb.warning(
+                        "Collecte commentaires @%s reel %s : page non chargée (url=%s).",
+                        u,
+                        media_id,
+                        (page.url or "")[:80],
                     )
                     continue
 
@@ -347,7 +451,8 @@ def collect_top_comments(
                         media_id,
                         _list_reel_page_aria_labels(page)[:25] or "(aucun)",
                     )
-                    return_to_reels_grid(page, u)
+                    if grid_ok:
+                        return_to_reels_grid(page, u)
                     continue
 
                 page.wait_for_timeout(2000)
@@ -373,7 +478,8 @@ def collect_top_comments(
                     e,
                 )
             finally:
-                return_to_reels_grid(page, u)
+                if grid_ok:
+                    return_to_reels_grid(page, u)
             polite_sleep(seconds=1)
 
         collected = 0

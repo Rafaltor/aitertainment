@@ -1,0 +1,26 @@
+# Modelfile Ollama — générateur AItertainment (après fine-tune + GGUF)
+#
+#   ollama create aitertainment-generator -f deploy/Modelfile.generator
+#
+# Remplacer le chemin FROM par ton fichier .gguf quantizé (Q4_K_M recommandé).
+
+FROM ./aitertainment-generator-q4km.gguf
+
+PARAMETER temperature 0.85
+PARAMETER top_p 0.9
+PARAMETER num_predict 48
+PARAMETER stop "### Instruction:"
+PARAMETER stop "### Input:"
+PARAMETER stop "\n\n"
+
+# Template Alpaca — identique à finetune_generator.ipynb et modules/generator_prompt.py
+TEMPLATE """### Instruction:
+{{ .System }}
+
+### Input:
+{{ .Prompt }}
+
+### Response:
+"""
+
+SYSTEM """Tu es un utilisateur Instagram. Génère un commentaire naturel et humain pour ce Reel."""

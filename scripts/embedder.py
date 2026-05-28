@@ -13,7 +13,6 @@ import json
 import logging
 import math
 import os
-import pickle
 import re
 import shutil
 import subprocess
@@ -31,6 +30,20 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from config import LM_STUDIO_EMBED_MODEL, LM_STUDIO_URL
+from database import load_db, merge_profile_pipeline, save_db
+from modules.named_axes import (
+    NAMED_AXES,
+    ensure_axis_anchors,
+    refresh_named_axes_in_store,
+    score_named_axes,
+)
+from modules.pipeline_state import (
+    build_pipeline_patch,
+    comments_fingerprint_for_account,
+    should_skip_embed,
+    should_skip_playwright_collect,
+    vector_store_entry_fingerprint,
+)
 from scripts.instagram_browser import (
     RAW_COMMENTS_PATH as _RAW_COMMENTS_PATH,
     _list_reel_page_aria_labels,
@@ -42,6 +55,8 @@ from scripts.instagram_browser import (
     get_browser_context,
     get_profile_data,
     get_recent_reels,
+    session_ok,
+    _looks_like_profile_not_reel,
     navigate_to_reel_page,
     open_reels_grid,
     parse_comments_from_dom_text,
@@ -55,20 +70,6 @@ RAW_COMMENTS_PATH = _RAW_COMMENTS_PATH
 VECTOR_STORE_PATH = Path("data/vector_store.json")
 WATCHLIST_PATH = Path("data/watchlist.json")
 DATABASE_PATH = Path("data/database.json")
-PCA_MODEL_PATH = Path("data/pca_model.pkl")
-
-NAMED_AXES = [
-    "scripted_vs_raw",
-    "solo_vs_collab",
-    "fictional_vs_real",
-    "energy_level",
-    "production_quality",
-    "format_length",
-    "distance_parasociale",
-    "interaction_style",
-    "mainstream_vs_niche",
-    "safe_vs_edgy",
-]
 
 _LOG = logging.getLogger("aitertainment.embedder")
 _HASHTAG_RE = re.compile(r"#(\w+)")
@@ -166,33 +167,51 @@ def ensure_comments_for_account(
     niches: list[str] | str,
     *,
     raw_path: Path | str | None = None,
+    skip_playwright: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], str | None]:
-    """Commentaires depuis ``raw_comments.json`` ; scrape complémentaire sur 3 reels si besoin."""
+    """Commentaires depuis ``raw_comments.json`` ; scrape sur 3 reels si besoin."""
     path = _resolve_path(Path(raw_path) if raw_path is not None else RAW_COMMENTS_PATH)
     uname = str(username or "").lstrip("@").strip()
     comments, by_media = comments_for_account_from_raw(uname, path)
-    if comments:
+    n = 0
+    if skip_playwright:
+        if comments:
+            _LOG.info(
+                "@%s : %d commentaire(s) en raw — skip scrape Playwright (incremental).",
+                uname,
+                len(comments),
+            )
+    elif comments:
         _LOG.info(
             "@%s : %d commentaire(s) en base — scrape complémentaire (3 reels).",
             uname,
             len(comments),
         )
+        n = collect_top_comments(
+            uname,
+            context,
+            reels,
+            niches,
+            raw_comments_path=path,
+            classify=False,
+            logger=_LOG,
+        )
+        comments, by_media = comments_for_account_from_raw(uname, path)
     else:
         _LOG.info(
             "@%s : aucun commentaire en base — collecte Playwright (3 reels).",
             uname,
         )
-
-    n = collect_top_comments(
-        uname,
-        context,
-        reels,
-        niches,
-        raw_comments_path=path,
-        classify=False,
-        logger=_LOG,
-    )
-    comments, by_media = comments_for_account_from_raw(uname, path)
+        n = collect_top_comments(
+            uname,
+            context,
+            reels,
+            niches,
+            raw_comments_path=path,
+            classify=False,
+            logger=_LOG,
+        )
+        comments, by_media = comments_for_account_from_raw(uname, path)
     if comments:
         source = "raw_comments.json" if n == 0 else "raw_comments.json+playwright"
         if n > 0:
@@ -253,9 +272,11 @@ def load_creators_from_database(
     *,
     tier: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Charge les profils non archivés depuis ``database.json``.
+    """Charge les profils depuis ``database.json``.
 
-    Si ``tier`` est ``A``, ``B`` ou ``C``, ne garde que ce tier.
+    Sans filtre ``tier`` : uniquement les profils non archivés.
+    Avec ``tier`` (A, B ou C) : tous les profils de ce tier, y compris archivés
+    (le tier C Discovery est souvent ``archived: true`` tant qu'il n'est pas validé).
     """
     p = _resolve_path(Path(path) if path is not None else DATABASE_PATH)
     if not p.exists():
@@ -274,10 +295,10 @@ def load_creators_from_database(
     for username, profile in profiles.items():
         if not isinstance(profile, dict):
             continue
-        if profile.get("archived", False):
-            continue
         profile_tier = str(profile.get("tier") or "C").strip().upper()
         if tier_filter and profile_tier != tier_filter:
+            continue
+        if not tier_filter and profile.get("archived", False):
             continue
         u = str(username).lstrip("@").strip().lower()
         if not u:
@@ -572,8 +593,12 @@ def _fetch_reel_captions_batch(
 
     page = context.new_page()
     try:
-        if not open_reels_grid(page, uname):
-            return captions
+        grid_ok = open_reels_grid(page, uname)
+        if not grid_ok:
+            _LOG.warning(
+                "@%s : grille /reels/ inaccessible — repli captions via /reel/{{id}}/.",
+                uname,
+            )
 
         for reel in reels:
             mid = str(reel.get("media_id") or "").strip()
@@ -587,16 +612,32 @@ def _fetch_reel_captions_batch(
             handler, holder = _make_graphql_caption_listener(mid)
             page.on("response", handler)
             try:
-                if not navigate_to_reel_page(
-                    page, mid, uname, reels_grid_loaded=True
-                ):
+                if grid_ok:
+                    loaded = navigate_to_reel_page(
+                        page, mid, uname, reels_grid_loaded=True
+                    )
+                else:
+                    loaded = navigate_to_reel_page(
+                        page, mid, uname, direct_only=True
+                    )
+                if loaded and _looks_like_profile_not_reel(page):
+                    _LOG.info(
+                        "@%s reel %s : profil/highlights — repli caption /reel/ direct.",
+                        uname,
+                        mid,
+                    )
+                    loaded = navigate_to_reel_page(
+                        page, mid, uname, direct_only=True
+                    )
+                if not loaded:
                     continue
                 captions[mid] = _read_caption_from_loaded_reel_page(
                     page, mid, json_caption=holder[0]
                 )
             finally:
                 page.remove_listener("response", handler)
-                return_to_reels_grid(page, uname)
+                if grid_ok:
+                    return_to_reels_grid(page, uname)
     finally:
         page.close()
 
@@ -782,11 +823,6 @@ def embed_text(text: str) -> list[float] | None:
         return None
 
 
-def _pca_input_dim(pca_model: Any) -> int | None:
-    dim = getattr(pca_model, "n_features_in_", None)
-    return int(dim) if dim is not None else None
-
-
 def _infer_embedding_dim(vector_store: list[dict[str, Any]]) -> int | None:
     """Déduit la dimension des embeddings (store existant ou sonde LM Studio)."""
     for entry in vector_store:
@@ -799,105 +835,15 @@ def _infer_embedding_dim(vector_store: list[dict[str, Any]]) -> int | None:
 
 def project_to_named_axes(
     embedding: list[float],
-    pca_model: Any | None,
+    anchors: dict[str, dict[str, list[float]]] | None,
 ) -> dict[str, float]:
-    """Projette un embedding sur les 10 axes nommés via PCA."""
-    if pca_model is None:
+    """Projette un embedding sur les 10 axes (ancres sémantiques, échelle globale)."""
+    if not anchors:
         _LOG.warning(
-            "PCA non disponible — named_axes non calculés (besoin de 10+ comptes)"
+            "Ancres d'axes indisponibles — named_axes à 0 (LM Studio requis)."
         )
         return {axis: 0.0 for axis in NAMED_AXES}
-
-    expected = _pca_input_dim(pca_model)
-    if expected is not None and len(embedding) != expected:
-        _LOG.warning(
-            "PCA ignorée : embedding %dD vs pca_model.pkl %dD — named_axes à 0. "
-            "Supprime data/pca_model.pkl ou relance avec ≥10 comptes à la même "
-            "dimension pour recalculer la PCA.",
-            len(embedding),
-            expected,
-        )
-        return {axis: 0.0 for axis in NAMED_AXES}
-
-    projected = pca_model.transform([embedding])[0]
-    min_v = float(min(projected))
-    max_v = float(max(projected))
-    if math.isclose(max_v, min_v):
-        normalized = [0.5 for _ in projected]
-    else:
-        normalized = [(float(v) - min_v) / (max_v - min_v) for v in projected]
-
-    return {
-        axis: float(value)
-        for axis, value in zip(NAMED_AXES, normalized, strict=True)
-    }
-
-
-def fit_pca(
-    vector_store: list[dict[str, Any]],
-    *,
-    target_dim: int | None = None,
-) -> Any | None:
-    """Ajuste une PCA 10D sur les ``embedding_raw`` (dimension homogène)."""
-    by_dim: dict[int, list[list[float]]] = {}
-    for entry in vector_store:
-        raw = entry.get("embedding_raw")
-        if isinstance(raw, list) and raw:
-            dim = len(raw)
-            by_dim.setdefault(dim, []).append([float(x) for x in raw])
-
-    if not by_dim:
-        return None
-
-    if target_dim is None:
-        target_dim = max(by_dim, key=lambda d: len(by_dim[d]))
-    vectors = by_dim.get(target_dim, [])
-    if len(by_dim) > 1:
-        _LOG.warning(
-            "fit_pca : dimensions mixtes %s — seuls les vecteurs %dD sont utilisés.",
-            {d: len(v) for d, v in by_dim.items()},
-            target_dim,
-        )
-
-    if len(vectors) < 10:
-        _LOG.warning(
-            "PCA non recalculée : %d compte(s) en %dD (10 minimum requis).",
-            len(vectors),
-            target_dim,
-        )
-        return None
-
-    from sklearn.decomposition import PCA
-
-    model = PCA(n_components=10)
-    model.fit(vectors)
-
-    pca_path = _resolve_path(PCA_MODEL_PATH)
-    pca_path.parent.mkdir(parents=True, exist_ok=True)
-    with pca_path.open("wb") as fh:
-        pickle.dump(model, fh)
-    return model
-
-
-def load_pca(*, expected_dim: int | None = None) -> Any | None:
-    """Charge le modèle PCA depuis le disque si compatible avec ``expected_dim``."""
-    pca_path = _resolve_path(PCA_MODEL_PATH)
-    if not pca_path.exists():
-        return None
-    with pca_path.open("rb") as fh:
-        model = pickle.load(fh)
-    if expected_dim is None:
-        return model
-    got = _pca_input_dim(model)
-    if got is not None and got != expected_dim:
-        _LOG.warning(
-            "pca_model.pkl ignoré (%dD enregistré, %dD attendu). "
-            "Recalcul auto après ≥10 comptes à la même dimension.",
-            got,
-            expected_dim,
-        )
-        return None
-    return model
+    return score_named_axes(embedding, anchors)
 
 
 def load_vector_store(path: Path | str | None = None) -> list[dict[str, Any]]:
@@ -932,6 +878,8 @@ def collect_account_content(
     creator: dict[str, Any],
     context: BrowserContext,
     tmp_dir: Path,
+    *,
+    skip_playwright: bool = False,
 ) -> dict[str, Any] | None:
     """Collecte reels, captions, transcripts, commentaires et texte d'entrée."""
     uname = str(username or "").lstrip("@").strip()
@@ -950,7 +898,7 @@ def collect_account_content(
 
     transcripts: list[str] = []
     comments, comments_by_media, comments_source = ensure_comments_for_account(
-        uname, reels, context, niches
+        uname, reels, context, niches, skip_playwright=skip_playwright
     )
     if comments:
         _LOG.info(
@@ -1016,6 +964,26 @@ def collect_account_content(
         biography=biography,
         niches=niches,
     )
+    if not captions and not comments:
+        _LOG.warning(
+            "@%s : 0 caption et 0 commentaire — embedding sur bio/transcripts "
+            "seulement (tier C souvent sans raw_comments.json ; vérifier "
+            "session Instagram si massif).",
+            uname,
+        )
+    elif not captions:
+        _LOG.warning(
+            "@%s : 0 caption (commentaires=%d, source=%s).",
+            uname,
+            len(comments),
+            comments_source or "?",
+        )
+    elif not comments:
+        _LOG.warning(
+            "@%s : 0 commentaire (captions=%d).",
+            uname,
+            len(captions),
+        )
     return {
         "username": uname,
         "reels": reel_details,
@@ -1103,11 +1071,21 @@ def process_account(
     username: str,
     creator: dict[str, Any],
     context: BrowserContext,
-    pca_model: Any | None,
+    axis_anchors: dict[str, dict[str, list[float]]] | None,
     tmp_dir: Path,
+    *,
+    skip_playwright: bool = False,
+    comments_fingerprint: str | None = None,
+    comments_count: int = 0,
 ) -> dict[str, Any] | None:
     """Pipeline complet d'embedding pour un compte watchlisté (Playwright)."""
-    collected = collect_account_content(username, creator, context, tmp_dir)
+    collected = collect_account_content(
+        username,
+        creator,
+        context,
+        tmp_dir,
+        skip_playwright=skip_playwright,
+    )
     if collected is None:
         return None
 
@@ -1119,14 +1097,55 @@ def process_account(
         )
         return None
 
-    named_axes = project_to_named_axes(embedding, pca_model)
+    named_axes = project_to_named_axes(embedding, axis_anchors)
+    sources = dict(collected["summary"])
+    if comments_fingerprint:
+        sources["comments_fingerprint"] = comments_fingerprint
+        sources["comments_count"] = comments_count
     return {
         "username": collected["username"],
         "updated_at": _utc_now_iso(),
         "embedding_raw": embedding,
         "named_axes": named_axes,
-        "sources": collected["summary"],
+        "comments_fingerprint": comments_fingerprint,
+        "comments_count": comments_count,
+        "sources": sources,
     }
+
+
+def _vector_store_by_username(
+    store: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for entry in store:
+        if not isinstance(entry, dict):
+            continue
+        key = str(entry.get("username") or "").lstrip("@").strip().lower()
+        if key:
+            out[key] = entry
+    return out
+
+
+def _sync_embed_pipeline_to_database(
+    username: str,
+    *,
+    comments_fingerprint: str,
+    comments_count: int,
+    embedded_at: str,
+) -> None:
+    """Met à jour ``database.json`` si le profil existe."""
+    try:
+        db = load_db()
+    except Exception as exc:
+        _LOG.debug("sync pipeline database ignoré (%s).", exc)
+        return
+    patch = build_pipeline_patch(
+        comments_count=comments_count,
+        comments_fingerprint=comments_fingerprint,
+        embedded_at=embedded_at,
+    )
+    if merge_profile_pipeline(db, username, patch) is not None:
+        save_db(db)
 
 
 def _upsert_vector_store(
@@ -1146,18 +1165,38 @@ def main(argv: list[str] | None = None) -> int:
         "--source",
         choices=("watchlist", "database"),
         default="watchlist",
-        help="watchlist (défaut) : data/watchlist.json ; database : profils non archivés.",
+        help="watchlist (défaut) : data/watchlist.json ; database : profils actifs (non archivés).",
     )
     parser.add_argument(
         "--tier",
         choices=("A", "B", "C"),
         default=None,
-        help="Avec --source database : ne traiter que ce tier (défaut : tous non archivés).",
+        help="Avec --source database : ce tier uniquement (inclut les archivés de ce tier).",
     )
     parser.add_argument(
         "--refit-pca",
         action="store_true",
-        help="Recalcule la PCA après traitement.",
+        help="Alias de --rebuild-axis-anchors (rétrocompat).",
+    )
+    parser.add_argument(
+        "--rebuild-axis-anchors",
+        action="store_true",
+        help="Recalcule les ancres sémantiques (20 embeddings) puis rescore tous les comptes.",
+    )
+    parser.add_argument(
+        "--rescore-named-axes",
+        action="store_true",
+        help="Rescore named_axes depuis embedding_raw sans re-scraper ni ré-embedder.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-embed tous les comptes même si l'empreinte commentaires est inchangée.",
+    )
+    parser.add_argument(
+        "--scrape-comments",
+        action="store_true",
+        help="Force le scrape Playwright des commentaires même si raw_comments en a déjà.",
     )
     parser.add_argument(
         "--dry-run",
@@ -1211,8 +1250,31 @@ def main(argv: list[str] | None = None) -> int:
 
     vector_store = load_vector_store()
     embed_dim = _infer_embedding_dim(vector_store)
-    pca_model = load_pca(expected_dim=embed_dim)
     processed = 0
+    rebuild_anchors = args.rebuild_axis_anchors or args.refit_pca
+
+    if args.rescore_named_axes:
+        if not embedding_config_ok():
+            _LOG.error(
+                "Rescore impossible : configure LM_STUDIO_URL et "
+                "LM_STUDIO_EMBED_MODEL dans .env."
+            )
+            return 1
+        anchors = ensure_axis_anchors(
+            embed_text,
+            model=LM_STUDIO_EMBED_MODEL,
+            expected_dim=embed_dim,
+            force_rebuild=rebuild_anchors,
+        )
+        if anchors is None:
+            _LOG.error("Impossible de charger ou construire les ancres d'axes.")
+            return 1
+        n = refresh_named_axes_in_store(
+            vector_store, anchors, expected_dim=embed_dim
+        )
+        save_vector_store(vector_store)
+        _LOG.info("=== Rescore named_axes : %d compte(s) mis à jour ===", n)
+        return 0
 
     if not args.dry_run and not args.verify and not embedding_config_ok():
         _LOG.error(
@@ -1228,10 +1290,42 @@ def main(argv: list[str] | None = None) -> int:
             LM_STUDIO_EMBED_MODEL,
         )
 
+    axis_anchors: dict[str, dict[str, list[float]]] | None = None
+    if not args.dry_run and not args.verify:
+        axis_anchors = ensure_axis_anchors(
+            embed_text,
+            model=LM_STUDIO_EMBED_MODEL,
+            expected_dim=embed_dim,
+            force_rebuild=rebuild_anchors,
+        )
+        if axis_anchors is None:
+            _LOG.warning(
+                "Ancres d'axes non disponibles — named_axes seront à 0 pour ce run."
+            )
+
+    raw_all = load_raw_comments_entries()
+    store_by_user = _vector_store_by_username(vector_store)
+    skipped_unchanged = 0
+
     if args.dry_run:
         for creator in creators:
             username = str(creator.get("username") or "").lstrip("@").strip()
-            _LOG.info("DRY-RUN : embedderait @%s", username)
+            uname = username.lower()
+            fp, n = comments_fingerprint_for_account(username, raw_all)
+            existing = store_by_user.get(uname)
+            if should_skip_embed(username, fp, existing, force=args.force):
+                _LOG.info(
+                    "DRY-RUN : skip @%s (%d commentaires, empreinte inchangée)",
+                    username,
+                    n,
+                )
+            else:
+                _LOG.info(
+                    "DRY-RUN : embedderait @%s (%d commentaires, empreinte %s…)",
+                    username,
+                    n,
+                    fp[:12],
+                )
         _LOG.info("=== Embedding terminé : %d comptes traités ===", len(creators))
         return 0
 
@@ -1269,12 +1363,59 @@ def main(argv: list[str] | None = None) -> int:
 
     playwright_instance = sync_playwright().start()
     context = get_browser_context(playwright_instance)
+    if not session_ok(context):
+        context.close()
+        br = context.browser
+        if br:
+            br.close()
+        playwright_instance.stop()
+        _LOG.error(
+            "Session Instagram invalide (login). Reconnecte-toi puis régénère "
+            "data/instagram_cookies.json avant d'embedder."
+        )
+        return 1
     try:
         for creator in creators:
             username = str(creator.get("username") or "").lstrip("@").strip()
+            uname = username.lower()
+            fp, comment_n = comments_fingerprint_for_account(username, raw_all)
+            existing = store_by_user.get(uname)
+
+            if should_skip_embed(username, fp, existing, force=args.force):
+                stored = vector_store_entry_fingerprint(existing)
+                _LOG.info(
+                    "skip @%s : %d commentaire(s), empreinte inchangée (%s…)",
+                    username,
+                    comment_n,
+                    (stored or fp)[:12],
+                )
+                skipped_unchanged += 1
+                continue
+
+            skip_pw = should_skip_playwright_collect(
+                username,
+                raw_all,
+                force_scrape=args.scrape_comments,
+            )
+            if skip_pw and comment_n > 0:
+                _LOG.info(
+                    "@%s : re-embed (%d commentaires, empreinte mise à jour) — skip scrape.",
+                    username,
+                    comment_n,
+                )
+
             tmp_dir = Path(tempfile.mkdtemp(prefix="ait_embed_"))
             try:
-                entry = process_account(username, creator, context, pca_model, tmp_dir)
+                entry = process_account(
+                    username,
+                    creator,
+                    context,
+                    axis_anchors,
+                    tmp_dir,
+                    skip_playwright=skip_pw,
+                    comments_fingerprint=fp,
+                    comments_count=comment_n,
+                )
             finally:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1282,6 +1423,13 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             vector_store = _upsert_vector_store(vector_store, entry)
+            store_by_user[uname] = entry
+            _sync_embed_pipeline_to_database(
+                username,
+                comments_fingerprint=fp,
+                comments_count=comment_n,
+                embedded_at=str(entry.get("updated_at") or _utc_now_iso()),
+            )
             processed += 1
             sources = entry.get("sources") or {}
             _LOG.info(
@@ -1300,28 +1448,32 @@ def main(argv: list[str] | None = None) -> int:
             br.close()
         playwright_instance.stop()
 
-    n_current_dim = sum(
-        1
-        for entry in vector_store
-        if isinstance(entry.get("embedding_raw"), list)
-        and embed_dim is not None
-        and len(entry["embedding_raw"]) == embed_dim
-    )
-    if args.refit_pca or n_current_dim >= 10:
-        pca_model = fit_pca(vector_store, target_dim=embed_dim)
-        if pca_model is not None:
-            for entry in vector_store:
-                raw = entry.get("embedding_raw")
-                if (
-                    isinstance(raw, list)
-                    and raw
-                    and embed_dim is not None
-                    and len(raw) == embed_dim
-                ):
-                    entry["named_axes"] = project_to_named_axes(raw, pca_model)
+    if not args.dry_run and not args.verify and vector_store:
+        anchors = ensure_axis_anchors(
+            embed_text,
+            model=LM_STUDIO_EMBED_MODEL,
+            expected_dim=embed_dim,
+            force_rebuild=rebuild_anchors,
+        )
+        if anchors is not None:
+            n_axes = refresh_named_axes_in_store(
+                vector_store, anchors, expected_dim=embed_dim
+            )
+            _LOG.info(
+                "named_axes rescorés (ancres sémantiques) : %d compte(s)",
+                n_axes,
+            )
+        else:
+            _LOG.warning(
+                "named_axes non mis à jour — ancres indisponibles."
+            )
 
     save_vector_store(vector_store)
-    _LOG.info("=== Embedding terminé : %d comptes traités ===", processed)
+    _LOG.info(
+        "=== Embedding terminé : %d embeddé(s), %d skip (empreinte inchangée) ===",
+        processed,
+        skipped_unchanged,
+    )
     return 0
 
 

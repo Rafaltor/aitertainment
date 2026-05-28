@@ -120,18 +120,12 @@ Exemples de vrais commentaires :
 
 GENERATE_FALLBACK_TTYPE = "T2"
 
-NAMED_AXES = (
-    "scripted_vs_raw",
-    "solo_vs_collab",
-    "fictional_vs_real",
-    "energy_level",
-    "production_quality",
-    "format_length",
-    "distance_parasociale",
-    "interaction_style",
-    "mainstream_vs_niche",
-    "safe_vs_edgy",
+from modules.generator_prompt import (
+    GENERATOR_INSTRUCTION,
+    build_alpaca_prompt,
+    build_generator_input_block,
 )
+from modules.named_axes import NAMED_AXES
 
 # Mots interdits explicités côté system prompt — listés ici aussi pour
 # permettre un check programmatique côté tests / debug (pas de filtrage
@@ -437,6 +431,77 @@ def _format_named_axes_block(named_axes: dict[str, Any]) -> str:
     )
 
 
+def _clean_generated_comment_line(text: str) -> str:
+    """Première ligne utile après ``### Response:`` (sans JSON legacy)."""
+    line = str(text or "").strip().split("\n", 1)[0].strip()
+    if line.startswith("{"):
+        return ""
+    for prefix in ("### Response:", "### Input:", "### Instruction:"):
+        if line.startswith(prefix):
+            line = line[len(prefix) :].strip()
+    return line.strip('"').strip("'")
+
+
+def _generate_comments_alpaca(
+    *,
+    t_type_profile: str,
+    niches: list[str] | str,
+    video_context: dict[str, Any] | None,
+    named_axes: dict[str, Any] | None,
+    model: str,
+    ollama_url: str,
+    num_comments: int = 3,
+) -> list[str]:
+    """3 commentaires via le modèle fine-tuné (un appel Alpaca par commentaire)."""
+    ctx = video_context or {}
+    raw_hashtags = ctx.get("hashtags") or []
+    if isinstance(raw_hashtags, str):
+        hashtags: str | list[Any] = raw_hashtags
+    else:
+        tags = [str(h).strip() for h in raw_hashtags if str(h).strip()]
+        hashtags = tags
+
+    input_block = build_generator_input_block(
+        t_type_profile=t_type_profile,
+        niches=niches,
+        caption=str(ctx.get("caption") or "").strip(),
+        hashtags=hashtags,
+        audio_id=str(ctx.get("audio_id") or ctx.get("audio") or "").strip(),
+        named_axes=named_axes if isinstance(named_axes, dict) and named_axes else None,
+    )
+    prompt = build_alpaca_prompt(input_block, instruction=GENERATOR_INSTRUCTION)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for _ in range(max(num_comments * 2, num_comments)):
+        if len(out) >= num_comments:
+            break
+        body: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.85, "top_p": 0.9, "num_predict": 40},
+        }
+        try:
+            resp = _http_post(ollama_url, json_body=body, timeout=120)
+            raw_text = _ollama_response_text(resp)
+        except (requests.RequestException, ValueError) as e:
+            raise ClassificationError(f"Erreur Ollama generator: {e}") from e
+
+        comment = _clean_generated_comment_line(raw_text)
+        if not comment:
+            continue
+        key = comment.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(comment)
+
+    while len(out) < num_comments:
+        out.append("—")
+    return out[:num_comments]
+
+
 def _format_comments_sample(
     comments_sample: list[str], *, max_lines: int = 20
 ) -> str:
@@ -488,12 +553,28 @@ def generate_comments(
     ``niches`` accepte ``list[str]`` (schéma 2026-05) ou ``str``
     (rétro-compat). ``t_type_profile=None`` produit ``"(non précisé)"``
     dans le prompt — utile pour les générations de masse hors watcher.
+
+    Si ``OLLAMA_GENERATOR_MODEL`` est défini dans ``.env``, utilise le
+    modèle fine-tuné (format Alpaca, une ligne par commentaire). Sinon,
+    prompt T-type + JSON ``{"comments": [...]}`` via ``OLLAMA_MODEL``.
     """
+    profile_tt = (t_type_profile or "").strip() or "(non précisé)"
+    finetuned_model = getattr(config, "OLLAMA_GENERATOR_MODEL", "") or ""
+    if finetuned_model:
+        axes = named_axes if isinstance(named_axes, dict) and named_axes else None
+        return _generate_comments_alpaca(
+            t_type_profile=profile_tt,
+            niches=niches,
+            video_context=video_context,
+            named_axes=axes,
+            model=finetuned_model,
+            ollama_url=config.OLLAMA_URL,
+        )
+
     t_type_content, template = _resolve_ttype_prompt(
         (classification or {}).get("type")
     )
     ctx = _normalize_video_context(video_context, niches=niches)
-    profile_tt = (t_type_profile or "").strip() or "(non précisé)"
     prompt = template.format(
         t_type_profile=profile_tt,
         niches=ctx["niches"],

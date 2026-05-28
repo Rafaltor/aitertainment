@@ -63,27 +63,29 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from config import VALID_T_TYPES
+from modules.generator_prompt import GENERATOR_INSTRUCTION, build_generator_input_block
 
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TRAINING_PATH = _PROJECT_ROOT / "data" / "training_comments.json"
 DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "data"
 VECTOR_STORE_PATH = Path("data/vector_store.json")
 CLASSIFIER_FILENAME = "dataset_classifier.jsonl"
 GENERATOR_FILENAME = "dataset_generator.jsonl"
+# Rétro-compat notebooks Unsloth (tableau JSON unique).
+CLASSIFIER_JSON_FILENAME = "classifier_dataset.json"
+GENERATOR_JSON_FILENAME = "generator_dataset.json"
 
 CLASSIFIER_INSTRUCTION = (
     "Classifie ce commentaire Instagram selon le type d'engagement."
 )
-GENERATOR_INSTRUCTION = (
-    "Tu es un utilisateur Instagram. Génère un commentaire naturel et "
-    "humain pour ce Reel."
-)
-
 _LOG = logging.getLogger(__name__)
 
 
@@ -191,18 +193,7 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-NAMED_AXES = (
-    "scripted_vs_raw",
-    "solo_vs_collab",
-    "fictional_vs_real",
-    "energy_level",
-    "production_quality",
-    "format_length",
-    "distance_parasociale",
-    "interaction_style",
-    "mainstream_vs_niche",
-    "safe_vs_edgy",
-)
+from modules.named_axes import NAMED_AXES
 
 
 def load_vector_store(path: Path | str | None = None) -> dict[str, dict[str, Any]]:
@@ -359,20 +350,6 @@ def generate_classifier_dataset(
     return len(lines)
 
 
-def _named_axes_block(named_axes: dict[str, Any]) -> str:
-    values = []
-    for axis in NAMED_AXES:
-        values.append(f"{axis}={_coerce_float(named_axes.get(axis), 0.0):.2f}")
-    return (
-        "Profil créateur:\n"
-        f"  {values[0]} {values[1]}\n"
-        f"  {values[2]} {values[3]}\n"
-        f"  {values[4]} {values[5]}\n"
-        f"  {values[6]} {values[7]}\n"
-        f"  {values[8]} {values[9]}"
-    )
-
-
 def _generator_input_block(
     *,
     t_type_profile: str,
@@ -382,20 +359,15 @@ def _generator_input_block(
     audio_id: str,
     named_axes: dict[str, Any] | None,
 ) -> tuple[str, bool]:
-    base_lines = [
-        f"T-type commentateur: {t_type_profile}",
-        f"Niches: {niches}",
-    ]
-    if named_axes:
-        base_lines.append(_named_axes_block(named_axes))
-    base_lines.extend(
-        [
-            f"Caption: {caption}",
-            f"Hashtags: {hashtags}",
-            f"Audio: {audio_id}",
-        ]
+    block = build_generator_input_block(
+        t_type_profile=t_type_profile,
+        niches=niches,
+        caption=caption,
+        hashtags=hashtags,
+        audio_id=audio_id,
+        named_axes=named_axes,
     )
-    return "\n".join(base_lines), bool(named_axes)
+    return block, bool(named_axes)
 
 
 def generate_generator_dataset(
@@ -573,7 +545,40 @@ def main(argv: list[str] | None = None) -> int:
         n_gen,
         n_vec,
     )
+
+    for jsonl_path, json_name in (
+        (classifier_path, CLASSIFIER_JSON_FILENAME),
+        (generator_path, GENERATOR_JSON_FILENAME),
+    ):
+        json_path = args.output_dir / json_name
+        try:
+            n_json = write_json_array_from_jsonl(jsonl_path, json_path)
+            _LOG.info("Export notebook : %s (%d entrées)", json_path.name, n_json)
+        except OSError as e:
+            _LOG.error("Export %s échoué : %s", json_path, e)
+            return 1
+
     return 0
+
+
+def write_json_array_from_jsonl(jsonl_path: Path, json_path: Path) -> int:
+    """Convertit un JSONL Alpaca en tableau JSON (notebooks ``json.load``)."""
+    rows: list[dict[str, Any]] = []
+    with jsonl_path.open(encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            if isinstance(row, dict):
+                rows.append(row)
+    tmp = json_path.with_suffix(json_path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(rows, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(tmp, json_path)
+    return len(rows)
 
 
 __all__ = [
