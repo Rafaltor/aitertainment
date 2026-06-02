@@ -39,27 +39,29 @@ class GeneratorPromptTest(unittest.TestCase):
         self.assertNotIn("🤣", out)
         self.assertLessEqual(len(out.split()), 10)
 
-    def test_transcript_in_input_block_and_alpaca_prompt(self) -> None:
+    def test_video_context_in_input_block_and_alpaca_prompt(self) -> None:
         block = build_generator_input_block(
             t_type_profile="T2b",
             niches=["humour"],
             caption="reel test",
-            transcript="il dit que le drop est vendredi",
+            video_context="Sketch où le drop est annoncé vendredi.",
         )
-        self.assertIn("Transcript: il dit que le drop est vendredi", block)
+        self.assertIn(
+            "Contexte vidéo: Sketch où le drop est annoncé vendredi.", block
+        )
         prompt = build_alpaca_prompt(block)
-        self.assertIn("Transcript: il dit que le drop est vendredi", prompt)
-        self.assertIn("Transcript est fourni", prompt)
+        self.assertIn("Contexte vidéo: Sketch où le drop est annoncé vendredi.", prompt)
+        self.assertIn("Contexte vidéo est fourni", prompt)
 
-    def test_transcript_truncated_at_500_chars(self) -> None:
-        long_tr = "x" * 600
+    def test_video_context_truncated_at_600_chars(self) -> None:
+        long_vc = "z" * 700
         block = build_generator_input_block(
             t_type_profile="T2",
             niches=["humour"],
-            transcript=long_tr,
+            video_context=long_vc,
         )
-        self.assertIn(f"Transcript: {'x' * 500}", block)
-        self.assertNotIn("x" * 501, block)
+        self.assertIn(f"Contexte vidéo: {'z' * 600}", block)
+        self.assertNotIn("z" * 601, block)
 
     def test_creator_and_reel_in_input_block(self) -> None:
         block = build_generator_input_block(
@@ -71,25 +73,6 @@ class GeneratorPromptTest(unittest.TestCase):
         self.assertIn("Creator: @compte_a", block)
         self.assertIn("Reel: ABC123", block)
 
-    def test_visual_description_in_input_block(self) -> None:
-        block = build_generator_input_block(
-            t_type_profile="T2b",
-            niches=["humour"],
-            visual_description="Un homme fait tomber un gâteau.",
-        )
-        self.assertIn("Visuel: Un homme fait tomber un gâteau.", block)
-        prompt = build_alpaca_prompt(block)
-        self.assertIn("Visuel est fourni", prompt)
-
-    def test_visual_description_truncated_at_300_chars(self) -> None:
-        long_vis = "y" * 400
-        block = build_generator_input_block(
-            t_type_profile="T2",
-            niches=["humour"],
-            visual_description=long_vis,
-        )
-        self.assertIn(f"Visuel: {'y' * 300}", block)
-        self.assertNotIn("y" * 301, block)
 
 
 if __name__ == "__main__":

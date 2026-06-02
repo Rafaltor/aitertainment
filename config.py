@@ -96,6 +96,19 @@ LM_STUDIO_URL = (
 ).strip().rstrip("/")
 LM_STUDIO_EMBED_MODEL = os.environ.get("LM_STUDIO_EMBED_MODEL", "").strip()
 
+# Modèle vision LM Studio (description grille frames)
+LM_STUDIO_VISION_MODEL = os.environ.get(
+    "LM_STUDIO_VISION_MODEL", "openbmb/minicpm-v-2_6"
+).strip()
+
+# Modèle Qwen3-35B pour labélisation T-type + fusion video_context
+# (``scripts/label_comments.py`` uniquement — remplace OLLAMA_MODEL pour ce script)
+LABEL_LLM_URL = (
+    os.environ.get("LABEL_LLM_URL")
+    or os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1")
+).strip().rstrip("/")
+LABEL_LLM_MODEL = os.environ.get("LABEL_LLM_MODEL", "qwen/qwen3.6-35b-a3b").strip()
+
 VALID_T_TYPES = frozenset({"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"})
 
 # ----------------------------------------------------------------------------

@@ -628,8 +628,7 @@ class GenerateForPostTest(unittest.TestCase):
                 "caption": "moment culte F1",
                 "hashtags": ["F1", "monaco"],
                 "audio_id": "AUD42",
-                "transcript": "",
-                "visual_description": "",
+                "video_context": "",
                 "video_id": "REEL42",
                 "username": "raikkonenaf",
             },
@@ -704,38 +703,44 @@ class GenerateForPostTest(unittest.TestCase):
         self.assertEqual(mock_notify.call_args.args[2], ["c1", "c2", "c3"])
 
     @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
-    def test_passes_visual_description_in_video_context(
-        self, mock_gen: MagicMock
-    ) -> None:
+    def test_passes_merged_video_context(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
         _generate_for_post(
             {
                 "t_type": "T2",
                 "niches": ["humour"],
-                "visual_description": "Scène de rue de nuit.",
+                "video_context": "GP Monaco, scène de rue de nuit.",
             }
         )
         self.assertEqual(
-            mock_gen.call_args.kwargs["video_context"]["visual_description"],
-            "Scène de rue de nuit.",
+            mock_gen.call_args.kwargs["video_context"]["video_context"],
+            "GP Monaco, scène de rue de nuit.",
         )
 
-    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
-    def test_passes_transcript_in_video_context(self, mock_gen: MagicMock) -> None:
-        from watcher import _generate_for_post
 
-        _generate_for_post(
-            {
-                "t_type": "T2",
-                "niches": ["humour"],
-                "transcript": "il parle du GP de Monaco",
-            }
+class FuseTranscriptVisualTest(unittest.TestCase):
+    @patch("watcher.requests.post")
+    def test_fuse_returns_llm_content(self, mock_post: MagicMock) -> None:
+        from watcher import _fuse_transcript_visual_for_watcher
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "Fusion chronologique du sketch."}}]
+        }
+        mock_post.return_value = mock_resp
+        out = _fuse_transcript_visual_for_watcher(
+            "dialogue audio",
+            "deux personnes en rue",
+            "caption test",
         )
-        self.assertEqual(
-            mock_gen.call_args.kwargs["video_context"]["transcript"],
-            "il parle du GP de Monaco",
-        )
+        self.assertEqual(out, "Fusion chronologique du sketch.")
+
+    def test_fuse_skips_when_both_empty(self) -> None:
+        from watcher import _fuse_transcript_visual_for_watcher
+
+        self.assertEqual(_fuse_transcript_visual_for_watcher("", "", "cap"), "")
 
 
 class TranscribeReelTest(unittest.TestCase):

@@ -90,14 +90,14 @@ def _generate_comments_alpaca(
         tags = [str(h).strip() for h in raw_hashtags if str(h).strip()]
         hashtags = tags
 
+    merged_video_context = str(ctx.get("video_context") or "").strip()
     input_block = build_generator_input_block(
         t_type_profile=t_type_profile,
         niches=niches,
         caption=str(ctx.get("caption") or "").strip(),
         hashtags=hashtags,
         audio_id=str(ctx.get("audio_id") or ctx.get("audio") or "").strip(),
-        transcript=str(ctx.get("transcript") or "").strip(),
-        visual_description=str(ctx.get("visual_description") or "").strip(),
+        video_context=merged_video_context,
         reel_id=str(ctx.get("reel_id") or ctx.get("video_id") or "").strip(),
         creator_username=str(ctx.get("creator_username") or ctx.get("username") or "").strip(),
         named_axes=named_axes if isinstance(named_axes, dict) and named_axes else None,
@@ -155,8 +155,8 @@ def generate_comments(
 ) -> list[str]:
     """Produit 3 commentaires via le modèle Ollama fine-tuné (format Alpaca).
 
-    Le pipeline repose entièrement sur ``video_context`` (niches, caption,
-    hashtags, audio), ``t_type_profile`` (T-type **du commentateur**, lu dans
+    Le pipeline repose sur ``video_context`` (dict : caption, hashtags, audio,
+    ``video_context`` fusionné), ``t_type_profile`` (T-type **du commentateur**, lu dans
     ``watchlist.json`` côté caller — notre persona) et ``named_axes`` (profil
     créateur 32D). Un appel Alpaca est émis par commentaire, avec filtrage
     qualité (cf. ``_generate_comments_alpaca``).

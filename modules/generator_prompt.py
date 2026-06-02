@@ -10,10 +10,8 @@ from modules.named_axes import NAMED_AXES
 GENERATOR_INSTRUCTION = (
     "Tu es un utilisateur Instagram. Écris UN commentaire court (5 à 10 mots). "
     "Pas d'emoji. Pas de @mention. Une seule phrase complète, jamais coupée. "
-    "Si un Transcript est fourni, utilise son contenu pour rendre "
-    "le commentaire spécifique à ce qui est dit dans la vidéo. "
-    "Si un Visuel est fourni, utilise la description pour rendre "
-    "le commentaire encore plus spécifique au contenu visible. "
+    "Si un Contexte vidéo est fourni, utilise-le pour rendre le commentaire "
+    "spécifique au contenu réel de la vidéo (dialogues, scène, personnages, ton). "
     "Les champs Creator et Reel identifient le post cible — ne commente "
     "que le contenu de ce Reel (pas un autre créateur)."
 )
@@ -109,8 +107,7 @@ def build_generator_input_block(
     caption: str = "",
     hashtags: str | list[Any] | None = None,
     audio_id: str = "",
-    transcript: str = "",
-    visual_description: str = "",
+    video_context: str = "",
     reel_id: str = "",
     creator_username: str = "",
     named_axes: dict[str, Any] | None = None,
@@ -135,12 +132,9 @@ def build_generator_input_block(
             f"Audio: {audio_id}",
         ]
     )
-    tr = str(transcript or "").strip()
-    if tr:
-        lines.append(f"Transcript: {tr[:500]}")
-    vis = str(visual_description or "").strip()
-    if vis:
-        lines.append(f"Visuel: {vis[:300]}")
+    vc = str(video_context or "").strip()
+    if vc:
+        lines.append(f"Contexte vidéo: {vc[:600]}")
     return "\n".join(lines)
 
 

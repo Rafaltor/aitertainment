@@ -629,6 +629,8 @@ def collect_viral_comments(
     between_reels_max_s: float = 45,
     french_only: bool = True,
     creator_index: dict[str, dict[str, Any]] | None = None,
+    skip_transcript: bool = False,
+    skip_visual: bool = False,
     logger: logging.Logger | None = None,
 ) -> dict[str, int]:
     """Collecte les commentaires à fort engagement sur plusieurs reels d'un compte.
@@ -748,6 +750,33 @@ def collect_viral_comments(
                 reel_hits.sort(key=lambda c: int(c.get("like_count") or 0), reverse=True)
                 reel_hits = reel_hits[:top_per_reel]
 
+            transcript = ""
+            visual_description = ""
+            if reel_hits:
+                from scripts.scrape_viral_comments import (
+                    _enrich_reel_with_transcript_and_visual,
+                )
+
+                transcript, visual_description = _enrich_reel_with_transcript_and_visual(
+                    media_id,
+                    context,
+                    skip_transcript=skip_transcript,
+                    skip_visual=skip_visual,
+                )
+                log_cb.info(
+                    "Viral @%s reel %s : enrichi (transcript=%d chars, visuel=%d chars)",
+                    u,
+                    media_id,
+                    len(transcript),
+                    len(visual_description),
+                )
+            else:
+                log_cb.debug(
+                    "Viral @%s reel %s : 0 commentaire viral, skip enrichissement",
+                    u,
+                    media_id,
+                )
+
             for comment in reel_hits:
                 media_id = str(comment.get("media_id") or "").strip()
                 comment_text = str(comment.get("text") or "").strip()
@@ -768,6 +797,8 @@ def collect_viral_comments(
                         "caption": str(comment.get("caption") or ""),
                         "hashtags": [],
                         "audio_id": "",
+                        "transcript": transcript,
+                        "visual_description": visual_description,
                         "t_type": None,
                         "t_type_profile": creator_meta.get("t_type_profile"),
                         "llm_validated": False,
@@ -1206,6 +1237,8 @@ def collect_viral_comments_from_feed(
     french_only: bool = True,
     fresh_feed: bool = False,
     creator_index: dict[str, dict[str, Any]] | None = None,
+    skip_transcript: bool = False,
+    skip_visual: bool = False,
     logger: logging.Logger | None = None,
 ) -> dict[str, int]:
     """Découverte passive sur /reels/, puis scrape commentaires via grille profil."""
@@ -1397,6 +1430,33 @@ def collect_viral_comments_from_feed(
                     reel_hits.sort(key=lambda c: int(c.get("like_count") or 0), reverse=True)
                     reel_hits = reel_hits[:top_per_reel]
 
+                transcript = ""
+                visual_description = ""
+                if reel_hits:
+                    from scripts.scrape_viral_comments import (
+                        _enrich_reel_with_transcript_and_visual,
+                    )
+
+                    transcript, visual_description = (
+                        _enrich_reel_with_transcript_and_visual(
+                            media_id,
+                            context,
+                            skip_transcript=skip_transcript,
+                            skip_visual=skip_visual,
+                        )
+                    )
+                    log_cb.info(
+                        "Fil Reels %s : enrichi (transcript=%d chars, visuel=%d chars)",
+                        media_id,
+                        len(transcript),
+                        len(visual_description),
+                    )
+                else:
+                    log_cb.debug(
+                        "Fil Reels %s : 0 commentaire viral, skip enrichissement",
+                        media_id,
+                    )
+
                 new_on_reel = 0
                 for comment in reel_hits:
                     comment_text = str(comment.get("text") or "").strip()
@@ -1418,6 +1478,8 @@ def collect_viral_comments_from_feed(
                             "caption": caption,
                             "hashtags": [],
                             "audio_id": "",
+                            "transcript": transcript,
+                            "visual_description": visual_description,
                             "t_type": None,
                             "t_type_profile": creator_meta.get("t_type_profile"),
                             "llm_validated": False,

@@ -125,118 +125,78 @@ class BuildCreatorContextTest(unittest.TestCase):
         self.assertTrue(ctx["has_vector_profile"])
 
 
-class ClassifyCommentTest(unittest.TestCase):
-    def _chat_response(self, content: str) -> dict[str, object]:
-        return {"message": {"content": content}}
-
-    def test_returns_t2_when_ollama_replies_t2(self) -> None:
-        fake_ollama = MagicMock()
-        fake_ollama.chat.return_value = self._chat_response("T2")
-        with patch.dict(sys.modules, {"ollama": fake_ollama}), patch.object(
-            label_comments, "LM_STUDIO_URL", ""
-        ):
-            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
-        self.assertEqual(result, "T2")
-
-    def test_extracts_ttype_from_surrounding_text(self) -> None:
-        fake_ollama = MagicMock()
-        fake_ollama.chat.return_value = self._chat_response("Je pense que c'est T3b")
-        with patch.dict(sys.modules, {"ollama": fake_ollama}), patch.object(
-            label_comments, "LM_STUDIO_URL", ""
-        ):
-            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
-        self.assertEqual(result, "T3b")
-
-    def test_invalid_ttype_returns_none(self) -> None:
-        fake_ollama = MagicMock()
-        fake_ollama.chat.return_value = self._chat_response("T9")
-        with patch.dict(sys.modules, {"ollama": fake_ollama}), patch.object(
-            label_comments, "LM_STUDIO_URL", ""
-        ):
-            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
-        self.assertIsNone(result)
-
-    def test_ollama_exception_returns_none_with_warning(self) -> None:
-        fake_ollama = MagicMock()
-        fake_ollama.chat.side_effect = RuntimeError("down")
-        with patch.dict(sys.modules, {"ollama": fake_ollama}), patch.object(
-            label_comments, "LM_STUDIO_URL", ""
-        ), self.assertLogs("aitertainment.label_comments", level="WARNING") as cm:
-            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
-        self.assertIsNone(result)
-        self.assertTrue(any("Ollama" in message for message in cm.output))
-
-    def test_empty_response_returns_none(self) -> None:
-        fake_ollama = MagicMock()
-        fake_ollama.chat.return_value = self._chat_response("")
-        with patch.dict(sys.modules, {"ollama": fake_ollama}), patch.object(
-            label_comments, "LM_STUDIO_URL", ""
-        ):
-            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
-        self.assertIsNone(result)
-
-    def test_creator_context_passed_to_ollama_messages(self) -> None:
-        fake_ollama = MagicMock()
-        fake_ollama.chat.return_value = {"message": {"content": "T4"}}
-        ctx = label_comments.build_creator_context_for_label(
-            {
-                "username": "alpha",
-                "text": "comment test",
-                "comment_likes": 5,
-                "caption": "reel cap",
-            },
-            {"t_type_final": "T2", "niches": ["humour"]},
-            {
-                "named_axes": {
-                    "scripted_vs_raw": 0.5,
-                    "energy_level": 0.6,
-                    "mainstream_vs_niche": 0.7,
-                }
-            },
+class ParseLabelFuseResponseTest(unittest.TestCase):
+    def test_parses_json_object(self) -> None:
+        content = (
+            '{"t_type": "T2b", "video_context": "Sketch de rue avec deux potes."}'
         )
-        with patch.dict(sys.modules, {"ollama": fake_ollama}), patch.object(
-            label_comments, "LM_STUDIO_URL", ""
-        ):
-            result = label_comments.classify_comment(
-                "comment test",
-                ["humour"],
-                "qwen2.5:7b",
-                creator_context=ctx,
-            )
-        self.assertEqual(result, "T4")
-        user_msg = fake_ollama.chat.call_args.kwargs["messages"][1]["content"]
-        self.assertIn("T-type dominant (profil créateur): T2", user_msg)
-        self.assertIn("Likes sur ce commentaire: 5", user_msg)
-        self.assertIn("Caption: reel cap", user_msg)
-        self.assertIn("scripted_vs_raw=0.50", user_msg)
+        t_type, ctx = label_comments._parse_label_fuse_response(content)
+        self.assertEqual(t_type, "T2b")
+        self.assertIn("Sketch", ctx)
 
+    def test_parses_json_with_apostrophe_in_video_context(self) -> None:
+        # Apostrophe non échappée (JSON valide) — cas fréquent en français.
+        content = (
+            '{"t_type": "T2", "video_context": "il dit qu\'il part en cuisine."}'
+        )
+        t_type, ctx = label_comments._parse_label_fuse_response(content)
+        self.assertEqual(t_type, "T2")
+        self.assertIn("qu'il part", ctx)
+
+    def test_extract_json_block_ignores_braces_inside_strings(self) -> None:
+        raw = (
+            '{"t_type": "T3b", "video_context": "arc {ironique} et ton moqueur"}'
+        )
+        data = label_comments._extract_json_block(raw)
+        self.assertIsNotNone(data)
+        self.assertEqual(data["t_type"], "T3b")
+        self.assertIn("{ironique}", data["video_context"])
+
+    def test_fallback_ttype_without_json(self) -> None:
+        t_type, ctx = label_comments._parse_label_fuse_response("Verdict final : T3b")
+        self.assertEqual(t_type, "T3b")
+        self.assertEqual(ctx, "")
+
+
+class LabelAndFuseTest(unittest.TestCase):
     @patch("scripts.label_comments.requests.post")
-    def test_lm_studio_returns_t2(self, mock_post: MagicMock) -> None:
+    def test_returns_t_type_and_video_context(self, mock_post: MagicMock) -> None:
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
         mock_resp.json.return_value = {
-            "choices": [{"message": {"content": "T2"}}]
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            '{"t_type": "T2", "video_context": "Parodie en cuisine."}'
+                        )
+                    }
+                }
+            ]
         }
         mock_post.return_value = mock_resp
-        with patch.object(label_comments, "LM_STUDIO_URL", "http://127.0.0.1:1234"):
-            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
-        self.assertEqual(result, "T2")
-        mock_post.assert_called_once()
-        call_kwargs = mock_post.call_args.kwargs
-        self.assertEqual(call_kwargs["json"]["temperature"], label_comments._LM_STUDIO_TEMPERATURE)
-        messages = call_kwargs["json"]["messages"]
-        self.assertEqual(messages[-1]["role"], "assistant")
-        self.assertEqual(messages[-1]["content"], label_comments._LM_STUDIO_LABEL_PREFILL)
-        self.assertEqual(call_kwargs["json"]["max_tokens"], 12)
-        self.assertEqual(call_kwargs["json"]["thinking"], {"type": "disabled"})
-        self.assertEqual(
-            call_kwargs["json"]["chat_template_kwargs"], {"enable_thinking": False}
+        t_type, video_context = label_comments.label_and_fuse(
+            "mdr trop fort",
+            ["humour"],
+            {"t_type_profile": "T2", "named_axes": {}},
+            caption="cap",
+            transcript="dialogue audio",
+            visual_description="deux personnes",
+            url="http://127.0.0.1:1234/v1",
+            model="qwen/qwen3.6-35b-a3b",
         )
+        self.assertEqual(t_type, "T2")
+        self.assertEqual(video_context, "Parodie en cuisine.")
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["model"], "qwen/qwen3.6-35b-a3b")
+        self.assertEqual(payload["max_tokens"], 2000)
+        user_msg = payload["messages"][1]["content"]
+        self.assertIn("mdr trop fort", user_msg)
+        self.assertIn("dialogue audio", user_msg)
+        self.assertIn("deux personnes", user_msg)
 
     @patch("scripts.label_comments.requests.post")
-    def test_lm_studio_uses_reasoning_content_when_content_empty(
-        self, mock_post: MagicMock
-    ) -> None:
+    def test_uses_reasoning_content_when_content_empty(self, mock_post: MagicMock) -> None:
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
         mock_resp.json.return_value = {
@@ -244,44 +204,45 @@ class ClassifyCommentTest(unittest.TestCase):
                 {
                     "message": {
                         "content": "",
-                        "reasoning_content": "Analyze the Comment:\nText: super commentaire\nT3b",
+                        "reasoning_content": (
+                            '{"t_type": "T3b", "video_context": "Moment relatable."}'
+                        ),
                     }
                 }
             ]
         }
         mock_post.return_value = mock_resp
-        with patch.object(label_comments, "LM_STUDIO_URL", "http://127.0.0.1:1234"):
-            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
-        self.assertEqual(result, "T3b")
+        t_type, video_context = label_comments.label_and_fuse(
+            "c'est moi",
+            ["humour"],
+            None,
+            url="http://127.0.0.1:1234/v1",
+            model="qwen/qwen3.6-35b-a3b",
+        )
+        self.assertEqual(t_type, "T3b")
+        self.assertEqual(video_context, "Moment relatable.")
 
     @patch("scripts.label_comments.requests.post")
-    def test_lm_studio_prefill_label_colon(self, mock_post: MagicMock) -> None:
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = {
-            "choices": [
-                {
-                    "message": {
-                        "content": " T3b\n\n\nT3b",
-                        "reasoning_content": "",
-                    }
-                }
-            ]
-        }
-        mock_post.return_value = mock_resp
-        with patch.object(label_comments, "LM_STUDIO_URL", "http://127.0.0.1:1234"):
-            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
-        self.assertEqual(result, "T3b")
-
-    @patch("scripts.label_comments.requests.post")
-    def test_lm_studio_request_failure_returns_none(self, mock_post: MagicMock) -> None:
+    def test_request_failure_returns_none_empty(self, mock_post: MagicMock) -> None:
         mock_post.side_effect = RuntimeError("connection refused")
-        with patch.object(label_comments, "LM_STUDIO_URL", "http://127.0.0.1:1234"), self.assertLogs(
-            "aitertainment.label_comments", level="WARNING"
-        ) as cm:
-            result = label_comments.classify_comment("super commentaire", ["humour"], "qwen2.5:7b")
-        self.assertIsNone(result)
-        self.assertTrue(any("LM Studio" in message for message in cm.output))
+        with self.assertLogs("aitertainment.label_comments", level="WARNING"):
+            t_type, video_context = label_comments.label_and_fuse(
+                "hello",
+                ["humour"],
+                None,
+                url="http://127.0.0.1:1234/v1",
+                model="qwen/qwen3.6-35b-a3b",
+            )
+        self.assertIsNone(t_type)
+        self.assertEqual(video_context, "")
+
+    def test_missing_url_returns_none(self) -> None:
+        with patch.object(label_comments, "LABEL_LLM_URL", ""):
+            t_type, video_context = label_comments.label_and_fuse(
+                "hello", ["humour"], None
+            )
+        self.assertIsNone(t_type)
+        self.assertEqual(video_context, "")
 
 
 class BuildTrainingEntryTest(unittest.TestCase):
@@ -339,8 +300,27 @@ class BuildTrainingEntryTest(unittest.TestCase):
         self.assertEqual(entry["hashtags"], ["humour"])
         self.assertEqual(entry["audio_id"], "a1")
         self.assertEqual(entry["collected_at"], "2026-05-11T00:00:00")
-        self.assertEqual(entry["llm_model"], label_comments.OLLAMA_MODEL)
+        self.assertEqual(entry["llm_model"], label_comments.LABEL_LLM_MODEL)
         self.assertIn("labelled_at", entry)
+
+    def test_video_context_stored_in_entry(self) -> None:
+        raw_entry = {
+            "media_id": "m1",
+            "username": "alpha",
+            "niches": ["humour"],
+            "text": "hello",
+            "transcript": "audio ici",
+            "visual_description": "visuel ici",
+        }
+        entry = label_comments.build_training_entry(
+            raw_entry,
+            "T2",
+            {"alpha": {"t_type": "T2"}},
+            video_context="Fusion audio + visuel.",
+        )
+        self.assertEqual(entry["video_context"], "Fusion audio + visuel.")
+        self.assertEqual(entry["transcript"], "audio ici")
+        self.assertEqual(entry["visual_description"], "visuel ici")
 
 
 class ResetAllLabelsTest(unittest.TestCase):
@@ -416,19 +396,19 @@ class MainTest(unittest.TestCase):
             "collected_at": "2026-05-11T00:00:00",
         }
 
-    def test_dry_run_does_not_write_or_call_ollama(self) -> None:
+    def test_dry_run_does_not_write_or_call_llm(self) -> None:
         raw = [self._raw_entry()]
         with patch.object(label_comments, "load_viral_comments", return_value=raw), patch.object(
             label_comments, "load_training_comments", return_value=([], set())
         ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
             label_comments, "save_training_comments"
         ) as save_mock, patch.object(
-            label_comments, "classify_comment"
-        ) as classify_mock:
+            label_comments, "label_and_fuse"
+        ) as fuse_mock:
             code = label_comments.main(["--dry-run"])
         self.assertEqual(code, 0)
         save_mock.assert_not_called()
-        classify_mock.assert_not_called()
+        fuse_mock.assert_not_called()
 
     def test_existing_training_entry_is_skipped_without_force(self) -> None:
         raw = [self._raw_entry()]
@@ -443,13 +423,13 @@ class MainTest(unittest.TestCase):
         with patch.object(label_comments, "load_viral_comments", return_value=raw), patch.object(
             label_comments, "load_training_comments", return_value=(existing, {key})
         ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
-            label_comments, "classify_comment"
-        ) as classify_mock, patch.object(
+            label_comments, "label_and_fuse"
+        ) as fuse_mock, patch.object(
             label_comments, "save_training_comments"
         ) as save_mock:
             code = label_comments.main([])
         self.assertEqual(code, 0)
-        classify_mock.assert_not_called()
+        fuse_mock.assert_not_called()
         save_mock.assert_not_called()
 
     def test_force_relabels_existing_entry(self) -> None:
@@ -478,22 +458,23 @@ class MainTest(unittest.TestCase):
         ), patch.object(label_comments, "load_watchlist", return_value=watchlist), patch.object(
             label_comments, "load_vector_store", return_value=vector_store
         ), patch.object(
-            label_comments, "classify_comment", return_value="T4"
-        ) as classify_mock, patch.object(
+            label_comments, "label_and_fuse", return_value=("T4", "Contexte vidéo fusionné.")
+        ) as fuse_mock, patch.object(
             label_comments, "save_training_comments"
         ) as save_mock, patch.object(
             label_comments, "_ensure_llm_available", return_value=True
         ):
             code = label_comments.main(["--force"])
         self.assertEqual(code, 0)
-        classify_mock.assert_called_once()
-        ctx = classify_mock.call_args.kwargs["creator_context"]
+        fuse_mock.assert_called_once()
+        ctx = fuse_mock.call_args.args[2]
         self.assertEqual(ctx["t_type_profile"], "T2")
         self.assertEqual(ctx["named_axes"]["energy_level"], 0.2)
         self.assertEqual(ctx["comment_likes"], 1)
         save_mock.assert_called_once()
         saved = save_mock.call_args.args[0]
         self.assertEqual(saved[0]["t_type"], "T4")
+        self.assertEqual(saved[0]["video_context"], "Contexte vidéo fusionné.")
 
     def test_account_filter_limits_processing(self) -> None:
         raw = [
@@ -505,15 +486,15 @@ class MainTest(unittest.TestCase):
         ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
             label_comments, "load_vector_store", return_value={}
         ), patch.object(
-            label_comments, "classify_comment", return_value="T2"
-        ) as classify_mock, patch.object(
+            label_comments, "label_and_fuse", return_value=("T2", "")
+        ) as fuse_mock, patch.object(
             label_comments, "save_training_comments"
         ), patch.object(label_comments, "_ensure_llm_available", return_value=True):
             code = label_comments.main(["--account", "@beta"])
         self.assertEqual(code, 0)
-        self.assertEqual(classify_mock.call_count, 1)
-        self.assertEqual(classify_mock.call_args.args[0], "beta text")
-        self.assertIn("creator_context", classify_mock.call_args.kwargs)
+        self.assertEqual(fuse_mock.call_count, 1)
+        self.assertEqual(fuse_mock.call_args.args[0], "beta text")
+        self.assertIsInstance(fuse_mock.call_args.args[2], dict)
 
 
 class SaveTrainingCommentsTest(unittest.TestCase):

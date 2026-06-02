@@ -1,6 +1,7 @@
 """label_comments.py — labellisation T-type du pool viral.
 
-Lit ``viral_comments.json`` (non labellisé), appelle Ollama / LM Studio,
+Lit ``viral_comments.json`` (non labellisé), appelle Qwen3-35B via LM Studio
+(``LABEL_LLM_*``) pour T-type + ``video_context`` en un seul appel,
 écrit ``training_comments_viral.json`` et retire du pool viral les entrées
 déjà labellisées (vase communicant).
 """
@@ -22,7 +23,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in __import__("sys").path:
     __import__("sys").path.insert(0, str(_PROJECT_ROOT))
 
-from config import LM_STUDIO_URL, OLLAMA_MODEL, VALID_T_TYPES
+from config import LABEL_LLM_MODEL, LABEL_LLM_URL, VALID_T_TYPES
 from database import load_db, merge_profile_pipeline, save_db
 from modules.named_axes import NAMED_AXES
 from modules.pipeline_state import build_pipeline_patch, comment_dedup_key
@@ -34,31 +35,32 @@ WATCHLIST_PATH = Path("data/watchlist.json")
 DATABASE_PATH = Path("data/database.json")
 VECTOR_STORE_PATH = Path("data/vector_store.json")
 
-_CLASSIFY_SYSTEM_PROMPT = """Tu classes des commentaires Instagram en UN seul T-type.
+SYSTEM_PROMPT = """Tu es un expert en analyse de commentaires Instagram français.
 
-Types :
-- T1 : admiration/encouragement sincère, hype positive (sans vanne ni moquerie)
-- T2 : humour tribal, meme, catchphrase, inside joke, jeu de mots sur le créateur
-- T2b : le commentaire prolonge ou complète la blague / le sketch du reel
-- T3a : insulte ou haine explicite
-- T3b : moquerie, second degré, foutage de gueule, sarcasme (même si le ton semble léger)
-- T4 : rituel ou slogan d'identité de niche
-- T5 : créateur provocateur, commentaire alimente la polémique
+Tu reçois pour chaque commentaire :
+- Le texte du commentaire
+- Les niches du contenu  
+- Le profil du créateur (T-type dominant, axes de style)
+- La caption du reel
+- Le transcript audio (ce qui est dit dans la vidéo)
+- La description visuelle (ce qu'on voit dans la vidéo)
 
-Règles importantes :
-- Ne mets PAS T1 par défaut. T1 seulement si le registre est clairement admiratif/sincère.
-- Vannes, « mdr » ironique, références implicites, moquerie → T2, T2b ou T3b (pas T1).
-- « je te déteste mdr », « c'est pas toi », emoji moqueur → plutôt T3b que T1.
+Tu dois retourner UNIQUEMENT un JSON valide avec exactement ces deux clés :
+{
+  "t_type": "T1|T2|T2b|T3a|T3b|T4|T5",
+  "video_context": "Description fusionnée et chronologique de la vidéo en 2-4 phrases, qui intègre l'audio ET le visuel. Ex: 'Sketch parodique où le personnage central, ressemblant à un dirigeant politique, débat avec un commentateur dans une rue parisienne entouré de gardes du corps masqués. Le ton est ironique, avec des dialogues percutants.'"
+}
 
-Exemples :
-- « t'es trop fort fréro » → T1
-- « you're jude or you're not but I doooo » → T2
-- « c'est pas toi ça s'entend 😂 » → T3b
-- « je te déteste mdr très bon acting » → T3b
+T-types :
+T1 = spam, bot, commentaire sans valeur
+T2 = engagement basique court (lol, mdr, top)
+T2b = engagement émotionnel fort (je suis mort, trop drôle sérieux)
+T3a = question ou curiosité  
+T3b = partage d'expérience personnelle
+T4 = référence communautaire, inside joke, mention d'amis
+T5 = contenu généré (suite, collab, repost demandé)
 
-Réponds par EXACTEMENT un token : T1, T2, T2b, T3a, T3b, T4 ou T5."""
-_LM_STUDIO_LABEL_PREFILL = "Label: "
-_LM_STUDIO_TEMPERATURE = 0.15
+Réponds UNIQUEMENT le JSON. Pas d'explication, pas de markdown."""
 _LOG = logging.getLogger("aitertainment.label_comments")
 _TOKEN_RE = re.compile(r"\S+")
 # Ordre long → court pour ne pas couper T2b / T3b en T2 / T3.
@@ -457,97 +459,135 @@ def _t_type_from_raw_entry(raw_entry: dict[str, Any]) -> str | None:
     return None
 
 
-def classify_comment(
+def _extract_json_block(text: str) -> dict[str, Any] | None:
+    """Extrait le premier bloc JSON valide en comptant les accolades."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start=start):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = text[start : i + 1]
+                try:
+                    parsed = json.loads(candidate)
+                except json.JSONDecodeError:
+                    return None
+                return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _parse_label_fuse_response(content: str) -> tuple[str | None, str]:
+    """Extrait ``(t_type, video_context)`` depuis la réponse LLM."""
+    content = (content or "").strip()
+    if not content:
+        return None, ""
+
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", content, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        content = fenced.group(1).strip()
+
+    data = _extract_json_block(content)
+    if not data:
+        ttype_m = re.search(r"\b(T1|T2b|T2|T3a|T3b|T4|T5)\b", content)
+        if ttype_m and ttype_m.group(1) in VALID_TTYPES:
+            return ttype_m.group(1), ""
+        return None, ""
+
+    t_type_raw = data.get("t_type")
+    t_type = str(t_type_raw or "").strip()
+    if t_type not in VALID_TTYPES:
+        t_type = _extract_t_type_from_content(str(t_type_raw or "")) or ""
+    video_context = str(data.get("video_context") or "").strip()
+    if t_type in VALID_TTYPES:
+        return t_type, video_context
+
+    ttype_m = re.search(r"\b(T1|T2b|T2|T3a|T3b|T4|T5)\b", content)
+    if ttype_m and ttype_m.group(1) in VALID_TTYPES:
+        return ttype_m.group(1), ""
+    return None, ""
+
+
+def label_and_fuse(
     text: str,
     niches: list[str],
-    ollama_model: str,
+    creator_context: dict[str, Any] | None,
     *,
-    creator_context: dict[str, Any] | None = None,
-) -> str | None:
-    """Classifie un commentaire via LM Studio (distant) ou Ollama (local)."""
-    user_prompt = _build_user_prompt(text, niches, creator_context)
+    caption: str = "",
+    transcript: str = "",
+    visual_description: str = "",
+    model: str | None = None,
+    url: str | None = None,
+) -> tuple[str | None, str]:
+    """Labélise le commentaire et fusionne transcript + visuel en ``video_context``."""
+    ctx = creator_context or {}
+    user_prompt = f"""Commentaire à classifier : {text}
 
-    message: dict[str, Any] = {}
-    content = ""
+Niches du contenu : {', '.join(niches) if niches else 'humour'}
 
-    if LM_STUDIO_URL:
-        lm_model = (
-            os.environ.get("LM_STUDIO_MODEL")
-            or os.environ.get("LM_STUDIO_CHAT_MODEL")
-            or "qwen/qwen3.6-35b-a3b"
-        )
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-            # Évite le prefill « T » qui pousse le modèle vers « 1 : Admiration » → T1.
-            {"role": "assistant", "content": _LM_STUDIO_LABEL_PREFILL},
-        ]
-        payload = {
-            "model": lm_model,
-            "messages": messages,
-            "max_tokens": 12,
-            "temperature": _LM_STUDIO_TEMPERATURE,
-            "thinking": {"type": "disabled"},
-            "chat_template_kwargs": {"enable_thinking": False},
-        }
-        try:
-            resp = requests.post(
-                f"{LM_STUDIO_URL.rstrip('/')}/chat/completions",
-                json=payload,
-                timeout=60,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            message = data["choices"][0]["message"]
-            label = _extract_t_type_from_message(message, text)
-        except Exception as exc:
-            _LOG.warning("classify_comment : appel LM Studio échoué (%s).", exc)
-            return None
-    else:
-        try:
-            import ollama
-        except ImportError as exc:
-            _LOG.warning("ollama indisponible (%s).", exc)
-            return None
+Profil créateur :
+- T-type dominant : {ctx.get('t_type_profile') or '(inconnu)'}
+- Axes : {ctx.get('named_axes', {})}
 
-        try:
-            response = ollama.chat(
-                model=ollama_model,
-                messages=[
-                    {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
+Caption du reel : {caption[:300] if caption else '(vide)'}
+
+Transcript audio : {transcript[:1000] if transcript else '(non disponible)'}
+
+Description visuelle : {visual_description[:600] if visual_description else '(non disponible)'}
+
+Retourne le JSON."""
+
+    api_url = (url or LABEL_LLM_URL or "").strip().rstrip("/")
+    api_model = (model or LABEL_LLM_MODEL or "").strip()
+    if not api_url or not api_model:
+        _LOG.warning("label_and_fuse : LABEL_LLM_URL ou LABEL_LLM_MODEL absent.")
+        return None, ""
+
+    try:
+        resp = requests.post(
+            f"{api_url}/chat/completions",
+            json={
+                "model": api_model,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
                 ],
-            )
-        except Exception as exc:
-            _LOG.warning("classify_comment : appel Ollama échoué (%s).", exc)
-            return None
-
-        if isinstance(response, dict):
-            message = response.get("message") or {}
-            if isinstance(message, dict):
-                content = str(message.get("content") or "")
-            else:
-                content = str(getattr(message, "content", "") or "")
-        else:
-            message = getattr(response, "message", None)
-            content = str(getattr(message, "content", "") or "")
-        label = _extract_t_type_from_content(content)
-
-    if label is None:
-        snippet = ""
-        if LM_STUDIO_URL and message:
-            snippet = (
-                str(message.get("content") or "")[:80]
-                or str(message.get("reasoning_content") or "")[-120:]
-            )
-        elif content.strip():
-            snippet = content[:120]
-        if snippet:
+                "max_tokens": 2000,
+                "temperature": 0.2,
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        message = resp.json()["choices"][0]["message"]
+        content = str(message.get("content") or "").strip()
+        if not content:
+            content = str(message.get("reasoning_content") or "").strip()
+        t_type, video_context = _parse_label_fuse_response(content)
+        if t_type is None and content:
             _LOG.warning(
-                "classify_comment : réponse illisible (extrait=%r).",
-                snippet.replace("\n", " "),
+                "label_and_fuse : réponse illisible (extrait=%r).",
+                content.replace("\n", " ")[:120],
             )
-    return label
+        return t_type, video_context
+    except Exception as exc:
+        _LOG.warning("label_and_fuse : appel LLM échoué (%s).", exc)
+        return None, ""
 
 
 def build_training_entry(
@@ -556,6 +596,7 @@ def build_training_entry(
     creators: dict[str, dict[str, Any]],
     *,
     label_source: str = "llm",
+    video_context: str = "",
 ) -> dict[str, Any]:
     """Construit une entrée ``training_comments_viral.json`` depuis le brut."""
     username = str(raw_entry.get("username") or "").lstrip("@").strip()
@@ -578,9 +619,12 @@ def build_training_entry(
         "caption": raw_entry.get("caption", ""),
         "hashtags": raw_entry.get("hashtags", []),
         "audio_id": raw_entry.get("audio_id", ""),
+        "transcript": raw_entry.get("transcript", ""),
+        "visual_description": raw_entry.get("visual_description", ""),
+        "video_context": video_context,
         "collected_at": raw_entry.get("collected_at", ""),
         "labelled_at": _utc_now_iso(),
-        "llm_model": str(raw_entry.get("llm_model") or OLLAMA_MODEL),
+        "llm_model": str(raw_entry.get("llm_model") or LABEL_LLM_MODEL),
         "llm_validated": label_source == "llm",
         "label_source": label_source,
     }
@@ -727,14 +771,12 @@ def save_training_comments(
 
 
 def _ensure_llm_available() -> bool:
-    if LM_STUDIO_URL:
+    if LABEL_LLM_URL and LABEL_LLM_MODEL:
         return True
-    try:
-        import ollama  # noqa: F401
-    except ImportError as exc:
-        _LOG.error("Ollama indisponible au démarrage (%s).", exc)
-        return False
-    return True
+    _LOG.error(
+        "LABEL_LLM_URL / LABEL_LLM_MODEL non configurés (labelliseur Qwen3-35B)."
+    )
+    return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -743,7 +785,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Affiche le plan sans écrire ni appeler Ollama.",
+        help="Affiche le plan sans écrire ni appeler le LLM.",
     )
     parser.add_argument(
         "--force",
@@ -896,11 +938,13 @@ def main(argv: list[str] | None = None) -> int:
             vector_store.get(username_key),
         )
 
-        t_type = classify_comment(
+        t_type, video_context = label_and_fuse(
             text,
             niches,
-            OLLAMA_MODEL,
-            creator_context=creator_context,
+            creator_context,
+            caption=str(raw_entry.get("caption") or ""),
+            transcript=str(raw_entry.get("transcript") or ""),
+            visual_description=str(raw_entry.get("visual_description") or ""),
         )
 
         if t_type is None:
@@ -913,7 +957,11 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         entry = build_training_entry(
-            raw_entry, t_type, creators, label_source="llm"
+            raw_entry,
+            t_type,
+            creators,
+            label_source="llm",
+            video_context=video_context,
         )
         key = dedup_key(str(entry["media_id"]), str(entry["text"]))
         training_by_key[key] = entry

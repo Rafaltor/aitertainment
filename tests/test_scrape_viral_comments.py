@@ -110,6 +110,52 @@ class CountEntriesTest(unittest.TestCase):
             self.assertEqual(len(entries), 1)
 
 
+class EnrichReelTest(unittest.TestCase):
+    @patch("scripts.scrape_viral_comments.config")
+    @patch("scripts.scrape_viral_comments._describe_grid", return_value="scène cuisine")
+    @patch("scripts.scrape_viral_comments._make_frames_grid")
+    @patch("scripts.scrape_viral_comments.transcribe_audio", return_value="bonjour le monde")
+    @patch("scripts.scrape_viral_comments.extract_wav_from_video")
+    @patch("scripts.scrape_viral_comments.download_reel_video")
+    def test_enrich_returns_transcript_and_visual(
+        self,
+        mock_dl: unittest.mock.MagicMock,
+        mock_wav: unittest.mock.MagicMock,
+        mock_tr: unittest.mock.MagicMock,
+        mock_grid: unittest.mock.MagicMock,
+        mock_desc: unittest.mock.MagicMock,
+        mock_cfg: unittest.mock.MagicMock,
+    ) -> None:
+        from scripts.scrape_viral_comments import _enrich_reel_with_transcript_and_visual
+
+        mock_cfg.LM_STUDIO_URL = "http://127.0.0.1:1234/v1"
+        mock_cfg.LM_STUDIO_VISION_MODEL = "openbmb/minicpm-v-2_6"
+        mp4 = Path("/tmp/fake.mp4")
+        mock_dl.return_value = mp4
+        mock_wav.return_value = Path("/tmp/fake.wav")
+        mock_grid.return_value = Path("/tmp/grid.jpg")
+
+        tr, vis = _enrich_reel_with_transcript_and_visual(
+            "reel1",
+            unittest.mock.MagicMock(),
+        )
+        self.assertEqual(tr, "bonjour le monde")
+        self.assertEqual(vis, "scène cuisine")
+
+    @patch("scripts.scrape_viral_comments.download_reel_video")
+    def test_enrich_skips_when_flags(self, mock_dl: unittest.mock.MagicMock) -> None:
+        from scripts.scrape_viral_comments import _enrich_reel_with_transcript_and_visual
+
+        tr, vis = _enrich_reel_with_transcript_and_visual(
+            "reel1",
+            unittest.mock.MagicMock(),
+            skip_transcript=True,
+            skip_visual=True,
+        )
+        self.assertEqual((tr, vis), ("", ""))
+        mock_dl.assert_not_called()
+
+
 class FilterReelsForScrapeTest(unittest.TestCase):
     def test_filter_by_comment_count_and_sort(self) -> None:
         from scripts.instagram_browser import _filter_reels_for_comment_scrape

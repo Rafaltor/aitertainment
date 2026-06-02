@@ -158,6 +158,17 @@ class GeneratorDatasetTest(unittest.TestCase):
         self.assertEqual(with_vector, 0)
         self.assertEqual(_read_jsonl(self.out_path), [])
 
+    def test_video_context_included_in_input_block(self) -> None:
+        entry = _valid_generator_entry(
+            video_context="Deux potes en cuisine, ton ironique, drop vendredi."
+        )
+        generate_generator_dataset([entry], self.out_path)
+        rows = _read_jsonl(self.out_path)
+        self.assertIn(
+            "Contexte vidéo: Deux potes en cuisine, ton ironique, drop vendredi.",
+            rows[0]["input"],
+        )
+
 
 # ---------------------------------------------------------------------------
 # load_vector_store

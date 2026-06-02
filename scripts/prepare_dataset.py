@@ -283,6 +283,7 @@ def _generator_input_block(
     hashtags: str,
     audio_id: str,
     named_axes: dict[str, Any] | None,
+    video_context: str = "",
 ) -> tuple[str, bool]:
     block = build_generator_input_block(
         t_type_profile=t_type_profile,
@@ -291,6 +292,7 @@ def _generator_input_block(
         hashtags=hashtags,
         audio_id=audio_id,
         named_axes=named_axes,
+        video_context=video_context,
     )
     return block, bool(named_axes)
 
@@ -356,6 +358,7 @@ def generate_generator_dataset(
         caption = str(entry.get("caption") or "")
         hashtags = _format_hashtags(entry.get("hashtags"))
         audio_id = str(entry.get("audio_id") or "")
+        video_context = str(entry.get("video_context") or "")
 
         username = str(entry.get("username") or "").lstrip("@").strip().lower()
         store_entry = vector_store.get(username, {})
@@ -369,6 +372,7 @@ def generate_generator_dataset(
             hashtags=hashtags,
             audio_id=audio_id,
             named_axes=axes_dict,
+            video_context=video_context,
         )
         if has_vector:
             with_vector += 1

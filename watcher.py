@@ -20,9 +20,9 @@ PHASE WATCHER (ce fichier)
     - Le contexte du commentaire suggéré provient de deux sources :
         1. Profil créateur (``t_type``, ``niches``) → déjà dans
            ``watchlist.json`` (ne change pas à chaque tick).
-        2. Contexte vidéo (caption, hashtags, audio_id, transcript Whisper,
-           description visuelle Qwen2.5-VL) → Playwright + GraphQL ; une seule
-           passe yt-dlp (MP4) puis Whisper + LM Studio vision avant génération.
+        2. Contexte vidéo (caption, hashtags, audio_id, ``video_context`` fusionné
+           via Qwen3-35B) → Playwright + GraphQL ; yt-dlp, Whisper, vision,
+           puis fusion LABEL_LLM avant génération.
 
 Corpus commentaires d'entraînement : ``scripts/scrape_viral_comments.py`` →
 ``viral_comments.json`` (hors watchlist temps réel).
@@ -750,6 +750,48 @@ def _build_classification_from_t_type(t_type: str) -> dict[str, Any]:
     }
 
 
+def _fuse_transcript_visual_for_watcher(
+    transcript: str, visual_description: str, caption: str
+) -> str:
+    """Appelle Qwen3-35B (LABEL_LLM) pour fusionner transcript + visuel."""
+    if not (transcript or visual_description):
+        return ""
+    api_url = (config.LABEL_LLM_URL or "").strip().rstrip("/")
+    api_model = (config.LABEL_LLM_MODEL or "").strip()
+    if not api_url or not api_model:
+        _LOGGER.warning("LABEL_LLM_* absent — fusion video_context ignorée.")
+        return ""
+
+    user_prompt = f"""Fusionne en 2-4 phrases chronologiques le transcript audio 
+et la description visuelle de ce reel Instagram :
+
+Caption : {caption[:300]}
+Transcript : {transcript[:1000]}
+Description visuelle : {visual_description[:600]}
+
+Réponds uniquement la fusion, pas d'explication."""
+
+    try:
+        resp = requests.post(
+            f"{api_url}/chat/completions",
+            json={
+                "model": api_model,
+                "messages": [{"role": "user", "content": user_prompt}],
+                "max_tokens": 500,
+                "temperature": 0.3,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        message = resp.json()["choices"][0]["message"]
+        return str(
+            message.get("content") or message.get("reasoning_content") or ""
+        ).strip()
+    except Exception as exc:
+        _LOGGER.warning("fusion video_context échouée : %s", exc)
+        return ""
+
+
 def _generate_for_post(
     context: dict[str, Any],
     vector_store: dict[str, dict[str, Any]] | None = None,
@@ -792,20 +834,18 @@ def _generate_for_post(
             "caption": context.get("caption"),
             "hashtags": context.get("hashtags"),
             "audio_id": context.get("audio") or context.get("audio_id"),
-            "transcript": context.get("transcript") or "",
-            "visual_description": context.get("visual_description") or "",
+            "video_context": context.get("video_context") or "",
             "video_id": context.get("video_id") or "",
             "username": context.get("username") or "",
         },
     }
     reel_id = str(context.get("video_id") or "")
     log.info(
-        "generate @%s reel=%s — caption=%d chars, transcript=%d, visuel=%d",
+        "generate @%s reel=%s — caption=%d chars, video_context=%d",
         username or "?",
         reel_id or "?",
         len(str(context.get("caption") or "")),
-        len(str(context.get("transcript") or "")),
-        len(str(context.get("visual_description") or "")),
+        len(str(context.get("video_context") or "")),
     )
     if named_axes:
         log.info(
@@ -986,6 +1026,14 @@ def _process_creator(
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    video_context = _fuse_transcript_visual_for_watcher(
+        transcript,
+        visual_description,
+        str(post.get("caption") or ""),
+    )
+    if video_context:
+        log.info("@%s video_context fusionné (%d chars)", username, len(video_context))
+
     gen_context = {
         "t_type": t_type,
         "niches": _creator_niches(creator),
@@ -995,8 +1043,7 @@ def _process_creator(
         "url": post.get("url"),
         "username": username,
         "video_id": media_id,
-        "transcript": transcript,
-        "visual_description": visual_description,
+        "video_context": video_context,
     }
 
     comments: list[str] = []
