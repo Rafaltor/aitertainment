@@ -1,4 +1,4 @@
-"""État incrémental du pipeline commentaires (raw → embed → label).
+"""État incrémental du pipeline commentaires (viral → label ; embedder séparé).
 
 Évite de re-scraper, re-embedder ou re-labéliser ce qui est déjà traité.
 La clé de dédup commentaire est partagée partout : ``media_id||text.lower()``.
@@ -16,7 +16,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def comment_dedup_key(media_id: str, text: str) -> str:
-    """Clé stable pour raw_comments, training_comments et empreintes."""
+    """Clé stable pour viral / training / embedder et empreintes."""
     return f"{media_id}||{text.strip().lower()}"
 
 
@@ -64,8 +64,8 @@ def comments_fingerprint_for_account(
 def load_training_labeled_keys(
     path: Path | str | None = None,
 ) -> set[str]:
-    """Clés déjà présentes dans ``training_comments.json``."""
-    p = Path(path) if path is not None else _PROJECT_ROOT / "data/training_comments.json"
+    """Clés déjà présentes dans ``training_comments_viral.json``."""
+    p = Path(path) if path is not None else _PROJECT_ROOT / "data" / "training_comments_viral.json"
     if not p.is_absolute():
         p = _PROJECT_ROOT / p
     if not p.exists():

@@ -1,4 +1,4 @@
-"""Utilitaires I/O pour ``data/training_comments.json``."""
+"""Utilitaires I/O pour ``data/training_comments_viral.json``."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_TRAINING_PATH = _PROJECT_ROOT / "data" / "training_comments.json"
+DEFAULT_TRAINING_PATH = _PROJECT_ROOT / "data" / "training_comments_viral.json"
 
 
 class DatasetIOError(ValueError):

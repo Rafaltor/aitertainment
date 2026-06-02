@@ -101,3 +101,7 @@ tmp/
 *.wav
 *.mp3
 downloads/
+
+# local-only
+llama.cpp/
+models/

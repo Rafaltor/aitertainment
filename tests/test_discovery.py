@@ -23,24 +23,9 @@ class DiscoveryIOTest(unittest.TestCase):
         self.assertIsInstance(data["domains"], list)
         self.assertGreaterEqual(len(data["domains"]), 1)
 
-    def test_blacklist_candidates_roundtrip(self) -> None:
+    def test_candidates_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            bp = Path(tmp) / "blacklist.json"
             cp = Path(tmp) / "candidates.json"
-
-            discovery.save_blacklist(
-                {
-                    "profiles": [
-                        {
-                            "username": "seen_user",
-                            "platform": "instagram",
-                            "outcome": "rejected",
-                            "added_at": "2026-05-07T12:00:00",
-                        }
-                    ]
-                },
-                path=bp,
-            )
             discovery.save_candidates(
                 {
                     "candidates": [
@@ -55,20 +40,16 @@ class DiscoveryIOTest(unittest.TestCase):
                 },
                 path=cp,
             )
-
-            bl = discovery.load_blacklist(path=bp)
-            self.assertEqual(len(bl["profiles"]), 1)
-            self.assertEqual(bl["profiles"][0]["username"], "seen_user")
-
             cd = discovery.load_candidates(path=cp)
             self.assertEqual(len(cd["candidates"]), 1)
             self.assertEqual(cd["candidates"][0]["score"], 0.72)
 
-    def test_load_blacklist_missing_returns_empty(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            p = Path(tmp) / "missing.json"
-            data = discovery.load_blacklist(path=p)
-            self.assertEqual(data, {"profiles": []})
+    def test_database_usernames_empty(self) -> None:
+        self.assertEqual(discovery._database_usernames({"profiles": {}}), set())
+        self.assertEqual(
+            discovery._database_usernames({"profiles": {"u1": {}}}),
+            {"u1"},
+        )
 
 
 def _make_user(
@@ -204,7 +185,7 @@ class ScoreProfileTest(unittest.TestCase):
         result = discovery.score_profile(
             "ghost",
             self.DOMAIN,
-            blacklist={"profiles": []},
+            db={"profiles": []},
             context=self._ctx,
         )
         self.assertIsNone(result)
@@ -213,7 +194,7 @@ class ScoreProfileTest(unittest.TestCase):
         result = discovery.score_profile(
             "@known",
             self.DOMAIN,
-            blacklist={"profiles": [{"username": "known"}]},
+            db={"profiles": {"known": {}}},
             context=self._ctx,
         )
         self.assertIsNone(result)
@@ -223,7 +204,7 @@ class ScoreProfileTest(unittest.TestCase):
         self._make_client(user=_make_user(follower_count=500))
         self.assertIsNone(
             discovery.score_profile(
-                "tiny", self.DOMAIN, blacklist={"profiles": []}, context=self._ctx
+                "tiny", self.DOMAIN, db={"profiles": []}, context=self._ctx
             )
         )
 
@@ -231,7 +212,7 @@ class ScoreProfileTest(unittest.TestCase):
         self._make_client(user=_make_user(follower_count=2_000_000))
         self.assertIsNone(
             discovery.score_profile(
-                "mega", self.DOMAIN, blacklist={"profiles": []}, context=self._ctx
+                "mega", self.DOMAIN, db={"profiles": []}, context=self._ctx
             )
         )
 
@@ -239,7 +220,7 @@ class ScoreProfileTest(unittest.TestCase):
         self._make_client(user=_make_user(is_private=True))
         self.assertIsNone(
             discovery.score_profile(
-                "secret", self.DOMAIN, blacklist={"profiles": []}, context=self._ctx
+                "secret", self.DOMAIN, db={"profiles": []}, context=self._ctx
             )
         )
 
@@ -247,7 +228,7 @@ class ScoreProfileTest(unittest.TestCase):
         self._make_client(user=_make_user(media_count=1))
         self.assertIsNone(
             discovery.score_profile(
-                "thin", self.DOMAIN, blacklist={"profiles": []}, context=self._ctx
+                "thin", self.DOMAIN, db={"profiles": []}, context=self._ctx
             )
         )
 
@@ -256,7 +237,6 @@ class ScoreProfileTest(unittest.TestCase):
             discovery.score_profile(
                 "anyone",
                 self.DOMAIN,
-                blacklist={"profiles": []},
                 context=None,
             )
         )
@@ -297,7 +277,7 @@ class ScoreProfileTest(unittest.TestCase):
         result = discovery.score_profile(
             "rising_creator",
             self.DOMAIN,
-            blacklist={"profiles": []},
+            db={"profiles": []},
             context=self._ctx,
         )
 
@@ -323,7 +303,7 @@ class ScoreProfileTest(unittest.TestCase):
         client = self._make_client(user=_make_user(media_count=10), medias=[])
         self.assertIsNone(
             discovery.score_profile(
-                "empty", self.DOMAIN, blacklist={"profiles": []}, context=self._ctx
+                "empty", self.DOMAIN, db={"profiles": []}, context=self._ctx
             )
         )
 
@@ -345,15 +325,14 @@ class ScoreProfileTest(unittest.TestCase):
             user=_make_user(follower_count=followers, media_count=2),
             medias=medias,
         )
-        with patch("modules.classifier.CommentClassifier"):
-            self.assertIsNone(
-                discovery.score_profile(
-                    "thin_history",
-                    self.DOMAIN,
-                    blacklist={"profiles": []},
-                    context=self._ctx,
-                )
+        self.assertIsNone(
+            discovery.score_profile(
+                "thin_history",
+                self.DOMAIN,
+                db={"profiles": []},
+                context=self._ctx,
             )
+        )
 
     def test_reels_only_creator_post_weight_zero(self) -> None:
         followers = 10_000
@@ -372,13 +351,11 @@ class ScoreProfileTest(unittest.TestCase):
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
         )
-        with patch("modules.classifier.CommentClassifier"):
-            result = discovery.score_profile(
-                "reels_only",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                context=self._ctx,
-            )
+        result = discovery.score_profile(
+            "reels_only",
+            self.DOMAIN,
+            context=self._ctx,
+        )
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["reels_count"], 10)
@@ -412,7 +389,7 @@ class ScoreProfileTest(unittest.TestCase):
         result = discovery.score_profile(
             "posts_only",
             self.DOMAIN,
-            blacklist={"profiles": []},
+            db={"profiles": []},
             context=self._ctx,
         )
         self.assertIsNone(result)
@@ -448,20 +425,12 @@ class ScoreProfileTest(unittest.TestCase):
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
         )
-        with patch("modules.classifier.CommentClassifier") as cls:
-            cls.return_value.classify.return_value = {
-                "type": "T2",
-                "confidence": 0.8,
-                "patterns": [],
-                "tone": "humour",
-                "brand_risk": "low",
-            }
-            result = discovery.score_profile(
-                "mixed_50",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                context=self._ctx,
-            )
+        result = discovery.score_profile(
+            "mixed_50",
+            self.DOMAIN,
+            db={"profiles": {}},
+            context=self._ctx,
+        )
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["reels_count"], 4)
@@ -501,13 +470,11 @@ class ScoreProfileTest(unittest.TestCase):
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
         )
-        with patch("modules.classifier.CommentClassifier"):
-            result = discovery.score_profile(
-                "mixed_80",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                context=self._ctx,
-            )
+        result = discovery.score_profile(
+            "mixed_80",
+            self.DOMAIN,
+            context=self._ctx,
+        )
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["reels_count"], 8)
@@ -533,13 +500,11 @@ class ScoreProfileTest(unittest.TestCase):
                 for i in range(3)
             ],
         )
-        with patch("modules.classifier.CommentClassifier"):
-            result = discovery.score_profile(
-                "zero_list_views",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                context=self._ctx,
-            )
+        result = discovery.score_profile(
+            "zero_list_views",
+            self.DOMAIN,
+            context=self._ctx,
+        )
         self.assertIsNotNone(result)
         assert result is not None
         self.assertAlmostEqual(result["reel_ratio_median"], 5.0, places=4)
@@ -582,13 +547,11 @@ class ScoreProfileTest(unittest.TestCase):
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
         )
-        with patch("modules.classifier.CommentClassifier"):
-            result = discovery.score_profile(
-                "has_views",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                context=self._ctx,
-            )
+        result = discovery.score_profile(
+            "has_views",
+            self.DOMAIN,
+            context=self._ctx,
+        )
         self.assertIsNotNone(result)
 
     def test_viral_outlier_pushes_score_above_median_only(self) -> None:
@@ -619,13 +582,11 @@ class ScoreProfileTest(unittest.TestCase):
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
         )
-        with patch("modules.classifier.CommentClassifier"):
-            result = discovery.score_profile(
-                "viral_skew",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                context=self._ctx,
-            )
+        result = discovery.score_profile(
+            "viral_skew",
+            self.DOMAIN,
+            context=self._ctx,
+        )
         self.assertIsNotNone(result)
         assert result is not None
 
@@ -691,13 +652,11 @@ class ScoreProfileTest(unittest.TestCase):
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
         )
-        with patch("modules.classifier.CommentClassifier"):
-            result = discovery.score_profile(
-                "with_pins",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                context=self._ctx,
-            )
+        result = discovery.score_profile(
+            "with_pins",
+            self.DOMAIN,
+            context=self._ctx,
+        )
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result["media_sampled"], 40)
@@ -750,7 +709,7 @@ class ScoreProfileTest(unittest.TestCase):
         result = discovery.score_profile(
             "capped_posts",
             self.DOMAIN,
-            blacklist={"profiles": []},
+            db={"profiles": []},
             context=self._ctx,
         )
         self.assertIsNotNone(result)
@@ -782,7 +741,7 @@ class ScoreProfileTest(unittest.TestCase):
         discovery.score_profile(
             "no_comment_fetch",
             self.DOMAIN,
-            blacklist={"profiles": []},
+            db={"profiles": []},
             context=self._ctx,
         )
         client.media_comments.assert_not_called()
@@ -805,13 +764,11 @@ class ScoreProfileTest(unittest.TestCase):
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
         )
-        with patch("modules.classifier.CommentClassifier"):
-            result = discovery.score_profile(
-                "rhythm_check",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                context=self._ctx,
-            )
+        result = discovery.score_profile(
+            "rhythm_check",
+            self.DOMAIN,
+            context=self._ctx,
+        )
         self.assertIsNotNone(result)
         assert result is not None
         self.assertIn("posting_rhythm", result)
@@ -852,13 +809,11 @@ class ScoreProfileTest(unittest.TestCase):
             user=_make_user(follower_count=followers, media_count=40),
             medias=medias,
         )
-        with patch("modules.classifier.CommentClassifier"):
-            result = discovery.score_profile(
-                "reel_rhythm_only",
-                self.DOMAIN,
-                blacklist={"profiles": []},
-                context=self._ctx,
-            )
+        result = discovery.score_profile(
+            "reel_rhythm_only",
+            self.DOMAIN,
+            context=self._ctx,
+        )
         self.assertIsNotNone(result)
         assert result is not None
         # Reels seuls : 4 / 3 jours ≈ 1.33 (au lieu de 8/350 ≈ 0.023 si Posts
@@ -1212,7 +1167,7 @@ class ExploreNetworkTest(unittest.TestCase):
         """Si le seed est déjà blacklisté, aucun scoring (Discovery 2026-05 :
         plus de followings, le seed est le seul profil considéré).
         """
-        blacklist = {"profiles": [{"username": "seed_one"}]}
+        db = {"profiles": {"seed_one": {}}}
         candidates: dict[str, Any] = {"candidates": []}
         session = discovery.DiscoverySession(mock=False)
 
@@ -1225,12 +1180,11 @@ class ExploreNetworkTest(unittest.TestCase):
         with patch.object(discovery, "score_profile", side_effect=fake_score):
             discovery.explore_network(
                 self.DOMAIN,
-                blacklist=blacklist,
+                db=db,
                 watchlist=[],
                 candidates=candidates,
                 context=MagicMock(),
                 session=session,
-                blacklist_path=Path("/tmp/skip_persist_bl.json"),
                 candidates_path=Path("/tmp/skip_persist_cand.json"),
             )
 
@@ -1252,12 +1206,10 @@ class ExploreNetworkTest(unittest.TestCase):
              self.assertLogs("aitertainment.discovery", level="INFO") as cm:
             discovery.explore_network(
                 self.DOMAIN,
-                blacklist={"profiles": []},
                 watchlist=watchlist,
                 candidates={"candidates": []},
                 context=MagicMock(),
                 session=session,
-                blacklist_path=Path("/tmp/skip_persist_bl.json"),
                 candidates_path=Path("/tmp/skip_persist_cand.json"),
             )
 
@@ -1272,7 +1224,7 @@ class ExploreNetworkTest(unittest.TestCase):
         il est ajouté aux candidates et notifié (boutons inline ✅ ❌ ✏️ via
         ``_notify_candidate``).
         """
-        blacklist = {"profiles": []}
+        db = {"profiles": {}}
         candidates: dict[str, Any] = {"candidates": []}
         session = discovery.DiscoverySession(mock=False)
 
@@ -1290,11 +1242,10 @@ class ExploreNetworkTest(unittest.TestCase):
 
         with patch.object(discovery, "score_profile", return_value=good_result), \
              patch.object(discovery, "_notify_candidate") as notif, \
-             patch.object(discovery, "save_blacklist"), \
              patch.object(discovery, "save_candidates"):
             discovery.explore_network(
                 self.DOMAIN,
-                blacklist=blacklist,
+                db=db,
                 watchlist=[],
                 candidates=candidates,
                 context=MagicMock(),
@@ -1307,12 +1258,12 @@ class ExploreNetworkTest(unittest.TestCase):
         self.assertEqual(session.candidates_found, 1)
         notif.assert_called_once()
         self.assertEqual(session.profiles_today, 1)
-        # Le seed est aussi blacklisté ("candidate" outcome) — jamais reproposé.
-        self.assertIn("seed_one", [p["username"] for p in blacklist["profiles"]])
+        # Le seed est en database — jamais reproposé au prochain run.
+        self.assertIn("seed_one", db["profiles"])
 
     def test_seed_with_low_score_blacklisted_not_candidate(self) -> None:
         """Score sous seuil → blacklist (outcome=rejected), pas de notif."""
-        blacklist = {"profiles": []}
+        db = {"profiles": {}}
         candidates: dict[str, Any] = {"candidates": []}
         session = discovery.DiscoverySession(mock=False)
 
@@ -1330,11 +1281,10 @@ class ExploreNetworkTest(unittest.TestCase):
 
         with patch.object(discovery, "score_profile", return_value=low_result), \
              patch.object(discovery, "_notify_candidate") as notif, \
-             patch.object(discovery, "save_blacklist"), \
              patch.object(discovery, "save_candidates"):
             discovery.explore_network(
                 self.DOMAIN,
-                blacklist=blacklist,
+                db=db,
                 watchlist=[],
                 candidates=candidates,
                 context=MagicMock(),
@@ -1343,7 +1293,7 @@ class ExploreNetworkTest(unittest.TestCase):
 
         self.assertEqual(candidates["candidates"], [])
         notif.assert_not_called()
-        self.assertEqual(blacklist["profiles"][0]["outcome"], "rejected")
+        self.assertIn("seed_one", db["profiles"])
 
     def test_daily_quota_stops_exploration_across_seeds(self) -> None:
         """Quota atteint → on s'arrête sans toucher aux seeds restants.
@@ -1357,7 +1307,7 @@ class ExploreNetworkTest(unittest.TestCase):
             "seeds": ["s1", "s2", "s3", "s4", "s5"],
             "t_types_target": ["T2"],
         }
-        blacklist = {"profiles": []}
+        db = {"profiles": {}}
         candidates: dict[str, Any] = {"candidates": []}
         session = discovery.DiscoverySession(
             mock=False,
@@ -1372,11 +1322,10 @@ class ExploreNetworkTest(unittest.TestCase):
             return None
 
         with patch.object(discovery, "score_profile", side_effect=fake_score), \
-             patch.object(discovery, "save_blacklist"), \
              patch.object(discovery, "save_candidates"):
             discovery.explore_network(
                 domain,
-                blacklist=blacklist,
+                db=db,
                 watchlist=[],
                 candidates=candidates,
                 context=MagicMock(),
@@ -1392,7 +1341,6 @@ class ExploreNetworkTest(unittest.TestCase):
         with patch.object(discovery, "score_profile", return_value=None):
             discovery.explore_network(
                 self.DOMAIN,
-                blacklist={"profiles": []},
                 watchlist=[],
                 candidates={"candidates": []},
                 context=MagicMock(),
@@ -1405,19 +1353,17 @@ class ExploreNetworkTest(unittest.TestCase):
         """
         session = discovery.DiscoverySession(mock=True)
         candidates: dict[str, Any] = {"candidates": []}
-        blacklist = {"profiles": []}
+        db: dict[str, Any] = {"profiles": {}}
 
-        with patch.object(discovery, "save_blacklist") as bl_save, \
-             patch.object(discovery, "save_candidates") as cd_save:
+        with patch.object(discovery, "save_candidates") as cd_save:
             discovery.explore_network(
                 self.DOMAIN,
-                blacklist=blacklist,
                 watchlist=[],
                 candidates=candidates,
+                db=db,
                 context=None,
                 session=session,
             )
-            bl_save.assert_not_called()
             cd_save.assert_not_called()
 
         # Mock mode 2026-05 : 1 seed = 1 scoring (plus de followings).
@@ -1475,11 +1421,10 @@ class ExploreNetworkSeedsRemovalTest(unittest.TestCase):
             )
 
             with patch.object(discovery, "score_profile", return_value=None), \
-                 patch.object(discovery, "save_blacklist"), \
                  patch.object(discovery, "save_candidates"):
                 discovery.explore_network(
                     self.DOMAIN,
-                    blacklist={"profiles": []},
+                    db={"profiles": []},
                     watchlist=[],
                     candidates={"candidates": []},
                     context=MagicMock(),
@@ -1514,12 +1459,11 @@ class ExploreNetworkSeedsRemovalTest(unittest.TestCase):
             seeds_p.write_text(json.dumps(payload), encoding="utf-8")
 
             with patch.object(discovery, "score_profile", return_value=None), \
-                 patch.object(discovery, "save_blacklist"), \
                  patch.object(discovery, "save_candidates"), \
                  patch.object(discovery, "save_seeds") as save_seeds_mock:
                 discovery.explore_network(
                     self.DOMAIN,
-                    blacklist={"profiles": []},
+                    db={"profiles": []},
                     watchlist=[],
                     candidates={"candidates": []},
                     context=None,
@@ -1551,12 +1495,11 @@ class ExploreNetworkSeedsRemovalTest(unittest.TestCase):
             seeds_p.write_text(json.dumps(payload), encoding="utf-8")
 
             with patch.object(discovery, "score_profile", return_value=None), \
-                 patch.object(discovery, "save_blacklist"), \
                  patch.object(discovery, "save_candidates"), \
                  patch.object(discovery, "save_seeds") as save_seeds_mock:
                 discovery.explore_network(
                     {"name": "humour", "niche": "humour", "seeds": []},
-                    blacklist={"profiles": []},
+                    db={"profiles": []},
                     watchlist=[],
                     candidates={"candidates": []},
                     context=MagicMock(),
@@ -1572,7 +1515,7 @@ class ExploreNetworkSeedsRemovalTest(unittest.TestCase):
 
 
 class ExploreNetworkInMemorySetsTest(unittest.TestCase):
-    """Discovery 2026-05 : ``blacklist_set`` / ``seen_this_run`` mutables
+    """Discovery 2026-05 : ``database_set`` / ``seen_this_run`` mutables
     en mémoire — pas besoin d'attendre un reload disque entre seeds.
     """
 
@@ -1620,11 +1563,10 @@ class ExploreNetworkInMemorySetsTest(unittest.TestCase):
             return None
 
         with patch.object(discovery, "score_profile", side_effect=fake_score), \
-             patch.object(discovery, "save_blacklist"), \
              patch.object(discovery, "save_candidates"):
             discovery.explore_network(
                 domain,
-                blacklist={"profiles": []},
+                db={"profiles": {}},
                 watchlist=[],
                 candidates={"candidates": []},
                 context=MagicMock(),
@@ -1633,7 +1575,7 @@ class ExploreNetworkInMemorySetsTest(unittest.TestCase):
 
         self.assertEqual(scored, ["seed_one"])
 
-    def test_blacklist_set_updated_in_memory_between_seeds(self) -> None:
+    def test_database_set_updated_in_memory_between_seeds(self) -> None:
         """Un seed scoré (donc ajouté à la blacklist) est immédiatement filtré
         si réapparaît dans la même boucle — sans relire le disque.
 
@@ -1655,11 +1597,9 @@ class ExploreNetworkInMemorySetsTest(unittest.TestCase):
             return None
 
         with patch.object(discovery, "score_profile", side_effect=fake_score), \
-             patch.object(discovery, "save_blacklist"), \
              patch.object(discovery, "save_candidates"):
             discovery.explore_network(
                 domain,
-                blacklist={"profiles": []},
                 watchlist=[],
                 candidates={"candidates": []},
                 context=MagicMock(),
@@ -1667,27 +1607,20 @@ class ExploreNetworkInMemorySetsTest(unittest.TestCase):
             )
 
         # ``alpha`` est scoré 1 fois, ``ALPHA`` (normalisé en alpha) skip via
-        # le set en mémoire (seen_this_run + blacklist_set).
+        # le set en mémoire (seen_this_run + database_set).
         self.assertEqual(scored, ["alpha"])
 
-    def test_blacklist_usernames_helper_normalizes_entries(self) -> None:
-        """``_blacklist_usernames`` strip ``@`` et ``lower``."""
-        bl = {
-            "profiles": [
-                {"username": "@FOO"},
-                {"username": "  bar  "},
-                {"username": ""},  # ignoré
-                {"not_a_dict": True},  # ignoré (entrée mal formée)
-                "string_au_lieu_de_dict",  # ignoré
-            ]
-        }
-        out = discovery._blacklist_usernames(bl)
+    def test_database_usernames_helper_normalizes_keys(self) -> None:
+        """``_database_usernames`` lit les clés du dict ``profiles``."""
+        out = discovery._database_usernames(
+            {"profiles": {"@FOO": {}, "  bar  ": {}}}
+        )
         self.assertEqual(out, {"foo", "bar"})
 
-    def test_blacklist_usernames_helper_handles_none_and_empty(self) -> None:
-        self.assertEqual(discovery._blacklist_usernames(None), set())
-        self.assertEqual(discovery._blacklist_usernames({}), set())
-        self.assertEqual(discovery._blacklist_usernames({"profiles": []}), set())
+    def test_database_usernames_helper_handles_none_and_empty(self) -> None:
+        self.assertEqual(discovery._database_usernames(None), set())
+        self.assertEqual(discovery._database_usernames({}), set())
+        self.assertEqual(discovery._database_usernames({"profiles": {}}), set())
 
 
 class FetchSuggestionsTest(unittest.TestCase):
@@ -1712,7 +1645,6 @@ class RunDiscoveryCliTest(unittest.TestCase):
     def test_run_discovery_mock_iterates_all_domains(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             seeds_p = Path(tmp) / "seeds.json"
-            bl_p = Path(tmp) / "blacklist.json"
             cd_p = Path(tmp) / "candidates.json"
             seeds_p.write_text(
                 json.dumps(
@@ -1735,14 +1667,12 @@ class RunDiscoveryCliTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            bl_p.write_text(json.dumps({"profiles": []}), encoding="utf-8")
             cd_p.write_text(json.dumps({"candidates": []}), encoding="utf-8")
 
             sleeps: list[float] = []
             session = discovery.run_discovery(
                 mock=True,
                 seeds_path=seeds_p,
-                blacklist_path=bl_p,
                 candidates_path=cd_p,
                 sleep_fn=sleeps.append,
             )
@@ -1770,16 +1700,13 @@ class RunDiscoveryCliTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            bl_p = Path(tmp) / "blacklist.json"
             cd_p = Path(tmp) / "candidates.json"
-            bl_p.write_text(json.dumps({"profiles": []}), encoding="utf-8")
             cd_p.write_text(json.dumps({"candidates": []}), encoding="utf-8")
 
             session = discovery.run_discovery(
                 only_seed="@brand_new",
                 mock=True,
                 seeds_path=seeds_p,
-                blacklist_path=bl_p,
                 candidates_path=cd_p,
             )
             self.assertGreater(session.profiles_today, 0)
@@ -1844,7 +1771,6 @@ class ScoreAndPersistTest(unittest.TestCase):
                 "@raikkonenaf",
                 domain=self.DOMAIN,
                 added_via="manual",
-                blacklist={"profiles": []},
                 context=MagicMock(),
                 db_path=self.db_path,
                 candidates_path=self.cand_path,
@@ -1876,7 +1802,6 @@ class ScoreAndPersistTest(unittest.TestCase):
             summary = discovery.score_and_persist(
                 "@raikkonenaf",
                 domain=self.DOMAIN,
-                blacklist={"profiles": []},
                 context=MagicMock(),
                 db_path=self.db_path,
                 candidates_path=self.cand_path,
@@ -1902,7 +1827,6 @@ class ScoreAndPersistTest(unittest.TestCase):
             summary = discovery.score_and_persist(
                 "@private_user",
                 domain=self.DOMAIN,
-                blacklist={"profiles": []},
                 context=MagicMock(),
                 db_path=self.db_path,
             )
@@ -1943,7 +1867,6 @@ class ScoreAndPersistTest(unittest.TestCase):
             with patch.object(discovery, "score_profile", side_effect=fake_score):
                 summary = discovery.score_and_persist(
                     "@raikkonenaf",
-                    blacklist={"profiles": []},
                     context=MagicMock(),
                     seeds_path=seeds_p,
                     db_path=self.db_path,
@@ -2019,11 +1942,9 @@ class ExploreNetworkUpsertsDatabaseTest(unittest.TestCase):
         notif_mock = MagicMock()
         with patch.object(discovery, "score_profile", side_effect=fake_score), \
              patch.object(discovery, "_notify_candidate", notif_mock), \
-             patch.object(discovery, "save_blacklist"), \
              patch.object(discovery, "save_db") as save_db_mock:
             discovery.explore_network(
                 self.DOMAIN,
-                blacklist={"profiles": []},
                 watchlist=[],
                 candidates={"candidates": []},
                 db=db,
@@ -2070,165 +1991,6 @@ class PrintScoreSummaryTest(unittest.TestCase):
         self.assertIn("@ghost", out)
         self.assertIn("filtré", out)
 
-
-class ClassifyRecentCommentsTest(unittest.TestCase):
-    """Couvre le log enrichi (raw / max_likes / exploitables) + fallback top-5."""
-
-    def setUp(self) -> None:
-        # ``_classify_recent_comments`` appelle ``polite_sleep()`` avant chaque
-        # ``media_comments`` (1.5-4s par appel) — on neutralise pour la suite.
-        self._sleep_patch = patch("discovery.polite_sleep", return_value=None)
-        self._sleep_patch.start()
-
-    def tearDown(self) -> None:
-        self._sleep_patch.stop()
-
-    @staticmethod
-    def _comment(text: str, likes: int = 1) -> SimpleNamespace:
-        return SimpleNamespace(text=text, like_count=likes)
-
-    @staticmethod
-    def _row(media_id: str = "M1") -> dict[str, str]:
-        return {"media_id": media_id}
-
-    def _patch_classifier(self, ttype: str = "T2", confidence: float = 0.85):
-        """Patch ``CommentClassifier`` pour retourner un T-type figé."""
-        instance = MagicMock()
-        instance.classify.return_value = {"type": ttype, "confidence": confidence}
-        return patch(
-            "modules.classifier.CommentClassifier",
-            return_value=instance,
-        ), instance
-
-    def _run(self, client: MagicMock):
-        log = MagicMock()
-        return discovery._classify_recent_comments(
-            client,
-            [self._row("M1")],
-            niches=["humour"],
-            log=log,
-            sleep_between_posts=False,
-        ), log
-
-    # ---- amount=50 -----------------------------------------------------
-
-    def test_media_comments_called_with_amount_50(self) -> None:
-        client = MagicMock()
-        client.media_comments.return_value = [
-            self._comment("commentaire assez long pour passer", likes=5),
-        ]
-        cls_patch, _ = self._patch_classifier()
-        with cls_patch:
-            self._run(client)
-        kwargs = client.media_comments.call_args.kwargs
-        self.assertEqual(kwargs.get("amount"), 50)
-
-    # ---- log enrichi ---------------------------------------------------
-
-    def test_no_comments_logs_raw_and_max_likes_zero(self) -> None:
-        client = MagicMock()
-        client.media_comments.return_value = []
-        cls_patch, instance = self._patch_classifier()
-        with cls_patch:
-            (_, dominant), log = self._run(client)
-        self.assertIsNone(dominant)
-        instance.classify.assert_not_called()
-        # Format attendu : "media M1 : 0 commentaires bruts, max_likes=0, exploitables=0"
-        msg = log.info.call_args.args[0] % log.info.call_args.args[1:]
-        self.assertIn("media M1", msg)
-        self.assertIn("0 commentaires bruts", msg)
-        self.assertIn("max_likes=0", msg)
-        self.assertIn("exploitables=0", msg)
-        self.assertIn("aucun commentaire exploitable", msg)
-
-    def test_only_emoji_comments_log_includes_raw_count(self) -> None:
-        """Cas Instagram fréquent : commentaires bruts = N mais texte vide → 0 exploitables."""
-        client = MagicMock()
-        client.media_comments.return_value = [
-            SimpleNamespace(text="", like_count=10),
-            SimpleNamespace(text="   ", like_count=2),
-            SimpleNamespace(text="\n\t  ", like_count=0),
-        ]
-        cls_patch, instance = self._patch_classifier()
-        with cls_patch:
-            (_, dominant), log = self._run(client)
-        self.assertIsNone(dominant)
-        instance.classify.assert_not_called()
-        msg = log.info.call_args.args[0] % log.info.call_args.args[1:]
-        self.assertIn("3 commentaires bruts", msg)
-        self.assertIn("max_likes=0", msg)  # text vide → on n'a PAS compté les likes
-        self.assertIn("exploitables=0", msg)
-
-    # ---- fallback max_likes=0 -----------------------------------------
-
-    def test_fallback_top5_longest_when_max_likes_zero(self) -> None:
-        """Tous les commentaires à 0 like → on garde les 5 textes les plus longs (>10 chars)."""
-        client = MagicMock()
-        client.media_comments.return_value = [
-            self._comment("court", likes=0),                         # 5 chars : éliminé
-            self._comment("court aussi", likes=0),                   # 11 chars : OK
-            self._comment("commentaire vraiment long numéro 1", likes=0),
-            self._comment("commentaire vraiment long numéro 2", likes=0),
-            self._comment("commentaire vraiment long numéro 3", likes=0),
-            self._comment("commentaire vraiment long numéro 4", likes=0),
-            self._comment("commentaire vraiment long numéro 5", likes=0),
-            self._comment("commentaire vraiment long numéro 6", likes=0),
-        ]
-        cls_patch, instance = self._patch_classifier(ttype="T3b", confidence=0.7)
-        with cls_patch:
-            (distribution, dominant), log = self._run(client)
-        # Le classifier a été appelé avec exactement 5 textes (top par longueur).
-        instance.classify.assert_called_once()
-        called_texts = instance.classify.call_args.args[0]
-        self.assertEqual(len(called_texts), 5)
-        # Le plus long est en tête (sort descending par longueur).
-        self.assertTrue(all(len(t) > 10 for t in called_texts))
-        # Et le résultat propage le T-type retourné par le classifier.
-        self.assertEqual(dominant, "T3b")
-        self.assertAlmostEqual(distribution["T3b"], 1.0)
-        # Log contient bien "fallback".
-        log_msgs = [
-            (c.args[0] % c.args[1:]) for c in log.info.call_args_list
-        ]
-        self.assertTrue(
-            any("fallback sur 5 textes" in m for m in log_msgs),
-            f"log info attendu (fallback) absent ; reçu : {log_msgs}",
-        )
-
-    def test_fallback_skipped_if_some_comment_has_likes(self) -> None:
-        """Si au moins 1 commentaire a likes>0, on prend tous les textes (pas de fallback)."""
-        client = MagicMock()
-        client.media_comments.return_value = [
-            self._comment("petit", likes=0),                                # 5 chars
-            self._comment("commentaire moyen", likes=12),                   # >10 chars + liké
-            self._comment("autre commentaire bien plus long", likes=0),     # >10 chars
-        ]
-        cls_patch, instance = self._patch_classifier()
-        with cls_patch:
-            self._run(client)
-        # En mode nominal on garde TOUT (y compris les courts non likés).
-        called_texts = instance.classify.call_args.args[0]
-        self.assertEqual(len(called_texts), 3)
-
-    def test_fallback_yields_skip_when_all_texts_too_short(self) -> None:
-        """max_likes=0 et tous les textes ≤ 10 chars → log "tous ≤ 10 chars" + skip."""
-        client = MagicMock()
-        client.media_comments.return_value = [
-            self._comment("lol", likes=0),
-            self._comment("ok", likes=0),
-            self._comment("sympa", likes=0),
-        ]
-        cls_patch, instance = self._patch_classifier()
-        with cls_patch:
-            (_, dominant), log = self._run(client)
-        instance.classify.assert_not_called()
-        self.assertIsNone(dominant)
-        log_msgs = [
-            (c.args[0] % c.args[1:]) for c in log.info.call_args_list
-        ]
-        # On doit voir le log "fallback" puis le log "tous ≤ 10 chars".
-        self.assertTrue(any("max_likes=0" in m for m in log_msgs))
-        self.assertTrue(any("≤ 10 chars" in m for m in log_msgs))
 
 
 class SeedSchemaHelpersTest(unittest.TestCase):
@@ -2364,13 +2126,8 @@ class ScoreProfileNichesSchemaTest(unittest.TestCase):
             "name": "humour",
             "niches": ["humour", "sketch", "imitation"],
         }
-        with patch("discovery.polite_sleep", return_value=None), \
-             patch("modules.classifier.CommentClassifier") as MockCls:
-            MockCls.return_value.classify.return_value = {
-                "type": "T2", "confidence": 0.8,
-            }
-            result = discovery.score_profile(
-                "user", domain, blacklist={"profiles": []}, context=self._ctx
+        result = discovery.score_profile(
+                "user", domain, db={"profiles": []}, context=self._ctx
             )
 
         self.assertIsNotNone(result)
@@ -2381,13 +2138,8 @@ class ScoreProfileNichesSchemaTest(unittest.TestCase):
 
     def test_falls_back_to_legacy_niche_string(self) -> None:
         domain = {"name": "humour", "niche": "humour"}  # ancien schéma
-        with patch("discovery.polite_sleep", return_value=None), \
-             patch("modules.classifier.CommentClassifier") as MockCls:
-            MockCls.return_value.classify.return_value = {
-                "type": "T2", "confidence": 0.8,
-            }
-            result = discovery.score_profile(
-                "user", domain, blacklist={"profiles": []}, context=self._ctx
+        result = discovery.score_profile(
+                "user", domain, db={"profiles": []}, context=self._ctx
             )
 
         self.assertEqual(result["niches"], ["humour"])
@@ -2396,13 +2148,8 @@ class ScoreProfileNichesSchemaTest(unittest.TestCase):
     def test_invalid_niche_filtered_via_validate_niches(self) -> None:
         """Une niche hors ``VALID_NICHES`` doit être filtrée par ``validate_niches``."""
         domain = {"name": "humour", "niches": ["INVALID", "humour", "sketch"]}
-        with patch("discovery.polite_sleep", return_value=None), \
-             patch("modules.classifier.CommentClassifier") as MockCls:
-            MockCls.return_value.classify.return_value = {
-                "type": "T2", "confidence": 0.8,
-            }
-            result = discovery.score_profile(
-                "user", domain, blacklist={"profiles": []}, context=self._ctx
+        result = discovery.score_profile(
+                "user", domain, db={"profiles": []}, context=self._ctx
             )
 
         # ``INVALID`` est rejeté par ``validate_niches`` et logué en WARNING.

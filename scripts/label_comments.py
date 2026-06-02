@@ -1,7 +1,8 @@
-"""label_comments.py — labellisation T-type des commentaires bruts.
+"""label_comments.py — labellisation T-type du pool viral.
 
-Script autonome : lit ``raw_comments.json``, appelle Ollama (Qwen2.5:7b)
-et écrit ``training_comments.json``.
+Lit ``viral_comments.json`` (non labellisé), appelle Ollama / LM Studio,
+écrit ``training_comments_viral.json`` et retire du pool viral les entrées
+déjà labellisées (vase communicant).
 """
 
 from __future__ import annotations
@@ -27,8 +28,8 @@ from modules.named_axes import NAMED_AXES
 from modules.pipeline_state import build_pipeline_patch, comment_dedup_key
 
 VALID_TTYPES = set(VALID_T_TYPES)
-RAW_COMMENTS_PATH = Path("data/raw_comments.json")
-TRAINING_COMMENTS_PATH = Path("data/training_comments.json")
+VIRAL_COMMENTS_PATH = Path("data/viral_comments.json")
+TRAINING_COMMENTS_PATH = Path("data/training_comments_viral.json")
 WATCHLIST_PATH = Path("data/watchlist.json")
 DATABASE_PATH = Path("data/database.json")
 VECTOR_STORE_PATH = Path("data/vector_store.json")
@@ -84,13 +85,13 @@ def _utc_now_iso() -> str:
 
 
 def dedup_key(media_id: str, text: str) -> str:
-    """Clé de déduplication pour ``training_comments.json``."""
+    """Clé de déduplication pour ``training_comments_viral.json``."""
     return comment_dedup_key(media_id, text)
 
 
-def load_raw_comments(path: Path | str | None = None) -> list[dict[str, Any]]:
-    """Charge ``raw_comments.json`` (liste brute ou ``{"entries": [...]}``)."""
-    p = _resolve_path(Path(path) if path is not None else RAW_COMMENTS_PATH)
+def load_viral_comments(path: Path | str | None = None) -> list[dict[str, Any]]:
+    """Charge ``viral_comments.json`` (liste ou ``{"entries": [...]}``)."""
+    p = _resolve_path(Path(path) if path is not None else VIRAL_COMMENTS_PATH)
     if not p.exists():
         return []
 
@@ -104,10 +105,13 @@ def load_raw_comments(path: Path | str | None = None) -> list[dict[str, Any]]:
     return []
 
 
+load_raw_comments = load_viral_comments  # alias rétrocompat tests / scripts
+
+
 def load_training_comments(
     path: Path | str | None = None,
 ) -> tuple[list[dict[str, Any]], set[str]]:
-    """Charge ``training_comments.json`` et retourne entrées + clés de dédup."""
+    """Charge ``training_comments_viral.json`` et retourne entrées + clés de dédup."""
     p = _resolve_path(Path(path) if path is not None else TRAINING_COMMENTS_PATH)
     if not p.exists():
         return [], set()
@@ -556,7 +560,7 @@ def build_training_entry(
     *,
     label_source: str = "llm",
 ) -> dict[str, Any]:
-    """Construit une entrée ``training_comments.json`` depuis le brut."""
+    """Construit une entrée ``training_comments_viral.json`` depuis le brut."""
     username = str(raw_entry.get("username") or "").lstrip("@").strip()
     creator = creators.get(username.lower(), {})
     t_type_profile = (
@@ -608,12 +612,12 @@ _LABEL_FIELDS_ON_RAW = (
 )
 
 
-def save_raw_comments(
+def save_viral_comments(
     entries: list[dict[str, Any]],
     path: Path | str | None = None,
 ) -> None:
-    """Écrit ``raw_comments.json`` de façon atomique."""
-    p = _resolve_path(Path(path) if path is not None else RAW_COMMENTS_PATH)
+    """Écrit ``viral_comments.json`` de façon atomique."""
+    p = _resolve_path(Path(path) if path is not None else VIRAL_COMMENTS_PATH)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(
@@ -623,31 +627,51 @@ def save_raw_comments(
     os.replace(tmp, p)
 
 
+def purge_labeled_from_viral_pool(
+    *,
+    viral_path: Path | str | None = None,
+    training_path: Path | str | None = None,
+) -> tuple[int, int]:
+    """Retire du pool viral les entrées déjà présentes dans le training.
+
+    Retourne ``(removed_count, remaining_count)``.
+    """
+    viral_entries = load_viral_comments(viral_path)
+    _, labeled_keys = load_training_comments(training_path)
+    if not labeled_keys:
+        return 0, len(viral_entries)
+
+    remaining: list[dict[str, Any]] = []
+    for entry in viral_entries:
+        media_id = str(entry.get("media_id") or "")
+        text = str(entry.get("text") or "")
+        if not media_id or not text:
+            remaining.append(entry)
+            continue
+        if dedup_key(media_id, text) in labeled_keys:
+            continue
+        remaining.append(entry)
+
+    removed = len(viral_entries) - len(remaining)
+    if removed:
+        save_viral_comments(remaining, viral_path)
+    return removed, len(remaining)
+
+
 def reset_all_comment_labels(
     *,
-    raw_path: Path | str | None = None,
+    viral_path: Path | str | None = None,
     training_path: Path | str | None = None,
-) -> tuple[int, int, int]:
-    """Efface tous les labels (raw + training) pour repartir de zéro.
+) -> tuple[int, int]:
+    """Vide ``training_comments_viral.json`` (le pool viral n'est pas modifié).
 
-    Retourne ``(cleared_in_raw, total_raw, previous_training_count)``.
+    Retourne ``(previous_training_count, viral_pool_size)``.
     """
-    raw_entries = load_raw_comments(raw_path)
+    viral_entries = load_viral_comments(viral_path)
     training_entries, _ = load_training_comments(training_path)
     prev_training = len(training_entries)
-
-    cleared = 0
-    for entry in raw_entries:
-        had_label = _t_type_from_raw_entry(entry) or entry.get("llm_validated")
-        if not had_label:
-            continue
-        for key in _LABEL_FIELDS_ON_RAW:
-            entry.pop(key, None)
-        cleared += 1
-
-    save_raw_comments(raw_entries, raw_path)
     save_training_comments([], training_path)
-    return cleared, len(raw_entries), prev_training
+    return prev_training, len(viral_entries)
 
 
 def _sync_label_pipeline_to_database(
@@ -684,7 +708,7 @@ def save_training_comments(
     entries: list[dict[str, Any]],
     path: Path | str | None = None,
 ) -> None:
-    """Écrit ``training_comments.json`` de façon atomique."""
+    """Écrit ``training_comments_viral.json`` de façon atomique."""
     p = _resolve_path(Path(path) if path is not None else TRAINING_COMMENTS_PATH)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
@@ -717,7 +741,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Re-labélise les entrées déjà présentes dans training_comments.json.",
+        help="Re-labélise les entrées déjà présentes dans training_comments_viral.json.",
     )
     parser.add_argument(
         "--limit",
@@ -728,25 +752,66 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--reset-all-labels",
         action="store_true",
-        help="Efface t_type / llm_validated dans raw_comments.json et vide training_comments.json.",
+        help="Vide training_comments_viral.json (le pool viral reste inchangé).",
+    )
+    parser.add_argument(
+        "--viral-path",
+        type=Path,
+        default=None,
+        help="Pool viral source (défaut : data/viral_comments.json).",
+    )
+    parser.add_argument(
+        "--raw-path",
+        type=Path,
+        default=None,
+        help="Alias de --viral-path (déprécié).",
+    )
+    parser.add_argument(
+        "--training-path",
+        type=Path,
+        default=None,
+        help="Fichier training de sortie (défaut : data/training_comments_viral.json).",
+    )
+    parser.add_argument(
+        "--purge-only",
+        action="store_true",
+        help="Retire du pool viral les entrées déjà labellisées, sans appeler le LLM.",
     )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
+    viral_path = args.viral_path or args.raw_path or VIRAL_COMMENTS_PATH
+    training_path = args.training_path or TRAINING_COMMENTS_PATH
+
     if args.reset_all_labels:
-        cleared, total_raw, prev_training = reset_all_comment_labels()
+        prev_training, viral_size = reset_all_comment_labels(
+            viral_path=viral_path,
+            training_path=training_path,
+        )
         _LOG.info(
-            "=== Reset labels : %d/%d entrées raw délabellisées, "
-            "training_comments vidé (%d entrée(s) supprimée(s)) ===",
-            cleared,
-            total_raw,
+            "=== Reset labels : training vidé (%d entrée(s)), "
+            "pool viral inchangé (%d entrée(s)) ===",
             prev_training,
+            viral_size,
         )
         return 0
 
-    raw_entries = load_raw_comments()
-    training_entries, existing_keys = load_training_comments()
+    if args.purge_only:
+        removed, remaining = purge_labeled_from_viral_pool(
+            viral_path=viral_path,
+            training_path=training_path,
+        )
+        _LOG.info(
+            "=== Purge pool viral : %d retiré(s), %d restant(s) dans %s ===",
+            removed,
+            remaining,
+            viral_path,
+        )
+        return 0
+
+    raw_entries = load_viral_comments(viral_path)
+    training_entries, existing_keys = load_training_comments(training_path)
     watchlist = load_watchlist(WATCHLIST_PATH)
     database = load_database_profiles(DATABASE_PATH)
     creators = _merge_creator_sources(watchlist, database)
@@ -790,7 +855,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if skipped_in_training:
         _LOG.info(
-            "%d déjà labellisés dans training_comments.json — ignorés "
+            "%d déjà labellisés dans training — ignorés "
             "(nouveau discover : seuls les commentaires absents seront traités ; --force pour tout refaire).",
             skipped_in_training,
         )
@@ -801,7 +866,7 @@ def main(argv: list[str] | None = None) -> int:
             username = str(raw_entry.get("username") or "")
             _LOG.info("DRY-RUN : labelliserait @%s — %s...", username, preview)
         _LOG.info(
-            "=== Labélisation : %d nouveaux commentaires → training_comments.json ===",
+            "=== Labélisation : %d nouveaux commentaires → training ===",
             0,
         )
         return 0
@@ -855,14 +920,21 @@ def main(argv: list[str] | None = None) -> int:
         preview = text[:40]
         _LOG.info("✓ [%s] (llm) %s...", t_type, preview)
 
-    save_training_comments(list(training_by_key.values()))
+    save_training_comments(list(training_by_key.values()), training_path)
+    removed, remaining = purge_labeled_from_viral_pool(
+        viral_path=viral_path,
+        training_path=training_path,
+    )
     _sync_label_pipeline_to_database(training_by_key)
     _LOG.info(
-        "=== Labélisation : %d nouveaux via LLM (%d échecs) → training_comments.json "
-        "(total %d) ===",
+        "=== Labélisation : %d nouveaux via LLM (%d échecs) → %s "
+        "(total %d) ; pool viral : %d retiré(s), %d restant(s) ===",
         added,
         failed,
+        training_path,
         len(training_by_key),
+        removed,
+        remaining,
     )
     return 0
 

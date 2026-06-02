@@ -1,16 +1,14 @@
-"""prepare_dataset.py — convertit ``training_comments.json`` en deux JSONL.
+"""prepare_dataset.py — convertit ``training_comments_viral.json`` en JSONL generator.
 
 ============================================================================
 Objectif
 ============================================================================
 
-Lire ``data/training_comments.json`` et produire **deux fichiers JSONL**
-prêts à charger par Unsloth / QLoRA :
+Lire ``data/training_comments_viral.json`` et produire ``dataset_generator.jsonl``
+(prêt pour Unsloth / QLoRA du générateur de commentaires).
 
-* ``data/dataset_classifier.jsonl`` — labellise un commentaire avec son
-  T-type étant donné le contexte créateur + métriques.
-* ``data/dataset_generator.jsonl`` — génère un commentaire crédible étant
-  donné le T-type commentateur, niches, caption, hashtags, audio.
+La classification T-type en production reste sur LM Studio / Ollama — pas de
+fine-tune classifier dans ce dépôt.
 
 Chaque ligne est un objet JSON au format Alpaca
 (``{instruction, input, output}``), encodé sur **une seule ligne** (pas de
@@ -30,7 +28,7 @@ Le script consomme un schéma **plat** : chaque entrée du training représente
       "text": "mdr trop vrai",
       "t_type": "T2",                  # label du commentaire
       "t_type_profile": "T2",          # persona du commentateur (watchlist)
-      "niches": ["humour", "sketch"],  # ou "niche": "humour" en rétro-compat
+      "niches": ["humour", "sketch"],
       "views": 500000,
       "comment_to_like_ratio": 0.283,
       "caption": "moment culte F1",
@@ -68,24 +66,23 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from config import VALID_T_TYPES
-from modules.generator_prompt import GENERATOR_INSTRUCTION, build_generator_input_block
+from modules.generator_prompt import (
+    GENERATOR_INSTRUCTION,
+    MAX_GENERATOR_OUTPUT_WORDS,
+    build_generator_input_block,
+    normalize_generator_output,
+)
 
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
 
-DEFAULT_TRAINING_PATH = _PROJECT_ROOT / "data" / "training_comments.json"
+DEFAULT_TRAINING_PATH = _PROJECT_ROOT / "data" / "training_comments_viral.json"
 DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "data"
 VECTOR_STORE_PATH = Path("data/vector_store.json")
-CLASSIFIER_FILENAME = "dataset_classifier.jsonl"
 GENERATOR_FILENAME = "dataset_generator.jsonl"
 # Rétro-compat notebooks Unsloth (tableau JSON unique).
-CLASSIFIER_JSON_FILENAME = "classifier_dataset.json"
 GENERATOR_JSON_FILENAME = "generator_dataset.json"
-
-CLASSIFIER_INSTRUCTION = (
-    "Classifie ce commentaire Instagram selon le type d'engagement."
-)
 _LOG = logging.getLogger(__name__)
 
 
@@ -95,7 +92,7 @@ _LOG = logging.getLogger(__name__)
 
 
 def load_training(path: Path) -> list[dict]:
-    """Charge ``training_comments.json`` ; retourne la liste ``entries[]``.
+    """Charge ``training_comments_viral.json`` ; retourne la liste ``entries[]``.
 
     Lève une exception **claire** :
 
@@ -114,7 +111,7 @@ def load_training(path: Path) -> list[dict]:
     """
     if not path.exists():
         raise FileNotFoundError(
-            f"Fichier training_comments.json introuvable : {path}"
+            f"Fichier training_comments_viral.json introuvable : {path}"
         )
     raw = path.read_text(encoding="utf-8").strip()
     if not raw:
@@ -151,13 +148,12 @@ def niches_str(entry: dict) -> str:
     Priorité :
 
     1. ``entry["niches"]`` (liste) — schéma 2026-05.
-    2. ``entry["niche"]`` (string) — rétro-compat.
-    3. ``"humour"`` — fallback ultime, jamais vide.
+    2. ``"humour"`` — fallback ultime, jamais vide.
 
     Les items vides / non-string sont filtrés. Si après filtrage la liste
-    est vide, on retombe sur l'étape suivante (puis sur ``"humour"``).
-    Garantit donc une string **non vide** en sortie — le placeholder
-    ``{niches}`` apparaît sinon vide dans le prompt et perturbe le LLM.
+    est vide, on retombe sur ``"humour"``. Garantit donc une string **non
+    vide** en sortie — le placeholder ``{niches}`` apparaît sinon vide dans
+    le prompt et perturbe le LLM.
     """
     raw = entry.get("niches")
     if isinstance(raw, list):
@@ -167,9 +163,6 @@ def niches_str(entry: dict) -> str:
         ]
         if clean:
             return ", ".join(clean)
-    legacy = entry.get("niche")
-    if isinstance(legacy, str) and legacy.strip():
-        return legacy.strip()
     return "humour"
 
 
@@ -282,74 +275,6 @@ def _atomic_write_jsonl(path: Path, lines: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def generate_classifier_dataset(
-    entries: list[dict], output_path: Path
-) -> int:
-    """Écrit ``dataset_classifier.jsonl``. Retourne ``nb`` lignes écrites.
-
-    Format de chaque ligne (``json.dumps``, sans pretty-print) ::
-
-        {
-          "instruction": "Classifie ce commentaire Instagram ...",
-          "input": "Commentaire: ...\\nNiches du contenu: ...\\n"
-                   "Vues: ...\\nRatio comments/likes: ...",
-          "output": "T2"
-        }
-
-    Filtres stricts (entrée ignorée si) :
-
-    * ``text`` absent ou vide après ``strip()``.
-    * ``t_type`` absent ou pas dans ``VALID_T_TYPES``.
-
-    Coercitions silencieuses :
-
-    * ``views`` → ``int(entry.get("views", 0))``, ``0`` sur invalide.
-    * ``ratio`` → ``float(entry.get("comment_to_like_ratio", 0.0))``,
-      ``0.0`` sur invalide. Formaté avec **4 décimales** dans l'input.
-    """
-    lines: list[str] = []
-    skipped_text = 0
-    skipped_ttype = 0
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        text = str(entry.get("text") or "").strip()
-        if not text:
-            skipped_text += 1
-            continue
-        t_type = str(entry.get("t_type") or "").strip()
-        if t_type not in VALID_T_TYPES:
-            skipped_ttype += 1
-            continue
-
-        views = _coerce_int(entry.get("views", 0), default=0)
-        ratio = _coerce_float(
-            entry.get("comment_to_like_ratio", 0.0), default=0.0
-        )
-        n_str = niches_str(entry)
-
-        input_block = (
-            f"Commentaire: {text}\n"
-            f"Niches du contenu: {n_str}\n"
-            f"Vues: {views}\n"
-            f"Ratio comments/likes: {ratio:.4f}"
-        )
-        record = {
-            "instruction": CLASSIFIER_INSTRUCTION,
-            "input": input_block,
-            "output": t_type,
-        }
-        lines.append(json.dumps(record, ensure_ascii=False))
-
-    _atomic_write_jsonl(output_path, lines)
-    if skipped_text or skipped_ttype:
-        _LOG.debug(
-            "classifier: %d ligne(s) écrites (skip text=%d, t_type=%d)",
-            len(lines), skipped_text, skipped_ttype,
-        )
-    return len(lines)
-
-
 def _generator_input_block(
     *,
     t_type_profile: str,
@@ -403,11 +328,15 @@ def generate_generator_dataset(
     vector_store = vector_store or {}
     lines: list[str] = []
     skipped_text = 0
+    truncated_outputs = 0
     with_vector = 0
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        comment_text = str(entry.get("text") or "").strip()
+        raw_text = str(entry.get("text") or "")
+        if len(raw_text.split()) > MAX_GENERATOR_OUTPUT_WORDS:
+            truncated_outputs += 1
+        comment_text = normalize_generator_output(raw_text)
         if not comment_text:
             skipped_text += 1
             continue
@@ -452,10 +381,12 @@ def generate_generator_dataset(
         lines.append(json.dumps(record, ensure_ascii=False))
 
     _atomic_write_jsonl(output_path, lines)
-    if skipped_text:
+    if skipped_text or truncated_outputs:
         _LOG.debug(
-            "generator: %d ligne(s) écrites (skip text=%d)",
-            len(lines), skipped_text,
+            "generator: %d ligne(s) écrites (skip text=%d, outputs tronqués=%d)",
+            len(lines),
+            skipped_text,
+            truncated_outputs,
         )
     return len(lines), with_vector
 
@@ -480,8 +411,8 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(
         description=(
-            "Convertit data/training_comments.json en deux JSONL "
-            "(classifier + generator) prêts pour Unsloth/QLoRA."
+            "Convertit data/training_comments_viral.json en JSONL generator "
+            "prêt pour Unsloth/QLoRA."
         )
     )
     parser.add_argument(
@@ -489,7 +420,7 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=DEFAULT_TRAINING_PATH,
         help=(
-            f"Chemin du training_comments.json source "
+            f"Chemin du training_comments_viral.json source "
             f"(défaut : {DEFAULT_TRAINING_PATH})."
         ),
     )
@@ -498,7 +429,7 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
         help=(
-            f"Dossier où écrire les deux JSONL "
+            f"Dossier où écrire le JSONL "
             f"(défaut : {DEFAULT_OUTPUT_DIR})."
         ),
     )
@@ -518,20 +449,18 @@ def main(argv: list[str] | None = None) -> int:
         _LOG.error("%s", e)
         return 1
     except ValueError as e:
-        _LOG.error("training_comments.json malformé : %s", e)
+        _LOG.error("training_comments_viral.json malformé : %s", e)
         return 1
     except OSError as e:
         _LOG.error("Erreur de lecture %s : %s", args.training_path, e)
         return 1
 
-    classifier_path = args.output_dir / CLASSIFIER_FILENAME
     generator_path = args.output_dir / GENERATOR_FILENAME
 
     vector_store = load_vector_store(VECTOR_STORE_PATH)
     _LOG.info("vector_store chargé : %d comptes", len(vector_store))
 
     try:
-        n_cls = generate_classifier_dataset(entries, classifier_path)
         n_gen, n_vec = generate_generator_dataset(
             entries, generator_path, vector_store=vector_store
         )
@@ -539,17 +468,13 @@ def main(argv: list[str] | None = None) -> int:
         _LOG.error("Erreur d'écriture des datasets : %s", e)
         return 1
 
-    _LOG.info("Classifier : %d entrées", n_cls)
     _LOG.info(
         "Generator : %d entrées dont %d avec vecteur 32D",
         n_gen,
         n_vec,
     )
 
-    for jsonl_path, json_name in (
-        (classifier_path, CLASSIFIER_JSON_FILENAME),
-        (generator_path, GENERATOR_JSON_FILENAME),
-    ):
+    for jsonl_path, json_name in ((generator_path, GENERATOR_JSON_FILENAME),):
         json_path = args.output_dir / json_name
         try:
             n_json = write_json_array_from_jsonl(jsonl_path, json_path)
@@ -582,15 +507,12 @@ def write_json_array_from_jsonl(jsonl_path: Path, json_path: Path) -> int:
 
 
 __all__ = [
-    "CLASSIFIER_FILENAME",
-    "CLASSIFIER_INSTRUCTION",
     "DEFAULT_OUTPUT_DIR",
     "DEFAULT_TRAINING_PATH",
     "GENERATOR_FILENAME",
     "GENERATOR_INSTRUCTION",
     "VALID_T_TYPES",
     "VECTOR_STORE_PATH",
-    "generate_classifier_dataset",
     "generate_generator_dataset",
     "load_training",
     "load_vector_store",

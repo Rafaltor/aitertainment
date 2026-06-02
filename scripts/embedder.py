@@ -2,7 +2,7 @@
 
 Script autonome : ne dépend ni de ``discovery.py`` ni de ``watcher.py``.
 Embeddings : LM Studio uniquement (``LM_STUDIO_URL`` + ``LM_STUDIO_EMBED_MODEL``).
-Commentaires : tous dans ``raw_comments.json`` ; scrape Playwright (3 reels) si besoin.
+Commentaires profil : scrape Playwright en mémoire (3 reels), jamais persistés — séparé du corpus viral.
 Captions / transcripts : Playwright + Whisper. Voir ``main()`` pour le CLI.
 """
 
@@ -40,16 +40,12 @@ from modules.named_axes import (
 from modules.pipeline_state import (
     build_pipeline_patch,
     comments_fingerprint_for_account,
-    should_skip_embed,
-    should_skip_playwright_collect,
-    vector_store_entry_fingerprint,
 )
 from scripts.instagram_browser import (
-    RAW_COMMENTS_PATH as _RAW_COMMENTS_PATH,
     _list_reel_page_aria_labels,
     _unescape_json_string_fragment,
     click_reel_comment_button,
-    collect_top_comments,
+    scrape_profile_comments,
     extract_reel_caption_from_dom,
     extract_reel_comments_panel_text,
     get_browser_context,
@@ -66,7 +62,6 @@ from scripts.instagram_browser import (
 
 WHISPER_MODEL_SIZE = "small"
 REELS_PER_ACCOUNT = 5
-RAW_COMMENTS_PATH = _RAW_COMMENTS_PATH
 VECTOR_STORE_PATH = Path("data/vector_store.json")
 WATCHLIST_PATH = Path("data/watchlist.json")
 DATABASE_PATH = Path("data/database.json")
@@ -102,61 +97,28 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def load_raw_comments_entries(path: Path | str | None = None) -> list[dict[str, Any]]:
-    """Charge ``raw_comments.json`` (liste ou ``{"entries": [...]}``)."""
-    p = _resolve_path(Path(path) if path is not None else RAW_COMMENTS_PATH)
-    if not p.exists():
-        return []
-    data = json.loads(p.read_text(encoding="utf-8"))
-    if isinstance(data, list):
-        return [e for e in data if isinstance(e, dict)]
-    if isinstance(data, dict):
-        entries = data.get("entries") or []
-        if isinstance(entries, list):
-            return [e for e in entries if isinstance(e, dict)]
-    return []
-
-
-def _raw_comment_row(entry: dict[str, Any]) -> dict[str, Any] | None:
-    """Normalise une entrée ``raw_comments.json`` pour l'embedding."""
-    text = str(entry.get("text") or "").strip()
-    if not text:
-        return None
-    return {
-        "text": text,
-        "comment_likes": int(entry.get("comment_likes") or 0),
-        "media_id": str(entry.get("media_id") or "").strip(),
-    }
-
-
-def comments_for_account_from_raw(
-    username: str,
-    path: Path | str | None = None,
+def _group_scraped_comments(
+    scraped: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
-    """Tous les commentaires Discovery pour ce compte (aucun plafond ni filtre).
-
-    Retourne ``(liste complète, index par media_id)``, triés par ``comment_likes`` décroissant.
-    """
-    uname = str(username or "").lstrip("@").strip().lower()
-    if not uname:
-        return [], {}
-
+    """Trie par likes et indexe par ``media_id``."""
     rows: list[dict[str, Any]] = []
-    for entry in load_raw_comments_entries(path):
-        if str(entry.get("username") or "").lstrip("@").strip().lower() != uname:
+    for entry in scraped:
+        text = str(entry.get("text") or "").strip()
+        if not text:
             continue
-        row = _raw_comment_row(entry)
-        if row:
-            rows.append(row)
-
+        rows.append(
+            {
+                "text": text,
+                "comment_likes": int(entry.get("comment_likes") or 0),
+                "media_id": str(entry.get("media_id") or "").strip(),
+            }
+        )
     rows.sort(key=lambda r: int(r.get("comment_likes") or 0), reverse=True)
-
     by_media: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         mid = str(row.get("media_id") or "").strip()
         if mid:
             by_media.setdefault(mid, []).append(row)
-
     return rows, by_media
 
 
@@ -166,65 +128,22 @@ def ensure_comments_for_account(
     context: BrowserContext,
     niches: list[str] | str,
     *,
-    raw_path: Path | str | None = None,
     skip_playwright: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], str | None]:
-    """Commentaires depuis ``raw_comments.json`` ; scrape sur 3 reels si besoin."""
-    path = _resolve_path(Path(raw_path) if raw_path is not None else RAW_COMMENTS_PATH)
+    """Scrape les commentaires profil en mémoire (non persistés)."""
     uname = str(username or "").lstrip("@").strip()
-    comments, by_media = comments_for_account_from_raw(uname, path)
-    n = 0
     if skip_playwright:
-        if comments:
-            _LOG.info(
-                "@%s : %d commentaire(s) en raw — skip scrape Playwright (incremental).",
-                uname,
-                len(comments),
-            )
-    elif comments:
-        _LOG.info(
-            "@%s : %d commentaire(s) en base — scrape complémentaire (3 reels).",
-            uname,
-            len(comments),
-        )
-        n = collect_top_comments(
-            uname,
-            context,
-            reels,
-            niches,
-            raw_comments_path=path,
-            classify=False,
-            logger=_LOG,
-        )
-        comments, by_media = comments_for_account_from_raw(uname, path)
-    else:
-        _LOG.info(
-            "@%s : aucun commentaire en base — collecte Playwright (3 reels).",
-            uname,
-        )
-        n = collect_top_comments(
-            uname,
-            context,
-            reels,
-            niches,
-            raw_comments_path=path,
-            classify=False,
-            logger=_LOG,
-        )
-        comments, by_media = comments_for_account_from_raw(uname, path)
-    if comments:
-        source = "raw_comments.json" if n == 0 else "raw_comments.json+playwright"
-        if n > 0:
-            _LOG.info(
-                "@%s : %d commentaire(s) au total (%d nouveau(x)) → %s",
-                uname,
-                len(comments),
-                n,
-                path,
-            )
-        return comments, by_media, source
+        _LOG.info("@%s : scrape commentaires ignoré (--skip-comments ou incrémental).", uname)
+        return [], {}, None
 
-    _LOG.warning("@%s : aucun commentaire après collecte.", uname)
+    scraped = scrape_profile_comments(
+        uname, context, reels, niches, logger=_LOG
+    )
+    comments, by_media = _group_scraped_comments(scraped)
+    if comments:
+        return comments, by_media, "playwright"
+
+    _LOG.warning("@%s : aucun commentaire après scrape.", uname)
     return [], {}, None
 
 
@@ -652,7 +571,7 @@ def _visit_reel_page(
     existing_caption: str = "",
     fetch_comments: bool = False,
 ) -> tuple[str, list[str]]:
-    """Une visite /reel/ pour la caption ; commentaires via ``raw_comments.json``."""
+    """Une visite /reel/ pour la caption ; commentaires scrapés en mémoire."""
     mid = str(media_id or "").strip()
     if not mid:
         return "", []
@@ -967,7 +886,7 @@ def collect_account_content(
     if not captions and not comments:
         _LOG.warning(
             "@%s : 0 caption et 0 commentaire — embedding sur bio/transcripts "
-            "seulement (tier C souvent sans raw_comments.json ; vérifier "
+            "seulement (vérifier "
             "session Instagram si massif).",
             uname,
         )
@@ -1075,8 +994,6 @@ def process_account(
     tmp_dir: Path,
     *,
     skip_playwright: bool = False,
-    comments_fingerprint: str | None = None,
-    comments_count: int = 0,
 ) -> dict[str, Any] | None:
     """Pipeline complet d'embedding pour un compte watchlisté (Playwright)."""
     collected = collect_account_content(
@@ -1088,6 +1005,20 @@ def process_account(
     )
     if collected is None:
         return None
+
+    uname = str(collected.get("username") or username).lstrip("@").strip()
+    fp_rows = [
+        {
+            "username": uname,
+            "media_id": str(c.get("media_id") or ""),
+            "text": str(c.get("text") or ""),
+        }
+        for c in collected.get("comments") or []
+        if isinstance(c, dict)
+    ]
+    comments_fingerprint, comments_count = comments_fingerprint_for_account(
+        uname, fp_rows
+    )
 
     embedding = embed_text(collected["input_text"])
     if embedding is None:
@@ -1189,14 +1120,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Rescore named_axes depuis embedding_raw sans re-scraper ni ré-embedder.",
     )
     parser.add_argument(
-        "--force",
+        "--skip-comments",
         action="store_true",
-        help="Re-embed tous les comptes même si l'empreinte commentaires est inchangée.",
-    )
-    parser.add_argument(
-        "--scrape-comments",
-        action="store_true",
-        help="Force le scrape Playwright des commentaires même si raw_comments en a déjà.",
+        help="N'ouvre pas les panneaux commentaires (captions/transcripts seulement).",
     )
     parser.add_argument(
         "--dry-run",
@@ -1303,29 +1229,16 @@ def main(argv: list[str] | None = None) -> int:
                 "Ancres d'axes non disponibles — named_axes seront à 0 pour ce run."
             )
 
-    raw_all = load_raw_comments_entries()
     store_by_user = _vector_store_by_username(vector_store)
-    skipped_unchanged = 0
 
     if args.dry_run:
         for creator in creators:
             username = str(creator.get("username") or "").lstrip("@").strip()
-            uname = username.lower()
-            fp, n = comments_fingerprint_for_account(username, raw_all)
-            existing = store_by_user.get(uname)
-            if should_skip_embed(username, fp, existing, force=args.force):
-                _LOG.info(
-                    "DRY-RUN : skip @%s (%d commentaires, empreinte inchangée)",
-                    username,
-                    n,
-                )
-            else:
-                _LOG.info(
-                    "DRY-RUN : embedderait @%s (%d commentaires, empreinte %s…)",
-                    username,
-                    n,
-                    fp[:12],
-                )
+            _LOG.info(
+                "DRY-RUN : embedderait @%s (scrape commentaires=%s)",
+                username,
+                "non" if args.skip_comments else "oui",
+            )
         _LOG.info("=== Embedding terminé : %d comptes traités ===", len(creators))
         return 0
 
@@ -1378,31 +1291,6 @@ def main(argv: list[str] | None = None) -> int:
         for creator in creators:
             username = str(creator.get("username") or "").lstrip("@").strip()
             uname = username.lower()
-            fp, comment_n = comments_fingerprint_for_account(username, raw_all)
-            existing = store_by_user.get(uname)
-
-            if should_skip_embed(username, fp, existing, force=args.force):
-                stored = vector_store_entry_fingerprint(existing)
-                _LOG.info(
-                    "skip @%s : %d commentaire(s), empreinte inchangée (%s…)",
-                    username,
-                    comment_n,
-                    (stored or fp)[:12],
-                )
-                skipped_unchanged += 1
-                continue
-
-            skip_pw = should_skip_playwright_collect(
-                username,
-                raw_all,
-                force_scrape=args.scrape_comments,
-            )
-            if skip_pw and comment_n > 0:
-                _LOG.info(
-                    "@%s : re-embed (%d commentaires, empreinte mise à jour) — skip scrape.",
-                    username,
-                    comment_n,
-                )
 
             tmp_dir = Path(tempfile.mkdtemp(prefix="ait_embed_"))
             try:
@@ -1412,9 +1300,7 @@ def main(argv: list[str] | None = None) -> int:
                     context,
                     axis_anchors,
                     tmp_dir,
-                    skip_playwright=skip_pw,
-                    comments_fingerprint=fp,
-                    comments_count=comment_n,
+                    skip_playwright=args.skip_comments,
                 )
             finally:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1422,6 +1308,8 @@ def main(argv: list[str] | None = None) -> int:
             if entry is None:
                 continue
 
+            fp = str(entry.get("comments_fingerprint") or "")
+            comment_n = int(entry.get("comments_count") or 0)
             vector_store = _upsert_vector_store(vector_store, entry)
             store_by_user[uname] = entry
             _sync_embed_pipeline_to_database(
@@ -1469,11 +1357,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     save_vector_store(vector_store)
-    _LOG.info(
-        "=== Embedding terminé : %d embeddé(s), %d skip (empreinte inchangée) ===",
-        processed,
-        skipped_unchanged,
-    )
+    _LOG.info("=== Embedding terminé : %d compte(s) embeddé(s) ===", processed)
     return 0
 
 

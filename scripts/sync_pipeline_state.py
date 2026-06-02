@@ -1,4 +1,4 @@
-"""sync_pipeline_state.py — aligne database.pipeline avec raw / vector_store / training.
+"""sync_pipeline_state.py — aligne database.pipeline avec embedder / vector_store / training viral.
 
 À lancer une fois après validation du pipeline pour backfiller les empreintes
 sans re-embedder ni re-labéliser.
@@ -22,10 +22,9 @@ from database import load_db, merge_profile_pipeline, save_db
 from modules.pipeline_state import (
     build_pipeline_patch,
     comment_dedup_key,
-    comments_fingerprint_for_account,
     load_training_labeled_keys,
 )
-from scripts.embedder import load_raw_comments_entries, load_vector_store, save_vector_store
+from scripts.embedder import load_vector_store, save_vector_store
 
 _LOG = logging.getLogger("aitertainment.sync_pipeline_state")
 
@@ -72,18 +71,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-    raw = load_raw_comments_entries()
     store = load_vector_store()
-    training_path = _PROJECT_ROOT / "data/training_comments.json"
+    training_path = _PROJECT_ROOT / "data/training_comments_viral.json"
     labeled_by_user = _training_counts_by_user(training_path)
     latest_label = _latest_labeled_at(training_path)
     labeled_keys = load_training_labeled_keys(training_path)
 
     usernames: set[str] = set()
-    for entry in raw:
-        u = str(entry.get("username") or "").lstrip("@").strip().lower()
-        if u:
-            usernames.add(u)
     for entry in store:
         u = str(entry.get("username") or "").lstrip("@").strip().lower()
         if u:
@@ -96,10 +90,27 @@ def main(argv: list[str] | None = None) -> int:
     vs_updates = 0
 
     for username in sorted(usernames):
-        fp, n = comments_fingerprint_for_account(username, raw)
+        vs_entry = next(
+            (
+                e
+                for e in store
+                if str(e.get("username") or "").lstrip("@").strip().lower() == username
+            ),
+            None,
+        )
+        fp = ""
+        n = 0
+        if isinstance(vs_entry, dict):
+            fp = str(vs_entry.get("comments_fingerprint") or "")
+            sources = vs_entry.get("sources")
+            if not fp and isinstance(sources, dict):
+                fp = str(sources.get("comments_fingerprint") or "")
+            n = int(vs_entry.get("comments_count") or 0)
+            if not n and isinstance(sources, dict):
+                n = int(sources.get("comments_count") or 0)
         patch: dict[str, Any] = build_pipeline_patch(
             comments_count=n,
-            comments_fingerprint=fp,
+            comments_fingerprint=fp or None,
         )
         if username in labeled_by_user:
             patch["labeled_count"] = labeled_by_user[username]

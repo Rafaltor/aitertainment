@@ -3,7 +3,6 @@
 Couvre les 4 surfaces publiques exposées par le module :
 
 * ``niches_str(entry)``           — résolution de la string niches.
-* ``generate_classifier_dataset`` — sortie JSONL du classifier.
 * ``generate_generator_dataset``  — sortie JSONL du generator.
 * ``main([...])``                 — orchestration CLI / exit codes.
 """
@@ -18,11 +17,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.prepare_dataset import (
-    CLASSIFIER_FILENAME,
-    CLASSIFIER_INSTRUCTION,
     GENERATOR_FILENAME,
     GENERATOR_INSTRUCTION,
-    generate_classifier_dataset,
     generate_generator_dataset,
     load_vector_store,
     main,
@@ -103,76 +99,6 @@ class NichesStrTest(unittest.TestCase):
             niches_str({"niches": ["humour", "", "sketch"]}),
             "humour, sketch",
         )
-
-
-# ---------------------------------------------------------------------------
-# generate_classifier_dataset
-# ---------------------------------------------------------------------------
-
-
-class ClassifierDatasetTest(unittest.TestCase):
-    """5 cas du brief — chaque cas écrit un fichier réel et le relit."""
-
-    def setUp(self) -> None:
-        self.tmpdir = Path(tempfile.mkdtemp())
-        self.out_path = self.tmpdir / "dataset_classifier.jsonl"
-        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
-
-    def test_valid_entry_produces_complete_jsonl_line(self) -> None:
-        entry = _valid_classifier_entry()
-        n = generate_classifier_dataset([entry], self.out_path)
-        self.assertEqual(n, 1)
-        rows = _read_jsonl(self.out_path)
-        self.assertEqual(len(rows), 1)
-        row = rows[0]
-        self.assertEqual(row["instruction"], CLASSIFIER_INSTRUCTION)
-        self.assertEqual(row["output"], "T2")
-        # Tous les champs sont présents dans l'input.
-        self.assertIn("Commentaire: mdr trop vrai", row["input"])
-        self.assertIn("Niches du contenu: humour, sketch", row["input"])
-        self.assertIn("Vues: 500000", row["input"])
-        # Ratio formaté en 4 décimales (cf. brief).
-        self.assertIn("Ratio comments/likes: 0.2834", row["input"])
-
-    def test_empty_text_is_skipped(self) -> None:
-        entry = _valid_classifier_entry(text="   ")
-        n = generate_classifier_dataset([entry], self.out_path)
-        self.assertEqual(n, 0)
-        # Le fichier est créé (vide) — pour que les pipelines downstream
-        # voient un artefact stable.
-        self.assertEqual(_read_jsonl(self.out_path), [])
-
-    def test_invalid_ttype_t9_is_skipped(self) -> None:
-        entry = _valid_classifier_entry(t_type="T9")
-        n = generate_classifier_dataset([entry], self.out_path)
-        self.assertEqual(n, 0)
-        self.assertEqual(_read_jsonl(self.out_path), [])
-
-    def test_missing_views_and_ratio_default_to_zero(self) -> None:
-        entry = _valid_classifier_entry()
-        del entry["views"]
-        del entry["comment_to_like_ratio"]
-        n = generate_classifier_dataset([entry], self.out_path)
-        self.assertEqual(n, 1)
-        rows = _read_jsonl(self.out_path)
-        self.assertIn("Vues: 0", rows[0]["input"])
-        # 0.0 formaté en 4 décimales.
-        self.assertIn("Ratio comments/likes: 0.0000", rows[0]["input"])
-
-    def test_three_entries_one_invalid_writes_two_lines(self) -> None:
-        entries = [
-            _valid_classifier_entry(text="ligne 1"),
-            _valid_classifier_entry(text="", t_type="T2"),  # invalide : text vide
-            _valid_classifier_entry(text="ligne 3"),
-        ]
-        n = generate_classifier_dataset(entries, self.out_path)
-        self.assertEqual(n, 2)
-        rows = _read_jsonl(self.out_path)
-        outputs = [r["output"] for r in rows]
-        self.assertEqual(outputs, ["T2", "T2"])
-        captures = [r["input"] for r in rows]
-        self.assertIn("ligne 1", captures[0])
-        self.assertIn("ligne 3", captures[1])
 
 
 # ---------------------------------------------------------------------------
@@ -355,9 +281,8 @@ class MainTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmpdir = Path(tempfile.mkdtemp())
-        self.training_path = self.tmpdir / "training_comments.json"
+        self.training_path = self.tmpdir / "training_comments_viral.json"
         self.output_dir = self.tmpdir / "out"
-        self.classifier_out = self.output_dir / CLASSIFIER_FILENAME
         self.generator_out = self.output_dir / GENERATOR_FILENAME
         self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
 
@@ -373,17 +298,14 @@ class MainTest(unittest.TestCase):
             "--output-dir", str(self.output_dir),
         ]
 
-    def test_empty_training_yields_zero_lines_in_both_files_exit_zero(self) -> None:
+    def test_empty_training_yields_zero_lines_exit_zero(self) -> None:
         self._write_training([])
         rc = main(self._argv())
         self.assertEqual(rc, 0)
-        # Les deux fichiers sont créés (vides) — artefact stable downstream.
-        self.assertTrue(self.classifier_out.exists())
         self.assertTrue(self.generator_out.exists())
-        self.assertEqual(_read_jsonl(self.classifier_out), [])
         self.assertEqual(_read_jsonl(self.generator_out), [])
 
-    def test_two_valid_entries_produce_two_lines_in_each_file(self) -> None:
+    def test_two_valid_entries_produce_two_generator_lines(self) -> None:
         # Schéma plat unifié : chaque entrée a tous les champs des deux datasets.
         entries = [
             {
@@ -413,13 +335,8 @@ class MainTest(unittest.TestCase):
         rc = main(self._argv())
         self.assertEqual(rc, 0)
 
-        cls_rows = _read_jsonl(self.classifier_out)
         gen_rows = _read_jsonl(self.generator_out)
-        self.assertEqual(len(cls_rows), 2)
         self.assertEqual(len(gen_rows), 2)
-        # Sanity check : labels classifier corrects.
-        self.assertEqual([r["output"] for r in cls_rows], ["T2", "T3b"])
-        # Sanity check : outputs generator = textes des commentaires.
         self.assertEqual(
             [r["output"] for r in gen_rows],
             ["mdr trop vrai", "le passage 0:08"],
@@ -430,16 +347,13 @@ class MainTest(unittest.TestCase):
         self.assertFalse(self.training_path.exists())
         rc = main(self._argv())
         self.assertEqual(rc, 1)
-        # Aucun fichier de sortie ne doit avoir été créé : on bail-out
-        # avant l'étape d'écriture.
-        self.assertFalse(self.classifier_out.exists())
         self.assertFalse(self.generator_out.exists())
 
 
 class MainWithVectorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = Path(tempfile.mkdtemp())
-        self.training_path = self.tmpdir / "training_comments.json"
+        self.training_path = self.tmpdir / "training_comments_viral.json"
         self.output_dir = self.tmpdir / "out"
         self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
 

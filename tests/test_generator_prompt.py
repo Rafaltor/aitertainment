@@ -7,6 +7,7 @@ import unittest
 from modules.generator_prompt import (
     build_alpaca_prompt,
     build_generator_input_block,
+    normalize_generator_output,
 )
 
 
@@ -31,6 +32,12 @@ class GeneratorPromptTest(unittest.TestCase):
         self.assertTrue(prompt.startswith("### Instruction:"))
         self.assertIn("### Input:\nT-type commentateur: T2", prompt)
         self.assertTrue(prompt.endswith("### Response:\n"))
+
+    def test_normalize_strips_emoji_and_mentions(self) -> None:
+        out = normalize_generator_output("mdr trop vrai 🤣🤣 @someone extra words here")
+        self.assertNotIn("@", out)
+        self.assertNotIn("🤣", out)
+        self.assertLessEqual(len(out.split()), 10)
 
 
 if __name__ == "__main__":

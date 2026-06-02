@@ -16,12 +16,12 @@ import dataset_builder as db_mod  # noqa: E402
 class DatasetBuilderIOTest(unittest.TestCase):
     def test_load_training_missing_file_returns_empty_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "training_comments.json"
+            path = Path(tmp) / "training_comments_viral.json"
             self.assertEqual(db_mod._load_training(path), {"entries": []})
 
     def test_save_and_load_training_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "training_comments.json"
+            path = Path(tmp) / "training_comments_viral.json"
             payload = {"entries": [{"text": "mdr", "t_type": "T2"}]}
             db_mod._save_training(payload, path=path)
             loaded = db_mod._load_training(path)
@@ -36,7 +36,7 @@ class DatasetBuilderIOTest(unittest.TestCase):
 
     def test_load_training_rejects_non_list_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "training_comments.json"
+            path = Path(tmp) / "training_comments_viral.json"
             path.write_text(json.dumps({"entries": "bad"}), encoding="utf-8")
             with self.assertRaises(db_mod.DatasetIOError):
                 db_mod._load_training(path)

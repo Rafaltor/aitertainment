@@ -168,12 +168,7 @@ def _clean_niches_list(raw: Any) -> list[str]:
 
 
 def _coerce_incoming_niches(score_result: dict[str, Any]) -> list[str]:
-    """Lit les niches d'un ``score_result`` selon le brief 2026-05 :
-
-    1. Si ``score_result["niches"]`` (liste) est présent → écrit tel quel.
-    2. Sinon si ``score_result["niche"]`` (string) est présent → converti
-       en ``[niche]`` (lazy migration côté input).
-    3. Sinon → liste vide (le caller décide).
+    """Lit ``score_result["niches"]`` (liste) ; ``[]`` si absent / mal formé.
 
     On accepte ``"niches"`` comme un dict / scalaire mal formé en faisant
     semblant qu'il est absent (c'est plus tolérant que de lever).
@@ -181,33 +176,18 @@ def _coerce_incoming_niches(score_result: dict[str, Any]) -> list[str]:
     niches_raw = score_result.get("niches")
     if isinstance(niches_raw, list):
         return _clean_niches_list(niches_raw)
-    legacy_niche = score_result.get("niche")
-    if isinstance(legacy_niche, str) and legacy_niche.strip():
-        return [legacy_niche.strip()]
     return []
 
 
-def _migrate_profile_niches_in_place(
+def _refresh_profile_niches_in_place(
     profile: dict[str, Any], *, incoming: list[str]
 ) -> None:
-    """Lazy migration des niches d'un profil **existant** dans la DB.
+    """Rafraîchit les ``niches`` d'un profil existant.
 
-    Règles (cf. brief Mod C 2026-05) :
-
-    - Si le profil a déjà ``niches`` (liste) : on rafraîchit avec
-      ``incoming`` (priorité au scoring le plus récent).
-    - Si le profil n'a que l'ancien champ ``niche`` (string) : on le
-      promote en ``niches=[niche]`` *avant* de rafraîchir.
-    - Le champ ``niche`` (string) est **toujours supprimé** après
-      migration — pas de doublon en base.
-    - Si ``incoming`` est non vide il prime sur la migration ; si
-      ``incoming`` est vide on conserve les niches existantes (ne rien
-      écraser silencieusement).
+    - ``incoming`` non vide → prime (priorité au scoring le plus récent).
+    - ``incoming`` vide → conserve les niches existantes (ne rien écraser
+      silencieusement).
     """
-    legacy_niche = profile.pop("niche", None)
-    if "niches" not in profile and isinstance(legacy_niche, str) and legacy_niche.strip():
-        profile["niches"] = [legacy_niche.strip()]
-
     if incoming:
         profile["niches"] = list(incoming)
     else:
@@ -356,19 +336,6 @@ def upsert_profile(
     next_rescore = compute_next_rescore_at(tier, anchor=last_scored_dt)
     archived = tier == "C"
 
-    # ------------------------------------------------------------------
-    # Niches (schéma 2026-05) — règles de lazy migration
-    # ------------------------------------------------------------------
-    # 1. ``score_result["niches"]`` (liste) → écrit tel quel.
-    # 2. ``score_result["niche"]`` (string) sans ``niches`` → converti en
-    #    ``[niche]`` avant persistance.
-    # 3. Profil existant qui n'a que ``niche`` (string) → migré en
-    #    ``["niches": [niche]]`` au prochain upsert.
-    # 4. Le champ string ``niche`` est **supprimé** côté profil après
-    #    migration (pas de doublon en base).
-    #
-    # Pas de migration de masse : la promotion ne touche un profil qu'au
-    # moment où l'on passe sur lui dans l'upsert.
     niches: list[str] = _coerce_incoming_niches(score_result)
 
     profiles: dict[str, Any] = db["profiles"]
@@ -404,8 +371,7 @@ def upsert_profile(
             if score_result.get("followers") is not None
             else profile.get("followers", 0)
         )
-        # Lazy migration du profil existant + refresh avec le scoring courant.
-        _migrate_profile_niches_in_place(profile, incoming=niches)
+        _refresh_profile_niches_in_place(profile, incoming=niches)
         profile["tier"] = tier
         profile["last_scored_at"] = last_scored_at
         profile["next_rescore_at"] = next_rescore
@@ -519,6 +485,61 @@ def validate_profile(
     return profile
 
 
+def rebuild_watchlist(
+    db: dict[str, Any],
+    existing_creators: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Re-dérive la watchlist depuis ``db`` en préservant l'état runtime.
+
+    ``database.json`` est la **source de vérité** pour les métadonnées d'un
+    créateur scoré : ``niches``, ``t_type`` (= ``t_type_final``), ``platform``.
+    Cette fonction projette ces champs sur les entrées watchlist existantes
+    tout en gardant intact ce que le Watcher / la validation possèdent en
+    propre (passthrough de toutes les clés inconnues, dont le curseur
+    ``last_post_id``, ``engagement_baseline`` et ``added_at``).
+
+    Règles :
+
+    * Créateur **présent + validé** dans ``db`` → ``niches`` / ``t_type`` /
+      ``platform`` rafraîchis depuis le profil (la validation humaine prime).
+    * Créateur validé mais **archivé** (tier C / sorti de rotation) → retiré de
+      la watchlist (auto-nettoyage, remplace l'ancien job de sync manuel).
+    * Créateur **absent de ``db``** (validation manuelle d'un profil jamais
+      scoré) → conservé tel quel : on ne fabrique rien, on ne supprime rien.
+
+    Idempotente : ``rebuild_watchlist(db, rebuild_watchlist(db, x))`` ≡
+    ``rebuild_watchlist(db, x)``.
+    """
+    profiles = db.get("profiles") if isinstance(db, dict) else None
+    if not isinstance(profiles, dict):
+        profiles = {}
+
+    out: list[dict[str, Any]] = []
+    for creator in existing_creators:
+        if not isinstance(creator, dict):
+            continue
+        key = _normalize_username(str(creator.get("username") or ""))
+        if not key:
+            continue
+        entry = dict(creator)
+        entry["username"] = key
+
+        profile = profiles.get(key)
+        if isinstance(profile, dict) and profile.get("validated"):
+            if profile.get("archived"):
+                continue
+            entry["niches"] = list(profile.get("niches") or entry.get("niches") or [])
+            t_final = profile.get("t_type_final")
+            if t_final:
+                entry["t_type"] = str(t_final)
+            entry["platform"] = str(
+                profile.get("platform") or entry.get("platform") or "instagram"
+            )
+        out.append(entry)
+
+    return out
+
+
 def merge_profile_pipeline(
     db: dict[str, Any],
     username: str,
@@ -559,6 +580,7 @@ __all__ = [
     "load_db",
     "merge_profile_pipeline",
     "promote_tier",
+    "rebuild_watchlist",
     "save_db",
     "upsert_profile",
     "validate_profile",

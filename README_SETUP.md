@@ -365,7 +365,7 @@ Crée `~/Library/LaunchAgents/com.aitertainment.rescore.plist` :
 launchctl load -w ~/Library/LaunchAgents/com.aitertainment.rescore.plist
 ```
 
-Le scheduler tournera à 09:30 chaque jour, traitera les profils dûs (next_rescore_at ≤ now), pousera les notifs `📈 / 📉` sur Telegram en cas de variation ≥ ±15-20%, et balayera les `pending_collection.json` de `dataset_builder` au passage.
+Le scheduler tournera à 09:30 chaque jour, traitera les profils dûs (next_rescore_at ≤ now) et poussera les notifs `📈 / 📉` sur Telegram en cas de variation ≥ ±15-20%.
 
 ### 8.4 Forcer un déclenchement immédiat (debug)
 
@@ -444,10 +444,10 @@ sudo pmset -a autorestart 1
 |---|---|---|
 | `data/database.json` | `database.py` | Profils + scores_history + tier + planning rescore |
 | `data/candidates.json` | `discovery.py` | Candidats Discovery (en attente de validation Telegram) |
-| `data/training_comments.json` | `dataset_builder.py` | Dataset GENERATOR + CLASSIFIER (deux schémas dans un fichier) |
-| `data/pending_collection.json` | `dataset_builder.py` | Profils validés sans Reels ≥ 7 jours, à recollecter plus tard |
+| `data/viral_comments.json` | `scrape_viral_comments.py` | Pool de commentaires non labellisés (fil Reels) |
+| `data/training_comments_viral.json` | `label_comments.py` | Commentaires labellisés (T-types) pour le générateur |
+| `data/generator_dataset.json` | `prepare_dataset.py` | Export Alpaca pour fine-tune Colab |
 | `data/discovery_session.json` | `discovery.py` | Compteur de quota humain quotidien |
-| `data/validations.json` | `telegram_discovery_bot.py` | Feedback humain (validate / reject / corrected) |
 | `data/discovery_bot_state.json` | `telegram_discovery_bot.py` | Offset Telegram pour `getUpdates` |
 | `data/watchlist.json` | `watcher.py`, `scripts/embedder.py` | Créateurs surveillés (watcher + embeddings) |
 | `data/instagram_cookies.json` | `scripts/instagram_browser.py` | Session Playwright (non versionné) |

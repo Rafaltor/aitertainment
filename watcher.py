@@ -27,7 +27,7 @@ PHASE WATCHER (ce fichier)
     - Objectif : détecter un nouveau post et émettre un commentaire calibré
       en moins de 3 minutes après publication.
     - Le contexte du commentaire suggéré provient de deux sources :
-        1. Profil créateur (``t_type``, ``niche``) → déjà dans
+        1. Profil créateur (``t_type``, ``niches``) → déjà dans
            ``watchlist.json`` (ne change pas à chaque tick).
         2. Contexte vidéo (caption, hashtags, audio_id) → extrait du post
            via Playwright + GraphQL (``get_recent_reels``), sans commentaires.
@@ -91,27 +91,25 @@ def _creator_primary_niche(creator: dict[str, Any]) -> str:
     niches = creator.get("niches")
     if isinstance(niches, list) and niches:
         return str(niches[0] or "?")
-    legacy = creator.get("niche", "")
-    return str(legacy or "?")
+    return "?"
 
 
 def _creator_niches(creator: dict[str, Any]) -> list[str]:
     niches = creator.get("niches")
     if isinstance(niches, list) and niches:
         return list(niches)
-    legacy = creator.get("niche", "")
-    if isinstance(legacy, str) and legacy.strip():
-        return [legacy.strip()]
     return []
 
 
 def check_new_post(
     creator: dict[str, Any], context: BrowserContext
 ) -> dict[str, Any] | None:
-    """Détecte un nouveau Reel via Playwright (vues faibles, hors épinglés).
+    """Détecte un nouveau Reel via Playwright (hors épinglés).
 
-    Compare le premier Reel non épinglé (vues sous seuil dynamique) à
-    ``last_post_id``. Ne modifie pas ``watchlist.json``.
+    - **Bootstrap** (``last_post_id`` absent) : mémorise le Reel le plus récent
+      sans condition de vues — point de départ pour la surveillance.
+    - **Surveillance** (``last_post_id`` connu) : alerte seulement si le Reel
+      en tête change *et* a des vues sous le seuil dynamique (post frais).
     """
     if not isinstance(creator, dict):
         _LOGGER.warning("check_new_post : creator doit être un dict, reçu %s", type(creator).__name__)
@@ -138,6 +136,7 @@ def check_new_post(
         return None
 
     if not reels:
+        _LOGGER.warning("check_new_post @%s : aucun reel récupéré (session IG ?)", username)
         return None
 
     non_pinned = [r for r in reels if not r.get("is_pinned", False)]
@@ -153,24 +152,8 @@ def check_new_post(
         _LOGGER.info("check_new_post @%s : aucun reel non épinglé trouvé", username)
         return None
 
-    views_list = [int(r["view_count"]) for r in non_pinned if int(r.get("view_count") or 0) > 0]
-    if len(views_list) >= 2:
-        avg_views = sum(views_list[1:]) / len(views_list[1:])
-        threshold = max(NEW_POST_VIEW_THRESHOLD, avg_views * 0.05)
-    else:
-        threshold = float(NEW_POST_VIEW_THRESHOLD)
-
     first = non_pinned[0]
     first_views = int(first.get("view_count") or 0)
-
-    if first_views >= threshold:
-        _LOGGER.debug(
-            "check_new_post @%s : pas de nouveau post (%d vues >= seuil %.0f)",
-            username,
-            first_views,
-            threshold,
-        )
-        return None
 
     media_id = str(first.get("media_id") or "")
     if not media_id:
@@ -182,6 +165,39 @@ def check_new_post(
 
     caption = str(first.get("caption") or "")
     hashtags = _hashtags_from_caption(caption)
+
+    if not last_post_id:
+        _LOGGER.info(
+            "check_new_post @%s : bootstrap (last_post_id null) -> media_id=%s (%d vues)",
+            username,
+            media_id,
+            first_views,
+        )
+        return {
+            "video_id": media_id,
+            "caption": caption,
+            "hashtags": hashtags,
+            "audio_id": str(first.get("audio_id") or ""),
+            "url": f"https://www.instagram.com/reel/{media_id}/",
+            "posted_at": datetime.now(timezone.utc),
+            "bootstrap": True,
+        }
+
+    views_list = [int(r["view_count"]) for r in non_pinned if int(r.get("view_count") or 0) > 0]
+    if len(views_list) >= 2:
+        avg_views = sum(views_list[1:]) / len(views_list[1:])
+        threshold = max(NEW_POST_VIEW_THRESHOLD, avg_views * 0.05)
+    else:
+        threshold = float(NEW_POST_VIEW_THRESHOLD)
+
+    if first_views >= threshold:
+        _LOGGER.debug(
+            "check_new_post @%s : pas de nouveau post (%d vues >= seuil %.0f)",
+            username,
+            first_views,
+            threshold,
+        )
+        return None
 
     _LOGGER.info(
         "check_new_post @%s : nouveau post détecté %s (%d vues < seuil %.0f)",
@@ -198,7 +214,7 @@ def check_new_post(
         "audio_id": str(first.get("audio_id") or ""),
         "url": f"https://www.instagram.com/reel/{media_id}/",
         "posted_at": datetime.now(timezone.utc),
-        "bootstrap": not bool(last_post_id),
+        "bootstrap": False,
     }
 
 
@@ -228,18 +244,16 @@ def _normalize_entry(entry: Any, *, index: int) -> dict[str, Any]:
         )
     platform = platform.strip().lower()
 
-    # Schéma 2026-05 : ``niches`` (liste) est la source de vérité, ``niche``
-    # (string) reste exposé en alias pour les callers legacy. Migration lazy :
-    # une entrée historique avec uniquement ``"niche": "humour"`` reste valide
-    # et est promue à ``"niches": ["humour"]`` à la lecture.
+    # ``niches`` (liste) est la source de vérité. Une entrée sans ``niches``
+    # (ou avec une liste vide) reste valide → ``[]``.
     niches_raw = entry.get("niches")
+    niches: list[str] = []
     if niches_raw is not None:
         if not isinstance(niches_raw, list):
             raise WatchlistError(
                 f"creators[{index}].niches doit être une liste, "
                 f"reçu {type(niches_raw).__name__}"
             )
-        niches: list[str] = []
         for j, n in enumerate(niches_raw):
             if not isinstance(n, str):
                 raise WatchlistError(
@@ -249,15 +263,6 @@ def _normalize_entry(entry: Any, *, index: int) -> dict[str, Any]:
             cleaned = n.strip()
             if cleaned:
                 niches.append(cleaned)
-    else:
-        niche_legacy = entry.get("niche", "")
-        if not isinstance(niche_legacy, str):
-            raise WatchlistError(f"creators[{index}].niche doit être une chaîne")
-        niche_legacy = niche_legacy.strip()
-        niches = [niche_legacy] if niche_legacy else []
-    # Alias string : ``niche = niches[0]`` (ou ``""`` si la liste est vide,
-    # autorisé pour rétro-compat avec les watchlists historiques).
-    niche = niches[0] if niches else ""
 
     t_type_raw = entry.get("t_type")
     if isinstance(t_type_raw, str):
@@ -307,7 +312,6 @@ def _normalize_entry(entry: Any, *, index: int) -> dict[str, Any]:
         "username": username,
         "platform": platform,
         "niches": list(niches),
-        "niche": niche,
         "t_type": t_type,
         "engagement_baseline": engagement_baseline,
         "last_post_id": last_post_id,
@@ -322,7 +326,7 @@ def _normalize_entry(entry: Any, *, index: int) -> dict[str, Any]:
 def load_watchlist(path: str | Path | None = None) -> list[dict[str, Any]]:
     """Charge ``watchlist.json`` et renvoie la liste normalisée des créateurs.
 
-    Schéma attendu : ``{"creators": [ {username, platform, niche, t_type,
+    Schéma attendu : ``{"creators": [ {username, platform, niches, t_type,
     engagement_baseline, last_post_id, added_at}, ... ]}``.
 
     - Fichier absent → liste vide (et log warning).
@@ -390,17 +394,44 @@ def save_watchlist(
     _LOGGER.info("Watchlist sauvegardée : %d créateur(s) -> %s", len(normalized), p)
 
 
+def load_watchlist_synced(
+    path: str | Path | None = None,
+    *,
+    db_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Charge la watchlist puis re-dérive ses métadonnées depuis ``database.json``.
+
+    ``database.json`` est la source de vérité (``niches`` / ``t_type`` /
+    archivage) ; la watchlist ne conserve en propre que son état runtime
+    (curseur ``last_post_id`` …). Voir ``database.rebuild_watchlist``.
+
+    Best-effort : si la DB est illisible / absente, on renvoie la watchlist
+    brute. Le Watcher ne doit **jamais** s'arrêter pour un souci de dérivation.
+    """
+    creators = load_watchlist(path)
+    try:
+        from database import load_db, rebuild_watchlist
+
+        db = load_db(path=db_path)
+    except Exception as e:  # noqa: BLE001 — best-effort, on log et on continue
+        _LOGGER.warning(
+            "Re-dérivation watchlist depuis database.json impossible (%s) — "
+            "watchlist brute utilisée.",
+            e,
+        )
+        return creators
+    return rebuild_watchlist(db, creators)
+
+
 # =============================================================================
 # Boucle Watcher
 # =============================================================================
 
-PRIME_INTERVAL_S = 300    # 17h–21h : prime time, polling toutes les 5 min
-DAY_INTERVAL_S = 600      # 09h–17h : journée, polling toutes les 10 min
-NIGHT_INTERVAL_S = 1800   # 21h–09h : nuit, polling toutes les 30 min
-SLEEP_BETWEEN_CREATORS_S = 3  # anti-détection (rate limit human-like)
-# Pause longue déclenchée tous les ``MAX_ACCOUNTS_PER_SESSION`` comptes vérifiés
-# (voir ``config.py``) — protège contre le profilage anti-bot.
-MAX_ACCOUNTS_PAUSE_S = 600  # 10 min
+PRIME_INTERVAL_S = config.WATCHER_PRIME_INTERVAL_S
+DAY_INTERVAL_S = config.WATCHER_DAY_INTERVAL_S
+NIGHT_INTERVAL_S = config.WATCHER_NIGHT_INTERVAL_S
+SLEEP_BETWEEN_CREATORS_S = config.WATCHER_SLEEP_BETWEEN_CREATORS_S
+MAX_ACCOUNTS_PAUSE_S = config.WATCHER_ACCOUNTS_PAUSE_S
 
 
 def get_poll_interval(now: datetime | None = None) -> int:
@@ -495,14 +526,10 @@ def _generate_for_post(
     log = logging.getLogger("aitertainment.watcher")
     vector_store = vector_store or {}
     t_type = str(context.get("t_type") or "")
-    # Schéma 2026-05 : ``niches`` (liste) prioritaire avec rétro-compat sur
-    # l'ancien champ ``niche`` (string). Le caller (``run_watcher``) passe
-    # désormais ``creator["niches"]`` à la construction du context.
+    # ``niches`` (liste) : le caller (``run_watcher``) passe ``creator["niches"]``
+    # à la construction du context.
     niches_raw = context.get("niches")
-    if isinstance(niches_raw, list) and niches_raw:
-        niches: list[str] | str = list(niches_raw)
-    else:
-        niches = str(context.get("niche") or "")
+    niches: list[str] = list(niches_raw) if isinstance(niches_raw, list) else []
 
     if t_type in ("T1", "T3a") or t_type not in VALID_T_TYPES:
         return []
@@ -754,7 +781,7 @@ def run_watcher(
                 log.info("vector_store rechargé : %d comptes", len(vector_store))
 
             try:
-                creators = load_watchlist(watchlist_path)
+                creators = load_watchlist_synced(watchlist_path)
             except WatchlistError as e:
                 log.error("Watchlist illisible : %s — abandon.", e)
                 return
@@ -854,6 +881,7 @@ __all__ = [
     "SLEEP_BETWEEN_CREATORS_S",
     "WatchlistError",
     "load_watchlist",
+    "load_watchlist_synced",
     "save_watchlist",
     "check_new_post",
     "get_poll_interval",

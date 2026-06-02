@@ -29,8 +29,18 @@ TELEGRAM_DISCOVERY_CHAT_ID = (
     or TELEGRAM_CHAT_ID
 )
 
-# Anti-détection Instagram (Playwright) — pause longue tous les N comptes (Watcher)
+# Anti-détection Instagram (Playwright) — Watcher
 MAX_ACCOUNTS_PER_SESSION = int(os.environ.get("MAX_ACCOUNTS_PER_SESSION", "50"))
+# Pause longue tous les N comptes vérifiés (secondes)
+WATCHER_ACCOUNTS_PAUSE_S = int(os.environ.get("WATCHER_ACCOUNTS_PAUSE_S", "600"))
+# Délai entre deux créateurs dans un cycle (secondes)
+WATCHER_SLEEP_BETWEEN_CREATORS_S = int(
+    os.environ.get("WATCHER_SLEEP_BETWEEN_CREATORS_S", "3")
+)
+# Intervalle entre deux cycles selon l'heure locale (secondes)
+WATCHER_PRIME_INTERVAL_S = int(os.environ.get("WATCHER_PRIME_INTERVAL_S", "300"))
+WATCHER_DAY_INTERVAL_S = int(os.environ.get("WATCHER_DAY_INTERVAL_S", "600"))
+WATCHER_NIGHT_INTERVAL_S = int(os.environ.get("WATCHER_NIGHT_INTERVAL_S", "1800"))
 
 # ----------------------------------------------------------------------------
 # Discovery (Layer 0) — valeurs MODE TEST par défaut.
@@ -69,6 +79,12 @@ DISABLE_HUMAN_SCHEDULE = (
 DISCOVERY_NOTIFY_THRESHOLD = float(
     os.environ.get("DISCOVERY_NOTIFY_THRESHOLD", "350")
 )
+# Collecte Playwright des commentaires sur les profils découverts (grille 3 reels).
+# Désactivé par défaut : corpus commentaires = fil Reels uniquement (viral_comments.json).
+DISCOVERY_COLLECT_COMMENTS = (
+    os.environ.get("DISCOVERY_COLLECT_COMMENTS", "false").strip().lower()
+    in ("1", "true", "yes", "on")
+)
 
 # Ollama (classifier / generate_comments) — OLLAMA_GENERATE_URL reste accepté en repli
 OLLAMA_URL = (
@@ -102,7 +118,7 @@ VALID_T_TYPES = frozenset({"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"})
 #    en inventer (« humour_noir_paris » ou autre), les datasets de fine-tuning
 #    se fragmentent et les T-types par niche perdent leur stabilité.
 # 2. Les valeurs sont co-référencées par les seeds (``data/seeds.json``), les
-#    profils en base (``data/database.json:niche``), et les prompts du
+#    profils en base (``data/database.json:niches``), et les prompts du
 #    classifier (``modules/classifier.py``). Une dérive doit être un acte
 #    explicite (modifier ce code), pas une coquille dans un fichier de config.
 #

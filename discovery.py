@@ -24,12 +24,12 @@ Trois responsabilités (implémentation future) :
 Principes :
 
 - Sleeps longs et aléatoires (anti-détection).
-- **Blacklist** : ne jamais reproposer un profil déjà vu (validé, rejeté ou
-  simplement exploré) — ``blacklist.json``.
+- **Database** : ne jamais reproposer un profil déjà présent dans
+  ``database.json`` (déjà scoré / exploré).
 - **Feedback loop** : apprendre des décisions humaines (à brancher plus tard).
 
 Ce module expose uniquement la **persistance** et les chemins par défaut :
-chargement / sauvegarde atomique de ``seeds``, ``blacklist``, ``candidates``.
+chargement / sauvegarde atomique de ``seeds``, ``candidates``, ``database``.
 La boucle d'exploration utilise Playwright (``scripts/instagram_browser``).
 
 ============================================================================
@@ -37,7 +37,7 @@ Fichiers de données (répertoire ``data/``)
 ============================================================================
 
 - ``data/seeds.json`` — comptes de départ et métadonnées par domaine.
-- ``data/blacklist.json`` — profils déjà traités (plus de proposition).
+- ``data/database.json`` — profils déjà scorés (plus de re-score automatique).
 - ``data/candidates.json`` — file d'attente avant validation Telegram.
 
 """
@@ -77,7 +77,6 @@ from scripts.instagram_browser import (
 _PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = _PROJECT_ROOT / "data"
 DEFAULT_SEEDS_PATH = DEFAULT_DATA_DIR / "seeds.json"
-DEFAULT_BLACKLIST_PATH = DEFAULT_DATA_DIR / "blacklist.json"
 DEFAULT_CANDIDATES_PATH = DEFAULT_DATA_DIR / "candidates.json"
 
 _LOGGER = logging.getLogger("aitertainment.discovery")
@@ -95,10 +94,6 @@ MIN_MEDIA_COUNT = 2
 HISTORY_MEDIAS_TO_FETCH = 20          # historique (4 lignes × 5 colonnes sur /reels/)
 MIN_TOTAL_MEDIAS_REQUIRED = 3          # nb min de médias TOTAL (reels + posts) pour scorer
 MAX_POSTS_FOR_SCORING = 4              # cap sur les Posts scorés (les 4 plus récents non-épinglés)
-COMMENTS_MEDIA_SAMPLE = 3              # nombre de médias dont on scrape les commentaires
-COMMENTS_PER_MEDIA = 50                # ↑ depuis 15 : améliore le signal classifier sur les
-                                       # posts à faible engagement (la plupart des Reels
-                                       # n'ont que 5-15 commentaires likés sur les 50 premiers)
 REEL_PRODUCT_TYPE = "clips"
 
 # Pondérations & valeurs de **référence** SCORE_PROFIL
@@ -152,14 +147,14 @@ SCORE_T_TYPE_W = SCORE_REEL_T_TYPE_W
 SCORE_FREQ_W = SCORE_REEL_FREQ_W
 
 # Seuil **unifié** entre les deux chemins de scoring (résout l'ancien bug où
-# ``explore_network`` blacklistait sans notif les profils 350 < score < 500
+# ``explore_network`` enregistrait sans notif les profils 350 < score < 500
 # alors que ``--score`` les notifiait correctement) :
 #
 # - score > seuil → record_candidate + notif Telegram (Bot #2 Discovery).
-# - score ≤ seuil → blacklist ("rejected", jamais reproposé).
+# - score ≤ seuil → database (jamais reproposé).
 #
 # Tout score reste upserté dans ``database.json`` indépendamment du seuil —
-# seul le ratio candidat/blacklist + la notif sont gouvernés ici.
+# seul le ratio candidat/database + la notif sont gouvernés ici.
 #
 # Source de vérité : ``config.DISCOVERY_NOTIFY_THRESHOLD`` (overridable .env).
 DISCOVERY_NOTIFY_THRESHOLD = float(config.DISCOVERY_NOTIFY_THRESHOLD)
@@ -168,14 +163,13 @@ DISCOVERY_NOTIFY_THRESHOLD = float(config.DISCOVERY_NOTIFY_THRESHOLD)
 # avec une valeur hardcodée à 500. On l'aligne désormais sur
 # ``DISCOVERY_NOTIFY_THRESHOLD`` pour que les deux chemins (CLI ``--score``
 # via ``score_and_persist`` et ``explore_network`` via ``_score_one_in_domain``)
-# prennent les mêmes décisions notif/blacklist.
+# prennent les mêmes décisions notif/database.
 CANDIDATE_SCORE_THRESHOLD = DISCOVERY_NOTIFY_THRESHOLD
 
 # Collecte commentaires Playwright (profils score > seuil, avant notif Telegram)
 TOP_COMMENTS_COLLECT_SCORE_THRESHOLD = 400.0
 TOP_COMMENTS_REELS_MAX = 3  # reels avec le plus de comment_count
 TOP_COMMENTS_PER_REEL = 999  # legacy : plus de plafond par reel (tous les parsés)
-DEFAULT_RAW_COMMENTS_PATH = DEFAULT_DATA_DIR / "raw_comments.json"
 
 # Suggestions Instagram (``discover/*``) en source principale ; followings du
 # seed uniquement en fallback final via ``_fetch_followings``.
@@ -344,49 +338,26 @@ def _remove_seed_from_seeds_data(
     return False
 
 
-# --- blacklist ---
+# --- database (profils déjà vus) ---
 
 
-def load_blacklist(path: str | Path | None = None) -> dict[str, Any]:
-    """Charge ``blacklist.json``.
-
-    Schéma minimal::
-
-        { "profiles": [ { "username", "platform", "outcome", "added_at", ... }, ... ] }
-
-    Si le fichier est absent, retourne une blacklist vide (premier run).
-    """
-    p = Path(path) if path else DEFAULT_BLACKLIST_PATH
-    if not p.exists():
-        _LOGGER.info("Blacklist absente — démarrage vide (%s)", p.name)
-        return {"profiles": []}
-    data = _read_json(p)
-    profiles = data.get("profiles")
-    if profiles is None:
-        raise DiscoveryIOError(f'"profiles" manquant dans {p}')
-    if not isinstance(profiles, list):
-        raise DiscoveryIOError(f'"profiles" doit être une liste dans {p}')
-    _LOGGER.debug(
-        "Blacklist chargée : %d entrée(s) depuis %s", len(profiles), p.name
-    )
-    return data
+def _database_usernames(db: dict[str, Any] | None) -> set[str]:
+    """Usernames déjà présents dans ``database.json`` (clés du dict profiles)."""
+    if not db or not isinstance(db.get("profiles"), dict):
+        return set()
+    return {
+        str(k).lstrip("@").strip().lower()
+        for k in db["profiles"]
+        if str(k).strip()
+    }
 
 
-def save_blacklist(
-    blacklist: dict[str, Any],
-    path: str | Path | None = None,
-) -> None:
-    """Écrit ``blacklist.json`` de façon atomique."""
-    if not isinstance(blacklist, dict):
-        raise DiscoveryIOError(
-            f"blacklist doit être un dict, reçu {type(blacklist).__name__}"
-        )
-    profiles = blacklist.get("profiles")
-    if profiles is None or not isinstance(profiles, list):
-        raise DiscoveryIOError('"profiles" doit être une liste non absente')
-    p = Path(path) if path else DEFAULT_BLACKLIST_PATH
-    _atomic_write_json(p, {"profiles": profiles})
-    _LOGGER.info("Blacklist sauvegardée : %d entrée(s) -> %s", len(profiles), p)
+def _is_in_database(username: str, db: dict[str, Any]) -> bool:
+    u = str(username or "").lstrip("@").strip().lower()
+    if not u:
+        return False
+    profiles = db.get("profiles")
+    return isinstance(profiles, dict) and u in profiles
 
 
 # --- candidates ---
@@ -447,17 +418,6 @@ class DiscoverySessionLost(RuntimeError):
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _is_blacklisted(username: str, blacklist: dict[str, Any]) -> bool:
-    target = username.lower().lstrip("@").strip()
-    for p in blacklist.get("profiles", []):
-        if not isinstance(p, dict):
-            continue
-        u = str(p.get("username") or "").lower().lstrip("@").strip()
-        if u == target:
-            return True
-    return False
 
 
 def _is_media_pinned(media: Any) -> bool:
@@ -735,131 +695,6 @@ def _publish_frequency(rows_chronological: list[dict[str, Any]]) -> float:
         return 0.0
     delta = max((dates[-1] - dates[0]).total_seconds() / 86400.0, 1.0)
     return len(dates) / delta
-
-
-def _classify_recent_comments(
-    client: Any,
-    chronological_rows: list[dict[str, Any]],
-    *,
-    niches: list[str] | str,
-    log: logging.Logger,
-    sleep_between_posts: bool = True,
-) -> tuple[dict[str, float], str | None]:
-    """Classifie les commentaires des derniers médias passés (au plus
-    ``COMMENTS_MEDIA_SAMPLE``, ordre chronologique ancien → récent).
-
-    Le caller (``score_profile``) priorise les Reels et complète au besoin
-    avec des Posts non-épinglés ; cette fonction se contente de scraper et
-    classifier ce qu'on lui passe.
-
-    Retourne ``(distribution, dominant_type)``. La distribution est pondérée
-    par ``confidence`` retourné par le classifieur, normalisée pour sommer à 1.
-    Si aucun post n'est classifiable, ``({}, None)`` est retourné.
-    """
-    from modules.classifier import (  # import local pour ne pas alourdir start
-        ClassificationError,
-        CommentClassifier,
-    )
-
-    sampled = list(reversed(chronological_rows[-COMMENTS_MEDIA_SAMPLE:]))
-    classifier = CommentClassifier()
-    weights: dict[str, float] = {}
-
-    for i, row in enumerate(sampled):
-        media_id = row.get("media_id")
-        if not media_id:
-            continue
-
-        polite_sleep()
-        try:
-            comments = client.media_comments(str(media_id), amount=COMMENTS_PER_MEDIA)
-        except Exception as e:
-            log.warning("media_comments(%s) : erreur (%s) — skip.", media_id, e)
-            continue
-
-        # On parse texte + likes en un seul pass pour pouvoir loguer un
-        # diagnostic riche (utile quand un profil scoré ressort sans T-type
-        # dominant — la 1re question est toujours "y avait-il du signal ?").
-        # Matérialisation explicite : ``media_comments`` peut renvoyer un
-        # générateur paresseux, on ne veut pas l'épuiser à la 1re passe.
-        raw_list = list(comments or [])
-        raw_total = len(raw_list)
-        parsed: list[tuple[str, int]] = []
-        for c in raw_list:
-            text = str(getattr(c, "text", "")).strip()
-            if not text:
-                continue
-            try:
-                likes = int(getattr(c, "like_count", 0) or 0)
-            except (TypeError, ValueError):
-                likes = 0
-            parsed.append((text, likes))
-
-        max_likes = max((lk for _, lk in parsed), default=0)
-        exploitable = len(parsed)
-
-        if exploitable == 0:
-            log.info(
-                "media %s : %d commentaires bruts, max_likes=%d, exploitables=0 — "
-                "aucun commentaire exploitable.",
-                media_id, raw_total, max_likes,
-            )
-            texts: list[str] = []
-        elif max_likes == 0:
-            # Fallback : aucun commentaire liké → on garde les 5 textes les
-            # plus longs (>10 chars) pour donner quand même un signal au
-            # classifier. Sur les Reels jeunes ou faibles engagements, c'est
-            # fréquent que les premiers commentaires soient à 0 like ; sans
-            # ce fallback on perdrait toute info de T-type sur ces profils.
-            long_texts = sorted(
-                (t for t, _ in parsed if len(t) > 10),
-                key=len,
-                reverse=True,
-            )[:5]
-            texts = long_texts
-            log.info(
-                "media %s : %d commentaires bruts, max_likes=0, exploitables=%d — "
-                "fallback sur %d textes les plus longs (len>10).",
-                media_id, raw_total, exploitable, len(texts),
-            )
-        else:
-            texts = [t for t, _ in parsed]
-
-        if not texts:
-            # Cas dégénéré : exploitable > 0 mais tous textes ≤ 10 chars
-            # (uniquement des emojis, "lol", "ok", ...). On loggue et on skip.
-            if exploitable > 0:
-                log.info(
-                    "media %s : %d commentaires bruts, max_likes=%d, "
-                    "exploitables=%d (tous ≤ 10 chars après fallback) — skip.",
-                    media_id, raw_total, max_likes, exploitable,
-                )
-        else:
-            try:
-                result = classifier.classify(texts, niches=niches)
-                ttype = str(result.get("type") or "")
-                conf = float(result.get("confidence") or 0.0)
-                if ttype:
-                    weights[ttype] = weights.get(ttype, 0.0) + max(conf, 1e-3)
-            except (ValueError, ClassificationError) as e:
-                log.warning(
-                    "Classification échouée pour media %s (%s) — skip.",
-                    media_id,
-                    e,
-                )
-
-        if sleep_between_posts and i < len(sampled) - 1:
-            polite_sleep(
-                min_s=DISCOVERY_BETWEEN_POSTS_MIN_S,
-                max_s=DISCOVERY_BETWEEN_POSTS_MAX_S,
-            )
-
-    if not weights:
-        return ({}, None)
-    total = sum(weights.values()) or 1.0
-    distribution = {k: v / total for k, v in weights.items()}
-    dominant = max(distribution.items(), key=lambda kv: kv[1])[0]
-    return distribution, dominant
 
 
 def _t_type_match_score(
@@ -1142,7 +977,7 @@ def score_profile(
     username: str,
     domain: dict[str, Any],
     *,
-    blacklist: dict[str, Any] | None = None,
+    db: dict[str, Any] | None = None,
     context: BrowserContext | None = None,
 ) -> dict[str, Any] | None:
     """Score un profil candidat sur son **historique** (Layer 0).
@@ -1156,7 +991,7 @@ def score_profile(
         - followers < 1 000 ou > 1 000 000
         - media_count < 2
         - compte privé
-        - profil déjà dans ``blacklist.json``
+        - profil déjà dans ``database.json``
     4. ``user_medias(amount=15)`` puis exclusion des médias **épinglés**
        (``is_pinned is True``). Le champ ``media_sampled`` du résultat compte
        les médias **retournés par l'API avant** ce filtre.
@@ -1231,7 +1066,7 @@ def score_profile(
     -------
     dict | None
         ``None`` si le profil est filtré (éligibilité, compte privé,
-        blacklist, erreur réseau, compte introuvable…). Sinon un dict avec
+        database, erreur réseau, compte introuvable…). Sinon un dict avec
         ``username``, ``domain``, ``followers``, ``score``,
         ``t_type_dominant``, ``t_type_distribution``, ``biography``,
         ``scored_at``, plus les détails par type : ``score_reels``,
@@ -1256,15 +1091,15 @@ def score_profile(
         log.warning("score_profile @%s : domain invalide (%r)", u, domain)
         return None
 
-    if blacklist is None:
+    if db is None:
         try:
-            blacklist = load_blacklist()
-        except DiscoveryIOError as e:
-            log.warning("score_profile @%s : blacklist illisible (%s) — vide.", u, e)
-            blacklist = {"profiles": []}
+            db = load_db()
+        except DatabaseIOError as e:
+            log.warning("score_profile @%s : database illisible (%s) — vide.", u, e)
+            db = {"profiles": {}}
 
-    if _is_blacklisted(u, blacklist):
-        log.info("score_profile @%s : déjà en blacklist — skip.", u)
+    if _is_in_database(u, db):
+        log.info("score_profile @%s : déjà en database — skip.", u)
         return None
 
     if context is None:
@@ -1343,17 +1178,17 @@ def score_profile(
     post_ratio_med = _post_ratio_median(posts, follower_count) if posts else 0.0
     post_eng_med = _engagement_median(posts, follower_count) if posts else 0.0
 
-    # Niches (liste) : depuis le nouveau schéma seeds.json (``domain["niches"]``)
-    # avec rétro-compat pour l'ancien champ string ``domain["niche"]``. La
-    # liste est validée contre ``config.VALID_NICHES`` — ``validate_niches``
-    # garantit ``len(niches) >= 1`` (fallback ``["humour"]``).
+    # Niches (liste) depuis seeds.json (``domain["niches"]``), fallback
+    # ``domain["name"]``. Validée contre ``config.VALID_NICHES`` —
+    # ``validate_niches`` garantit ``len(niches) >= 1`` (fallback ``["humour"]``).
     niches = (
         list(domain.get("niches") or [])
-        or [str(domain.get("niche") or domain.get("name") or "humour")]
+        or [str(domain.get("name") or "humour")]
     )
     niches = config.validate_niches(niches)
     log.info(
-        "score_profile @%s : skip commentaires (collecte différée via collect_comments.py)",
+        "score_profile @%s : pas de scrape commentaires profil "
+        "(corpus = fil Reels / viral_comments.json)",
         u,
     )
     distribution: dict[str, float] = {}
@@ -1458,51 +1293,6 @@ def build_dedup_key(media_id: str, text: str) -> str:
     return f"{media_id}||{text.strip().lower()}"
 
 
-def load_raw_comments(path: Path) -> tuple[list[dict], set[str]]:
-    if not path.exists():
-        return [], set()
-    data = json.loads(path.read_text(encoding="utf-8"))
-    entries = data if isinstance(data, list) else []
-    keys = {
-        build_dedup_key(e["media_id"], e["text"])
-        for e in entries
-        if e.get("media_id") and e.get("text")
-    }
-    return entries, keys
-
-
-def save_raw_comments(entries: list[dict], path: Path) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(
-        json.dumps(entries, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    tmp.replace(path)
-
-
-def _collect_top_comments(
-    username: str,
-    context: BrowserContext,
-    reels: list[dict[str, Any]],
-    niches: list[str] | str,
-    *,
-    log: logging.Logger,
-    raw_comments_path: Path | None = None,
-) -> int:
-    """Collecte tous les commentaires visibles (3 reels les plus commentés) via Playwright."""
-    from scripts.instagram_browser import collect_top_comments
-
-    return collect_top_comments(
-        username,
-        context,
-        reels,
-        niches,
-        raw_comments_path=raw_comments_path or DEFAULT_RAW_COMMENTS_PATH,
-        classify=False,
-        logger=log,
-    )
-
-
 # =============================================================================
 # Logger dédié Discovery
 # =============================================================================
@@ -1563,7 +1353,7 @@ class DiscoverySession:
     activity_started_at: datetime | None = None
     mock: bool = False
     candidates_found: int = 0
-    blacklisted_count: int = 0
+    profiles_recorded_count: int = 0
 
 
 def _local_now() -> datetime:
@@ -1722,41 +1512,8 @@ def _notify_candidate(
 
 
 # =============================================================================
-# Persistance incrémentale (blacklist / candidates)
+# Persistance incrémentale (candidates)
 # =============================================================================
-
-
-def _record_seen(
-    blacklist: dict[str, Any],
-    username: str,
-    *,
-    outcome: str,
-    domain_name: str,
-    score: float | None,
-    mock: bool = False,
-    blacklist_path: Path | None = None,
-) -> None:
-    """Ajoute ``username`` à la blacklist (jamais reproposé) puis persiste."""
-    u = username.lstrip("@").strip().lower()
-    if not u or _is_blacklisted(u, blacklist):
-        return
-    blacklist.setdefault("profiles", []).append(
-        {
-            "username": u,
-            "platform": "instagram",
-            "domain": domain_name,
-            "outcome": outcome,
-            "score": float(score) if score is not None else None,
-            "added_at": _now_iso(),
-        }
-    )
-    if not mock:
-        try:
-            save_blacklist(blacklist, path=blacklist_path)
-        except DiscoveryIOError as e:
-            logging.getLogger("aitertainment.discovery").warning(
-                "save_blacklist a échoué (%s) — on continue en mémoire.", e
-            )
 
 
 def _record_candidate(
@@ -1964,10 +1721,9 @@ def _seed_niches(seed: Any, domain: dict[str, Any]) -> list[str]:
     """Retourne les niches du seed, avec fallback en cascade :
 
     1. ``seed["niches"]`` si seed est un dict avec une liste non vide.
-    2. ``domain["niches"]`` (nouvelle clé liste, prioritaire).
-    3. ``domain["niche"]`` (ancienne clé string, rétro-compat).
-    4. ``domain["name"]`` (nom du domaine, ex : ``"humour"``).
-    5. ``"humour"`` en dernier recours (ne devrait jamais arriver).
+    2. ``domain["niches"]`` (clé liste, prioritaire).
+    3. ``domain["name"]`` (nom du domaine, ex : ``"humour"``).
+    4. ``"humour"`` en dernier recours (ne devrait jamais arriver).
 
     Le résultat est **toujours** une liste avec au moins un élément. Pas
     de validation contre ``VALID_NICHES`` ici — c'est la responsabilité
@@ -1978,20 +1734,18 @@ def _seed_niches(seed: Any, domain: dict[str, Any]) -> list[str]:
     domain_niches = domain.get("niches") or []
     if domain_niches:
         return list(domain_niches)
-    fallback = str(domain.get("niche") or domain.get("name") or "humour")
+    fallback = str(domain.get("name") or "humour")
     return [fallback]
 
 
 def explore_network(
     domain: dict[str, Any],
     *,
-    blacklist: dict[str, Any] | None = None,
     watchlist: list[dict[str, Any]] | None = None,
     candidates: dict[str, Any] | None = None,
     db: dict[str, Any] | None = None,
     context: BrowserContext | None = None,
     session: DiscoverySession | None = None,
-    blacklist_path: Path | None = None,
     candidates_path: Path | None = None,
     db_path: Path | None = None,
     seeds_path: Path | None = None,
@@ -2005,18 +1759,17 @@ def explore_network(
     2. Si le quota quotidien (``MAX_PROFILES_PER_DAY``) est atteint
        → ``return`` (le seed reste dans ``seeds.json`` pour la prochaine run).
     3. ``_fetch_suggestions(seed)`` puis scoring de chaque suggestion
-       (quota, ``seen_this_run``, blacklist/watchlist en mémoire).
+       (quota, ``seen_this_run``, database/watchlist en mémoire).
     4. Retirer le seed de ``seeds.json`` (sauf ``seeds_override`` ou mock)
        et persister atomiquement.
     5. Passer au seed suivant.
 
     Sets de filtrage :
-        - ``blacklist_set`` : maintenu **mutable en mémoire**, mis à jour
-          immédiatement après chaque blacklisting (pas besoin d'attendre
-          une relecture disque).
+        - ``database_set`` : usernames déjà dans ``database.json``, enrichi
+          en mémoire après chaque ``upsert_profile``.
         - ``watchlist_set`` : idem, prêt pour de futures additions intra-run.
         - ``seen_this_run`` : dédup intra-session ; un seed déjà traité
-          (même blacklisté ce run) est skip avant tout autre check.
+          ce run est skip avant tout autre check.
 
     Limites humaines :
         - ``MAX_PROFILES_PER_DAY`` (compteur dans ``session``).
@@ -2032,12 +1785,6 @@ def explore_network(
     domain_name = str(domain["name"])
     session = session or DiscoverySession(mock=False)
 
-    if blacklist is None:
-        try:
-            blacklist = load_blacklist()
-        except DiscoveryIOError as e:
-            log.warning("blacklist illisible (%s) — repart vide.", e)
-            blacklist = {"profiles": []}
     if candidates is None:
         try:
             candidates = load_candidates()
@@ -2069,15 +1816,15 @@ def explore_network(
     # Sets initialisés **une seule fois** avant la boucle, puis mis à jour
     # en place par ``_score_one_in_domain`` au fur et à mesure.
     watchlist_set = _watchlist_usernames(watchlist)
-    blacklist_set = _blacklist_usernames(blacklist)
+    database_set = _database_usernames(db)
     seen_this_run: set[str] = set()
 
     log.info(
-        "Domaine %s : %d seeds, watchlist=%d, blacklist=%d.",
+        "Domaine %s : %d seeds, watchlist=%d, database=%d.",
         domain_name,
         len(seed_objects),
         len(watchlist_set),
-        len(blacklist_set),
+        len(database_set),
     )
 
     for seed_obj in seed_objects:
@@ -2093,15 +1840,13 @@ def explore_network(
             domain=seed_domain,
             domain_name=domain_name,
             parent_seed=None,  # is_seed=True
-            blacklist=blacklist,
             candidates=candidates,
             db=db,
             watchlist_set=watchlist_set,
-            blacklist_set=blacklist_set,
+            database_set=database_set,
             seen_this_run=seen_this_run,
             context=context,
             session=session,
-            blacklist_path=blacklist_path,
             candidates_path=candidates_path,
             db_path=db_path,
             log=log,
@@ -2126,15 +1871,13 @@ def explore_network(
                 domain=seed_domain,
                 domain_name=domain_name,
                 parent_seed=seed_user,
-                blacklist=blacklist,
                 candidates=candidates,
                 db=db,
                 watchlist_set=watchlist_set,
-                blacklist_set=blacklist_set,
+                database_set=database_set,
                 seen_this_run=seen_this_run,
                 context=context,
                 session=session,
-                blacklist_path=blacklist_path,
                 candidates_path=candidates_path,
                 db_path=db_path,
                 log=log,
@@ -2169,41 +1912,19 @@ def explore_network(
                 )
 
 
-def _blacklist_usernames(blacklist: dict[str, Any] | None) -> set[str]:
-    """Construit le set des usernames blacklistés à partir de ``blacklist``.
-
-    Format attendu : ``{"profiles": [{"username": "...", ...}, ...]}``.
-    Tolère les entrées dégénérées (string vide, casse, ``@`` initial). Le
-    set retourné est **mutable** côté caller (``explore_network``) qui
-    l'enrichit après chaque blacklisting.
-    """
-    if not blacklist:
-        return set()
-    out: set[str] = set()
-    for p in blacklist.get("profiles", []) or []:
-        if not isinstance(p, dict):
-            continue
-        u = str(p.get("username") or "").lstrip("@").strip().lower()
-        if u:
-            out.add(u)
-    return out
-
-
 def _score_one_in_domain(
     uname: str,
     *,
     domain: dict[str, Any],
     domain_name: str,
     parent_seed: str | None,
-    blacklist: dict[str, Any],
     candidates: dict[str, Any],
     db: dict[str, Any],
     watchlist_set: set[str],
-    blacklist_set: set[str],
+    database_set: set[str],
     seen_this_run: set[str],
     context: BrowserContext | None,
     session: DiscoverySession,
-    blacklist_path: Path | None,
     candidates_path: Path | None,
     db_path: Path | None,
     log: logging.Logger,
@@ -2215,12 +1936,11 @@ def _score_one_in_domain(
     0. ``seen_this_run`` : dédup intra-session, premier check absolu.
     1. Quota quotidien (``MAX_PROFILES_PER_DAY``).
     2. Fenêtre d'activité (nuit / déjeuner) + pause de burst.
-    3. Filtres ``watchlist_set`` / ``blacklist_set`` (O(1) chacun).
+    3. Filtres ``watchlist_set`` / ``database_set`` (O(1) chacun).
     4. ``score_profile`` (ou ``_mock_score_profile`` en mode mock).
     5. ``upsert_profile`` (toujours si le scoring a abouti).
     6. ``_record_candidate`` + ``_notify_candidate`` si score > seuil.
-    7. ``_record_seen`` + ajout à ``blacklist_set`` (en mémoire — pas
-       d'attente du prochain reload disque).
+    7. Ajout à ``database_set`` en mémoire après upsert.
     8. ``polite_sleep`` entre profils (sauf mock).
 
     Tout ``uname`` traité (même skip ou ineligible) est ajouté à
@@ -2232,7 +1952,7 @@ def _score_one_in_domain(
 
     Retourne :
         - ``"quota"``   : quota quotidien atteint, le caller doit ``return``.
-        - ``"skipped"`` : profil filtré (seen / watchlist / blacklist),
+        - ``"skipped"`` : profil filtré (seen / watchlist / database),
           aucun scoring.
         - ``"scored"``  : scoring tenté (succès ou ``None`` = inéligible).
 
@@ -2265,9 +1985,11 @@ def _score_one_in_domain(
         return "skipped"
     # Check O(1) sur le set en mémoire (mis à jour par les itérations
     # précédentes de la même boucle ``explore_network``).
-    if uname in blacklist_set:
+    if uname in database_set:
         if is_seed:
-            log.info("Seed @%s déjà vu — skip auto-score.", uname)
+            log.info("Seed @%s déjà en database — skip auto-score.", uname)
+        else:
+            log.info("@%s déjà en database — skip.", uname)
         seen_this_run.add(uname)
         return "skipped"
 
@@ -2284,9 +2006,7 @@ def _score_one_in_domain(
     if session.mock:
         result = _mock_score_profile(uname, domain)
     else:
-        result = score_profile(
-            uname, domain, blacklist=blacklist, context=context
-        )
+        result = score_profile(uname, domain, db=db, context=context)
 
     session.profiles_today += 1
     score_val = (result or {}).get("score")
@@ -2296,7 +2016,7 @@ def _score_one_in_domain(
     )
 
     # Persistance database : **tout** scoring réussi est upserté
-    # (contrairement à la blacklist / candidates qui sont conditionnels).
+    # (contrairement aux candidates qui sont conditionnels).
     if result is not None:
         try:
             upsert_profile(db, result, added_via="discovery")
@@ -2311,27 +2031,6 @@ def _score_one_in_domain(
 
     if score_passes:
         score_for_log = float((result or {}).get("score") or 0.0)
-        if (
-            not session.mock
-            and context is not None
-            and score_for_log > TOP_COMMENTS_COLLECT_SCORE_THRESHOLD
-        ):
-            reels_for_comments = list((result or {}).get("reels") or [])
-            niches_for_comments = list((result or {}).get("niches") or [])
-            n_comments = _collect_top_comments(
-                uname,
-                context,
-                reels_for_comments,
-                niches_for_comments,
-                log=log,
-            )
-            log.info(
-                "Collecte commentaires @%s : %d commentaires top-likes collectés "
-                "sur %d reels",
-                uname,
-                n_comments,
-                min(TOP_COMMENTS_REELS_MAX, len(reels_for_comments)),
-            )
         _record_candidate(
             candidates,
             result,  # type: ignore[arg-type]
@@ -2353,20 +2052,9 @@ def _score_one_in_domain(
     else:
         outcome = "rejected" if result is not None else "ineligible"
 
-    _record_seen(
-        blacklist,
-        uname,
-        outcome=outcome,
-        domain_name=domain_name,
-        score=score_val,
-        mock=session.mock,
-        blacklist_path=blacklist_path,
-    )
-    # Mirror disque → mémoire : si le prochain seed du même run cible le
-    # même username (via dédup ou via une autre piste), on le filtrera en
-    # O(1) sans relire la blacklist sur disque.
-    blacklist_set.add(uname)
-    session.blacklisted_count += 1
+    if result is not None:
+        database_set.add(uname)
+    session.profiles_recorded_count += 1
     seen_this_run.add(uname)
 
     if not session.mock:
@@ -2394,11 +2082,10 @@ def _mock_score_profile(username: str, domain: dict[str, Any]) -> dict[str, Any]
     total = reels_n + posts_n or 1
     reel_w = reels_n / total
     post_w = 1.0 - reel_w
-    # Niches : aligne le mock sur le schéma de ``score_profile`` — liste
-    # validée, **sans** champ string ``niche`` (supprimé en 2026-05).
+    # Niches : aligne le mock sur le schéma de ``score_profile`` — liste validée.
     mock_niches = (
         list(domain.get("niches") or [])
-        or [str(domain.get("niche") or domain.get("name") or "humour")]
+        or [str(domain.get("name") or "humour")]
     )
     mock_niches = config.validate_niches(mock_niches)
     return {
@@ -2450,7 +2137,6 @@ def run_discovery(
     only_seed: str | None = None,
     mock: bool = False,
     seeds_path: Path | None = None,
-    blacklist_path: Path | None = None,
     candidates_path: Path | None = None,
     db_path: Path | None = None,
     sleep_fn=time.sleep,
@@ -2507,7 +2193,6 @@ def run_discovery(
             )
         domains = [{**chosen, "_seeds_override": [seed_clean]}]
 
-    blacklist = load_blacklist(path=blacklist_path)
     candidates = load_candidates(path=candidates_path)
     try:
         db = load_db(path=db_path)
@@ -2537,13 +2222,11 @@ def run_discovery(
             seeds_override = domain.get("_seeds_override")
             explore_network(
                 domain,
-                blacklist=blacklist,
                 watchlist=watchlist,
                 candidates=candidates,
                 db=db,
                 context=context,
                 session=session,
-                blacklist_path=blacklist_path,
                 candidates_path=candidates_path,
                 db_path=db_path,
                 seeds_path=seeds_path,
@@ -2573,10 +2256,10 @@ def run_discovery(
             except Exception:
                 pass
         log.info(
-            "=== Discovery terminée (profiles_today=%d, candidates=%d, blacklisted=%d) ===",
+            "=== Discovery terminée (profiles_today=%d, candidates=%d, recorded=%d) ===",
             session.profiles_today,
             session.candidates_found,
-            session.blacklisted_count,
+            session.profiles_recorded_count,
         )
     return session
 
@@ -2587,7 +2270,6 @@ def score_and_persist(
     domain: dict[str, Any] | None = None,
     added_via: str = "manual",
     notify_threshold: float = DISCOVERY_NOTIFY_THRESHOLD,
-    blacklist: dict[str, Any] | None = None,
     context: BrowserContext | None = None,
     seeds_path: Path | None = None,
     db_path: Path | None = None,
@@ -2642,11 +2324,11 @@ def score_and_persist(
             domain.get("name"),
         )
 
-    if blacklist is None and not mock:
-        try:
-            blacklist = load_blacklist()
-        except DiscoveryIOError:
-            blacklist = {"profiles": []}
+    try:
+        db = load_db(path=db_path)
+    except DatabaseIOError as e:
+        log.warning("database illisible (%s) — repart vide.", e)
+        db = {"profiles": {}}
 
     if mock:
         result = _mock_score_profile(username, domain)
@@ -2656,19 +2338,11 @@ def score_and_persist(
                 "score_and_persist @%s : context Playwright manquant.", username
             )
             return None
-        result = score_profile(
-            username, domain, blacklist=blacklist, context=context
-        )
+        result = score_profile(username, domain, db=db, context=context)
 
     if result is None:
         log.info("score_and_persist @%s : filtré (None).", username)
         return None
-
-    try:
-        db = load_db(path=db_path)
-    except DatabaseIOError as e:
-        log.warning("database illisible (%s) — repart vide.", e)
-        db = {"profiles": {}}
 
     profile = upsert_profile(db, result, added_via=added_via)
     if not mock:
@@ -2679,41 +2353,6 @@ def score_and_persist(
 
     notified = False
     score = float(result.get("score") or 0.0)
-    domain_name = str(domain.get("name") or "unknown")
-    if blacklist is None:
-        blacklist = {"profiles": []}
-    if score > float(notify_threshold):
-        outcome = "candidate"
-    else:
-        outcome = "rejected"
-    _record_seen(
-        blacklist,
-        username,
-        outcome=outcome,
-        domain_name=domain_name,
-        score=score,
-        mock=mock,
-    )
-    if (
-        not mock
-        and context is not None
-        and score > TOP_COMMENTS_COLLECT_SCORE_THRESHOLD
-    ):
-        reels_for_comments = list((result or {}).get("reels") or [])
-        niches_for_comments = list((result or {}).get("niches") or [])
-        n_comments = _collect_top_comments(
-            username,
-            context,
-            reels_for_comments,
-            niches_for_comments,
-            log=log,
-        )
-        log.info(
-            "Collecte commentaires @%s : %d commentaires top-likes collectés",
-            username,
-            n_comments,
-        )
-
     if score > float(notify_threshold):
         # Le bot Telegram (callbacks ✅ ❌ ✏️) lit ``candidates.json`` au moment
         # du clic — on y inscrit donc systématiquement le résultat avant la notif.
@@ -2828,7 +2467,6 @@ __all__ = [
     "ACTIVITY_PAUSE_S",
     "CANDIDATE_SCORE_THRESHOLD",
     "DISCOVERY_NOTIFY_THRESHOLD",
-    "DEFAULT_BLACKLIST_PATH",
     "DEFAULT_CANDIDATES_PATH",
     "DEFAULT_DATA_DIR",
     "DEFAULT_DISCOVERY_LOG_PATH",
@@ -2852,12 +2490,12 @@ __all__ = [
     "debug_reel_views",
     "explain_score",
     "explore_network",
-    "load_blacklist",
     "load_candidates",
     "load_seeds",
     "run_discovery",
-    "save_blacklist",
     "save_candidates",
+    "_database_usernames",
+    "_is_in_database",
     "save_seeds",
     "score_and_persist",
     "score_profile",

@@ -18,10 +18,8 @@ SAMPLE_CANDIDATE = {
     "username": "promising_creator",
     "domain": "humour",
     "platform": "instagram",
-    # Schéma 2026-05 : ``niches`` (liste) + alias rétrocompat ``niche``.
-    # ``score_profile`` produit ces deux champs depuis ``_seed_niches``.
+    # ``niches`` (liste) produite par ``score_profile`` depuis ``_seed_niches``.
     "niches": ["humour", "sketch"],
-    "niche": "humour",
     "followers": 12_000,
     "score": 742.0,
     "score_reels": 780.0,
@@ -76,7 +74,7 @@ def _write_seeds(path: Path) -> None:
                 "domains": [
                     {
                         "name": "humour",
-                        "niche": "humour-zoomer",
+                        "niches": ["humour-zoomer"],
                         "seeds": ["seed_one"],
                         "t_types_target": ["T2", "T3b"],
                     }
@@ -177,44 +175,6 @@ class BuildMessageTest(unittest.TestCase):
             self.assertTrue(b["callback_data"].startswith("s:"))
 
 
-class ValidationsLogTest(unittest.TestCase):
-    def test_append_validation_creates_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            p = Path(tmp) / "validations.json"
-            bot.append_validation(
-                {
-                    "username": "u1",
-                    "action": "validated",
-                    "t_type_original": "T2",
-                    "t_type_final": "T2",
-                    "score": 600,
-                    "domain": "humour",
-                },
-                path=p,
-            )
-            data = bot.load_validations(path=p)
-            self.assertEqual(len(data["validations"]), 1)
-            self.assertEqual(data["validations"][0]["username"], "u1")
-            self.assertIn("validated_at", data["validations"][0])
-
-    def test_append_validation_appends_existing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            p = Path(tmp) / "validations.json"
-            for i in range(3):
-                bot.append_validation(
-                    {
-                        "username": f"u{i}",
-                        "action": "validated",
-                        "t_type_original": "T2",
-                        "t_type_final": "T2",
-                        "score": 600 + i,
-                        "domain": "humour",
-                    },
-                    path=p,
-                )
-            data = bot.load_validations(path=p)
-            self.assertEqual(len(data["validations"]), 3)
-
 
 class HandleCallbackTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -222,7 +182,6 @@ class HandleCallbackTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         base = Path(self.tmp.name)
         self.cand_path = base / "candidates.json"
-        self.val_path = base / "validations.json"
         self.wl_path = base / "watchlist.json"
         self.seeds_path = base / "seeds.json"
 
@@ -250,7 +209,6 @@ class HandleCallbackTest(unittest.TestCase):
             token="TKN",
             expected_chat_id="42",
             candidates_path=self.cand_path,
-            validations_path=self.val_path,
             watchlist_path=self.wl_path,
             seeds_path=self.seeds_path,
         )
@@ -266,13 +224,6 @@ class HandleCallbackTest(unittest.TestCase):
         # engagement_baseline tiré de reel_engagement_median en priorité
         self.assertAlmostEqual(creator["engagement_baseline"], 0.06, places=4)
 
-        val = bot.load_validations(path=self.val_path)
-        self.assertEqual(len(val["validations"]), 1)
-        rec = val["validations"][0]
-        self.assertEqual(rec["action"], "validated")
-        self.assertEqual(rec["t_type_original"], "T2")
-        self.assertEqual(rec["t_type_final"], "T2")
-        self.assertEqual(rec["score"], 742.0)
 
         cands = json.loads(self.cand_path.read_text(encoding="utf-8"))
         self.assertEqual(cands["candidates"], [])
@@ -283,15 +234,12 @@ class HandleCallbackTest(unittest.TestCase):
             token="TKN",
             expected_chat_id="42",
             candidates_path=self.cand_path,
-            validations_path=self.val_path,
             watchlist_path=self.wl_path,
             seeds_path=self.seeds_path,
         )
         self.assertIn("ignoré", result)
         wl = json.loads(self.wl_path.read_text(encoding="utf-8"))
         self.assertEqual(wl["creators"], [])
-        val = bot.load_validations(path=self.val_path)
-        self.assertEqual(val["validations"][0]["action"], "rejected")
 
         cands = json.loads(self.cand_path.read_text(encoding="utf-8"))
         self.assertEqual(cands["candidates"], [])
@@ -302,12 +250,11 @@ class HandleCallbackTest(unittest.TestCase):
             token="TKN",
             expected_chat_id="42",
             candidates_path=self.cand_path,
-            validations_path=self.val_path,
             watchlist_path=self.wl_path,
             seeds_path=self.seeds_path,
         )
         self.assertIn("menu T-types", result)
-        # Watchlist et validations restent vides : pas encore d'action finale.
+        # Watchlist reste vide : pas encore d'action finale.
         wl = json.loads(self.wl_path.read_text(encoding="utf-8"))
         self.assertEqual(wl["creators"], [])
 
@@ -332,7 +279,6 @@ class HandleCallbackTest(unittest.TestCase):
             token="TKN",
             expected_chat_id="42",
             candidates_path=self.cand_path,
-            validations_path=self.val_path,
             watchlist_path=self.wl_path,
             seeds_path=self.seeds_path,
         )
@@ -342,11 +288,6 @@ class HandleCallbackTest(unittest.TestCase):
         wl = json.loads(self.wl_path.read_text(encoding="utf-8"))
         self.assertEqual(wl["creators"][0]["t_type"], "T4")
 
-        val = bot.load_validations(path=self.val_path)
-        rec = val["validations"][0]
-        self.assertEqual(rec["action"], "corrected")
-        self.assertEqual(rec["t_type_original"], "T2")
-        self.assertEqual(rec["t_type_final"], "T4")
 
         cands = json.loads(self.cand_path.read_text(encoding="utf-8"))
         self.assertEqual(cands["candidates"], [])
@@ -357,13 +298,9 @@ class HandleCallbackTest(unittest.TestCase):
             token="TKN",
             expected_chat_id="42",
             candidates_path=self.cand_path,
-            validations_path=self.val_path,
             watchlist_path=self.wl_path,
             seeds_path=self.seeds_path,
         )
-        val = bot.load_validations(path=self.val_path)
-        self.assertEqual(val["validations"][0]["action"], "validated")
-        self.assertEqual(val["validations"][0]["t_type_final"], "T2")
 
     def test_set_ttype_unknown_is_rejected(self) -> None:
         result = bot.handle_callback(
@@ -371,14 +308,10 @@ class HandleCallbackTest(unittest.TestCase):
             token="TKN",
             expected_chat_id="42",
             candidates_path=self.cand_path,
-            validations_path=self.val_path,
             watchlist_path=self.wl_path,
             seeds_path=self.seeds_path,
         )
         self.assertIn("inconnu", result)
-        # Aucune validation ne doit être enregistrée.
-        val = bot.load_validations(path=self.val_path)
-        self.assertEqual(val["validations"], [])
 
     def test_callback_from_unauthorized_chat_is_ignored(self) -> None:
         result = bot.handle_callback(
@@ -386,7 +319,6 @@ class HandleCallbackTest(unittest.TestCase):
             token="TKN",
             expected_chat_id="42",
             candidates_path=self.cand_path,
-            validations_path=self.val_path,
             watchlist_path=self.wl_path,
             seeds_path=self.seeds_path,
         )
@@ -401,7 +333,6 @@ class HandleCallbackTest(unittest.TestCase):
             token="TKN",
             expected_chat_id="42",
             candidates_path=self.cand_path,
-            validations_path=self.val_path,
             watchlist_path=self.wl_path,
             seeds_path=self.seeds_path,
         )
@@ -583,7 +514,6 @@ class HandleCallbackPersistsToDatabaseTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         base = Path(self.tmp.name)
         self.cand_path = base / "candidates.json"
-        self.val_path = base / "validations.json"
         self.wl_path = base / "watchlist.json"
         self.seeds_path = base / "seeds.json"
         self.db_path = base / "database.json"
@@ -615,7 +545,6 @@ class HandleCallbackPersistsToDatabaseTest(unittest.TestCase):
             token="TKN",
             expected_chat_id="42",
             candidates_path=self.cand_path,
-            validations_path=self.val_path,
             watchlist_path=self.wl_path,
             seeds_path=self.seeds_path,
             db_path=self.db_path,
@@ -631,7 +560,6 @@ class HandleCallbackPersistsToDatabaseTest(unittest.TestCase):
             token="TKN",
             expected_chat_id="42",
             candidates_path=self.cand_path,
-            validations_path=self.val_path,
             watchlist_path=self.wl_path,
             seeds_path=self.seeds_path,
             db_path=self.db_path,
@@ -644,7 +572,7 @@ class HandleCallbackPersistsToDatabaseTest(unittest.TestCase):
 
     def test_validate_without_db_entry_does_not_crash(self) -> None:
         """Un candidat jamais scoré : la validation doit fonctionner (watchlist
-        + validations.json) et juste skipper la maj DB."""
+) et juste skipper la maj DB."""
         empty_db_path = Path(self.tmp.name) / "empty_db.json"
         # Pas de pré-upsert : le profil n'existe pas dans la DB.
         result = bot.handle_callback(
@@ -652,7 +580,6 @@ class HandleCallbackPersistsToDatabaseTest(unittest.TestCase):
             token="TKN",
             expected_chat_id="42",
             candidates_path=self.cand_path,
-            validations_path=self.val_path,
             watchlist_path=self.wl_path,
             seeds_path=self.seeds_path,
             db_path=empty_db_path,
@@ -808,22 +735,8 @@ class AddToWatchlistNichesSchemaTest(unittest.TestCase):
         creator = self._read_creator()
         self.assertEqual(creator["niches"], ["humour", "sketch", "imitation"])
 
-    def test_falls_back_to_candidate_niche_string(self) -> None:
-        # Candidate sans ``niches`` mais avec l'ancien champ ``niche`` string.
-        cand = {**SAMPLE_CANDIDATE, "niche": "gaming"}
-        cand.pop("niches", None)
-        added = bot.add_to_watchlist(
-            cand,
-            t_type_final="T2",
-            watchlist_path=self.wl_path,
-            seeds_path=self.seeds_path,
-        )
-        self.assertTrue(added)
-        creator = self._read_creator()
-        self.assertEqual(creator["niches"], ["gaming"])
-
     def test_ultimate_fallback_humour(self) -> None:
-        # Candidate qui n'a NI niches NI niche → fallback ``["humour"]``.
+        # Candidate qui n'a pas de ``niches`` → fallback ``["humour"]``.
         cand = {k: v for k, v in SAMPLE_CANDIDATE.items() if k not in ("niches", "niche")}
         added = bot.add_to_watchlist(
             cand,

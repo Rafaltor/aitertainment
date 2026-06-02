@@ -62,46 +62,24 @@ class BuildInputTextTest(unittest.TestCase):
 
 
 class EnsureCommentsForAccountTest(unittest.TestCase):
-    def test_collects_and_reloads_all_comments(self) -> None:
+    def test_scrapes_in_memory(self) -> None:
         reels = [{"media_id": "ABC", "comment_count": 10}]
-        after = (
-            [{"text": "hi", "comment_likes": 1, "media_id": "ABC"}],
-            {"ABC": [{"text": "hi", "comment_likes": 1, "media_id": "ABC"}]},
-        )
+        scraped = [
+            {"media_id": "ABC", "text": "hi", "comment_likes": 1, "username": "user"}
+        ]
         with patch.object(
-            embedder,
-            "comments_for_account_from_raw",
-            side_effect=[([], {}), after],
-        ), patch.object(embedder, "collect_top_comments", return_value=2) as mock_collect:
-            comments, _, source = embedder.ensure_comments_for_account(
+            embedder, "scrape_profile_comments", return_value=scraped
+        ) as mock_scrape:
+            comments, by_media, source = embedder.ensure_comments_for_account(
                 "user", reels, MagicMock(), ["humour"]
             )
-        mock_collect.assert_called_once()
+        mock_scrape.assert_called_once()
+        self.assertEqual(source, "playwright")
         self.assertEqual(len(comments), 1)
-        self.assertEqual(source, "raw_comments.json+playwright")
+        self.assertIn("ABC", by_media)
 
-    def test_uses_raw_only_when_collect_adds_nothing(self) -> None:
-        existing = (
-            [{"text": "x", "comment_likes": 2, "media_id": "Z"}],
-            {"Z": [{"text": "x", "comment_likes": 2, "media_id": "Z"}]},
-        )
-        with patch.object(
-            embedder, "comments_for_account_from_raw", return_value=existing
-        ), patch.object(embedder, "collect_top_comments", return_value=0):
-            comments, _, source = embedder.ensure_comments_for_account(
-                "user", [], MagicMock(), "humour"
-            )
-        self.assertEqual(source, "raw_comments.json")
-        self.assertEqual(comments, existing[0])
-
-    def test_skip_playwright_when_incremental(self) -> None:
-        existing = (
-            [{"text": "x", "comment_likes": 2, "media_id": "Z"}],
-            {"Z": [{"text": "x", "comment_likes": 2, "media_id": "Z"}]},
-        )
-        with patch.object(
-            embedder, "comments_for_account_from_raw", return_value=existing
-        ), patch.object(embedder, "collect_top_comments", return_value=0) as mock_collect:
+    def test_skip_playwright_returns_empty(self) -> None:
+        with patch.object(embedder, "scrape_profile_comments") as mock_scrape:
             comments, _, source = embedder.ensure_comments_for_account(
                 "user",
                 [],
@@ -109,70 +87,9 @@ class EnsureCommentsForAccountTest(unittest.TestCase):
                 "humour",
                 skip_playwright=True,
             )
-        mock_collect.assert_not_called()
-        self.assertEqual(source, "raw_comments.json")
-        self.assertEqual(comments, existing[0])
-
-
-class CommentsFromRawTest(unittest.TestCase):
-    def test_returns_all_stored_comments_for_account(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "raw_comments.json"
-            entries = [
-                {
-                    "username": "creator",
-                    "media_id": "A",
-                    "text": "c1",
-                    "comment_likes": 1,
-                },
-                {
-                    "username": "creator",
-                    "media_id": "B",
-                    "text": "c2",
-                    "comment_likes": 9,
-                },
-                {
-                    "username": "other",
-                    "media_id": "Z",
-                    "text": "nope",
-                    "comment_likes": 99,
-                },
-            ]
-            path.write_text(json.dumps(entries), encoding="utf-8")
-            rows, by_media = embedder.comments_for_account_from_raw("creator", path)
-
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0]["text"], "c2")
-        self.assertEqual(rows[0]["comment_likes"], 9)
-        self.assertEqual(len(by_media["A"]), 1)
-        self.assertEqual(len(by_media["B"]), 1)
-
-    def test_keeps_same_text_on_different_reels(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "raw_comments.json"
-            path.write_text(
-                json.dumps(
-                    [
-                        {
-                            "username": "u",
-                            "media_id": "X",
-                            "text": "dup",
-                            "comment_likes": 5,
-                        },
-                        {
-                            "username": "u",
-                            "media_id": "Y",
-                            "text": "dup",
-                            "comment_likes": 3,
-                        },
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            rows, by_media = embedder.comments_for_account_from_raw("u", path)
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(len(by_media["X"]), 1)
-        self.assertEqual(len(by_media["Y"]), 1)
+        mock_scrape.assert_not_called()
+        self.assertEqual(comments, [])
+        self.assertIsNone(source)
 
 
 class EmbedTextTest(unittest.TestCase):

@@ -344,25 +344,15 @@ class BuildTrainingEntryTest(unittest.TestCase):
 
 
 class ResetAllLabelsTest(unittest.TestCase):
-    def test_clears_raw_labels_and_empties_training(self) -> None:
+    def test_reset_empties_training_and_keeps_viral_pool(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            raw_path = Path(tmp) / "raw_comments.json"
-            train_path = Path(tmp) / "training_comments.json"
-            raw_path.write_text(
+            viral_path = Path(tmp) / "viral_comments.json"
+            train_path = Path(tmp) / "training_comments_viral.json"
+            viral_path.write_text(
                 json.dumps(
                     [
-                        {
-                            "media_id": "m1",
-                            "username": "alpha",
-                            "text": "hello",
-                            "t_type": "T2",
-                            "llm_validated": True,
-                        },
-                        {
-                            "media_id": "m2",
-                            "username": "beta",
-                            "text": "world",
-                        },
+                        {"media_id": "m1", "username": "alpha", "text": "hello"},
+                        {"media_id": "m2", "username": "beta", "text": "world"},
                     ]
                 )
                 + "\n",
@@ -373,15 +363,41 @@ class ResetAllLabelsTest(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            cleared, total, prev = label_comments.reset_all_comment_labels(
-                raw_path=raw_path, training_path=train_path
+            prev, viral_size = label_comments.reset_all_comment_labels(
+                viral_path=viral_path, training_path=train_path
             )
-            self.assertEqual(cleared, 1)
-            self.assertEqual(total, 2)
             self.assertEqual(prev, 1)
-            raw = json.loads(raw_path.read_text())
-            self.assertNotIn("t_type", raw[0])
+            self.assertEqual(viral_size, 2)
+            self.assertEqual(len(json.loads(viral_path.read_text())), 2)
             self.assertEqual(json.loads(train_path.read_text()), [])
+
+
+class PurgeViralPoolTest(unittest.TestCase):
+    def test_purge_removes_labeled_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            viral_path = Path(tmp) / "viral_comments.json"
+            train_path = Path(tmp) / "training_comments_viral.json"
+            viral_path.write_text(
+                json.dumps(
+                    [
+                        {"media_id": "m1", "text": "hello"},
+                        {"media_id": "m2", "text": "world"},
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            train_path.write_text(
+                json.dumps([{"media_id": "m1", "text": "hello", "t_type": "T2"}]),
+                encoding="utf-8",
+            )
+            removed, remaining = label_comments.purge_labeled_from_viral_pool(
+                viral_path=viral_path, training_path=train_path
+            )
+            self.assertEqual(removed, 1)
+            self.assertEqual(remaining, 1)
+            left = json.loads(viral_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(left), 1)
+            self.assertEqual(left[0]["media_id"], "m2")
 
 
 class MainTest(unittest.TestCase):
@@ -402,7 +418,7 @@ class MainTest(unittest.TestCase):
 
     def test_dry_run_does_not_write_or_call_ollama(self) -> None:
         raw = [self._raw_entry()]
-        with patch.object(label_comments, "load_raw_comments", return_value=raw), patch.object(
+        with patch.object(label_comments, "load_viral_comments", return_value=raw), patch.object(
             label_comments, "load_training_comments", return_value=([], set())
         ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
             label_comments, "save_training_comments"
@@ -424,7 +440,7 @@ class MainTest(unittest.TestCase):
                 "t_type": "T2",
             }
         ]
-        with patch.object(label_comments, "load_raw_comments", return_value=raw), patch.object(
+        with patch.object(label_comments, "load_viral_comments", return_value=raw), patch.object(
             label_comments, "load_training_comments", return_value=(existing, {key})
         ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
             label_comments, "classify_comment"
@@ -457,7 +473,7 @@ class MainTest(unittest.TestCase):
                 },
             }
         }
-        with patch.object(label_comments, "load_raw_comments", return_value=raw), patch.object(
+        with patch.object(label_comments, "load_viral_comments", return_value=raw), patch.object(
             label_comments, "load_training_comments", return_value=(existing, {key})
         ), patch.object(label_comments, "load_watchlist", return_value=watchlist), patch.object(
             label_comments, "load_vector_store", return_value=vector_store
@@ -484,7 +500,7 @@ class MainTest(unittest.TestCase):
             self._raw_entry(username="alpha", text="alpha text"),
             self._raw_entry(username="beta", text="beta text"),
         ]
-        with patch.object(label_comments, "load_raw_comments", return_value=raw), patch.object(
+        with patch.object(label_comments, "load_viral_comments", return_value=raw), patch.object(
             label_comments, "load_training_comments", return_value=([], set())
         ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
             label_comments, "load_vector_store", return_value={}
@@ -503,7 +519,7 @@ class MainTest(unittest.TestCase):
 class SaveTrainingCommentsTest(unittest.TestCase):
     def test_atomic_write_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "training_comments.json"
+            path = Path(tmp) / "training_comments_viral.json"
             entries = [{"media_id": "m1", "text": "hello", "t_type": "T2"}]
             label_comments.save_training_comments(entries, path)
             loaded, keys = label_comments.load_training_comments(path)

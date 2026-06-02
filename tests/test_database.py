@@ -252,39 +252,25 @@ class UpsertProfileTest(unittest.TestCase):
             database.upsert_profile(db, bad, added_via="discovery")
 
     # ------------------------------------------------------------------
-    # Schéma niches 2026-05 — règles strictes (4 cas du brief)
+    # Schéma niches : ``niches`` (liste) seule source de vérité
     # ------------------------------------------------------------------
 
     def test_rule1_niches_list_from_score_result_is_persisted_as_is(self) -> None:
-        """Règle 1 : ``score_result["niches"]`` (liste) → écrit tel quel."""
+        """``score_result["niches"]`` (liste) → écrit tel quel."""
         db: dict[str, Any] = {"profiles": {}}
         result = _score_result(niches=["humour", "sketch", "imitation"])
         profile = database.upsert_profile(db, result, added_via="discovery")
         self.assertEqual(profile["niches"], ["humour", "sketch", "imitation"])
         self.assertNotIn("niche", profile)
 
-    def test_rule2_legacy_niche_string_in_score_result_converted_to_list(self) -> None:
-        """Règle 2 : ``score_result["niche"]`` (string) sans ``niches`` → ``[niche]``."""
-        db: dict[str, Any] = {"profiles": {}}
-        result = _score_result()
-        # Score_result d'une version intermédiaire : pas de ``niches``, juste
-        # le vieux champ string.
-        del result["niches"]
-        result["niche"] = "humour"
-        profile = database.upsert_profile(db, result, added_via="discovery")
-        self.assertEqual(profile["niches"], ["humour"])
-        # Pas de doublon : ``niche`` (string) absent du profil persistant.
-        self.assertNotIn("niche", profile)
-
-    def test_rule3_existing_profile_with_legacy_niche_is_migrated(self) -> None:
-        """Règle 3 : profil DB legacy avec ``niche`` (string) → migré au prochain upsert."""
+    def test_existing_profile_niches_refreshed_from_score_result(self) -> None:
+        """Profil existant : ``niches`` rafraîchi par le scoring courant, métadonnées préservées."""
         db: dict[str, Any] = {
             "profiles": {
                 "creator_a": {
                     "platform": "instagram",
                     "followers": 48_000,
-                    # Schéma legacy uniquement (pas de ``niches``).
-                    "niche": "humour",
+                    "niches": ["humour"],
                     "tier": "B",
                     "validated": True,
                     "t_type_original": "T2",
@@ -298,49 +284,13 @@ class UpsertProfileTest(unittest.TestCase):
                 }
             }
         }
-        # Note : ``_score_result()`` produit ``niches=["humour"]`` par défaut.
-        # On veut tester la migration **du profil existant**, pas l'override
-        # par ``incoming`` — on enlève donc les niches du score_result et on
-        # garde ``niche`` legacy pour qu'`incoming` soit `["humour"]` aussi.
-        result = _score_result()
-        del result["niches"]
-        result["niche"] = "humour"
+        result = _score_result(niches=["humour", "sketch"])
         profile = database.upsert_profile(db, result, added_via="rescore")
-        self.assertEqual(profile["niches"], ["humour"])
+        self.assertEqual(profile["niches"], ["humour", "sketch"])
         # Métadonnées préservées (validated, t_type_final, added_at, ...).
         self.assertTrue(profile["validated"])
         self.assertEqual(profile["t_type_final"], "T2")
         self.assertEqual(profile["added_at"], "2026-04-01T00:00:00")
-
-    def test_rule4_niche_string_field_removed_after_migration(self) -> None:
-        """Règle 4 : le champ string ``niche`` est supprimé du profil après migration."""
-        db: dict[str, Any] = {
-            "profiles": {
-                "creator_a": {
-                    "niche": "humour",
-                    "niches": ["humour", "sketch"],  # cas double — possible si bug en amont
-                    "tier": "B",
-                    "validated": False,
-                    "t_type_original": "T2",
-                    "t_type_final": None,
-                    "added_via": "seed",
-                    "added_at": "2026-04-01T00:00:00",
-                    "last_scored_at": "2026-04-01T00:00:00",
-                    "next_rescore_at": "2026-05-01T00:00:00",
-                    "archived": False,
-                    "scores_history": [],
-                    "platform": "instagram",
-                    "followers": 48_000,
-                }
-            }
-        }
-        profile = database.upsert_profile(
-            db, _score_result(niches=["humour"]), added_via="rescore"
-        )
-        # Le champ ``niche`` (string) est supprimé même si ``niches`` était
-        # déjà présent (pas de doublon en base — un seul champ source de vérité).
-        self.assertNotIn("niche", profile)
-        self.assertEqual(profile["niches"], ["humour"])
 
     def test_incoming_niches_refresh_existing_profile(self) -> None:
         """Si le scoring le plus récent porte des niches différentes, on rafraîchit."""
@@ -559,6 +509,72 @@ class ValidateProfileTest(unittest.TestCase):
         profile = self.db["profiles"]["creator_a"]
         self.assertTrue(profile["validated"])
         self.assertEqual(profile["t_type_final"], "T3b")
+
+
+class RebuildWatchlistTest(unittest.TestCase):
+    """``rebuild_watchlist`` : database = vérité, runtime préservé."""
+
+    def setUp(self) -> None:
+        self.db: dict[str, Any] = {"profiles": {}}
+        database.upsert_profile(
+            self.db,
+            _score_result(username="scored", score=800.0, niches=["humour", "sketch"]),
+            added_via="discovery",
+        )
+        database.validate_profile(self.db, "scored", "T3b")
+
+    def test_refreshes_niches_and_ttype_from_db(self) -> None:
+        # L'entrée watchlist porte des valeurs périmées + un curseur runtime.
+        existing = [
+            {
+                "username": "scored",
+                "platform": "instagram",
+                "niches": ["stale"],
+                "t_type": "T2",
+                "engagement_baseline": 0.05,
+                "last_post_id": "abc123",
+                "added_at": "2026-05-01T00:00:00",
+            }
+        ]
+        out = database.rebuild_watchlist(self.db, existing)
+        self.assertEqual(len(out), 1)
+        entry = out[0]
+        # Métadonnées re-dérivées depuis database.json.
+        self.assertEqual(entry["niches"], ["humour", "sketch"])
+        self.assertEqual(entry["t_type"], "T3b")
+        # Champs runtime préservés.
+        self.assertEqual(entry["last_post_id"], "abc123")
+        self.assertEqual(entry["engagement_baseline"], 0.05)
+        self.assertEqual(entry["added_at"], "2026-05-01T00:00:00")
+
+    def test_drops_archived_creator(self) -> None:
+        # Re-score tier C → archived True ; la validation humaine survit mais le
+        # créateur sort de la watchlist.
+        database.upsert_profile(
+            self.db,
+            _score_result(username="scored", score=100.0, scored_at="2026-05-20T00:00:00"),
+            added_via="discovery",
+        )
+        self.assertTrue(self.db["profiles"]["scored"]["archived"])
+        out = database.rebuild_watchlist(self.db, [{"username": "scored"}])
+        self.assertEqual(out, [])
+
+    def test_keeps_creator_absent_from_db(self) -> None:
+        # Validation manuelle d'un profil jamais scoré → conservé tel quel.
+        existing = [
+            {"username": "never_scored", "niches": ["humour"], "t_type": "T2",
+             "last_post_id": "z9"}
+        ]
+        out = database.rebuild_watchlist(self.db, existing)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["niches"], ["humour"])
+        self.assertEqual(out[0]["last_post_id"], "z9")
+
+    def test_idempotent(self) -> None:
+        existing = [{"username": "scored", "last_post_id": "k"}]
+        once = database.rebuild_watchlist(self.db, existing)
+        twice = database.rebuild_watchlist(self.db, once)
+        self.assertEqual(once, twice)
 
 
 class IntegrationTest(unittest.TestCase):

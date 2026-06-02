@@ -49,7 +49,7 @@ def _profile(
         "username": username,
         "platform": "instagram",
         "followers": 50_000,
-        "niche": "humour",
+        "niches": ["humour"],
         "tier": tier or ("A" if (last_score or 0) > 700 else "B"),
         "validated": False,
         "t_type_original": "T2",

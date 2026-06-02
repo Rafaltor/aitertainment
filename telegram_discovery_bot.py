@@ -37,17 +37,13 @@ Flux
 1. ``discovery.explore_network`` détecte un candidat → appelle
    ``notify_candidate(candidate)``.
 2. L'humain reçoit le message + boutons.
-3. Action ``✅`` → ``add_to_watchlist`` + ``append_validation`` + retrait de
+3. Action ``✅`` → ``add_to_watchlist`` + maj ``database.json`` + retrait de
    ``candidates.json``.
-4. Action ``❌`` → ``append_validation(action="rejected")`` + retrait de
-   ``candidates.json`` (déjà blacklisté en Discovery).
+4. Action ``❌`` → retrait de ``candidates.json`` (profil déjà scoré en Discovery).
 5. Action ``✏️`` → menu T-types puis ``add_to_watchlist`` avec correction +
-   ``append_validation`` + retrait de ``candidates.json``.
+   maj ``database.json`` + retrait de ``candidates.json``.
 6. Action ``👁`` → ouvre directement l'URL Instagram (bouton URL inline,
    aucun callback côté bot).
-
-``data/validations.json`` constitue le **dataset feedback loop** : c'est lui
-qui servira à fine-tuner le classifieur T1–T5 dans une phase ultérieure.
 """
 
 from __future__ import annotations
@@ -72,7 +68,6 @@ from config import VALID_T_TYPES
 # ---------------------------------------------------------------------------
 _PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = _PROJECT_ROOT / "data"
-DEFAULT_VALIDATIONS_PATH = DEFAULT_DATA_DIR / "validations.json"
 DEFAULT_BOT_STATE_PATH = DEFAULT_DATA_DIR / "discovery_bot_state.json"
 DEFAULT_LOG_PATH = _PROJECT_ROOT / "logs" / "discovery_bot.log"
 
@@ -92,7 +87,7 @@ class DiscoveryBotConfigError(RuntimeError):
 
 
 class DiscoveryBotIOError(RuntimeError):
-    """I/O sur ``validations.json`` ou état du bot."""
+    """I/O sur l'état du bot ou les fichiers data."""
 
 
 # ---------------------------------------------------------------------------
@@ -166,39 +161,6 @@ def _atomic_write_json(path: Path, data: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Validations log (feedback loop)
-# ---------------------------------------------------------------------------
-
-
-def load_validations(*, path: Path | None = None) -> dict[str, Any]:
-    p = Path(path) if path else DEFAULT_VALIDATIONS_PATH
-    raw = _read_json(p, default={"validations": []})
-    if not isinstance(raw, dict) or not isinstance(raw.get("validations"), list):
-        raise DiscoveryBotIOError(f"{p} : schéma invalide.")
-    return raw
-
-
-def save_validations(data: dict[str, Any], *, path: Path | None = None) -> None:
-    p = Path(path) if path else DEFAULT_VALIDATIONS_PATH
-    _atomic_write_json(p, data)
-
-
-def append_validation(
-    entry: dict[str, Any], *, path: Path | None = None
-) -> dict[str, Any]:
-    """Append (atomique) à ``validations.json`` et retourne l'entrée écrite."""
-    p = Path(path) if path else DEFAULT_VALIDATIONS_PATH
-    try:
-        data = load_validations(path=p)
-    except DiscoveryBotIOError:
-        data = {"validations": []}
-    record = {**entry, "validated_at": entry.get("validated_at") or _now_iso()}
-    data["validations"].append(record)
-    save_validations(data, path=p)
-    return record
-
-
-# ---------------------------------------------------------------------------
 # Récupération du candidat (depuis candidates.json)
 # ---------------------------------------------------------------------------
 
@@ -266,7 +228,7 @@ def _remove_candidate(
 def _domain_meta(
     domain_name: str, *, seeds_path: Path | None = None
 ) -> dict[str, Any] | None:
-    """Retrouve le domaine dans ``seeds.json`` (utile pour `niche`)."""
+    """Retrouve le domaine dans ``seeds.json`` (utile pour `niches`)."""
     from discovery import load_seeds  # tardif
 
     try:
@@ -742,12 +704,10 @@ def add_to_watchlist(
         if isinstance(c, dict) and str(c.get("username") or "").lower() == target:
             return False  # déjà dans la watchlist
 
-    # Niches (schéma 2026-05) : on lit en priorité la liste portée par le
-    # candidate (sortie ``score_profile``) ; à défaut on retombe sur l'ancien
-    # champ string ``niche``, et en dernier recours sur ``"humour"``. On ne
-    # lit **plus** ``domain.get("niche")`` : la source de vérité est désormais
-    # le candidate lui-même (qui propage ``_seed_niches`` du seed parent).
-    niches_raw = candidate.get("niches") or [candidate.get("niche") or "humour"]
+    # Niches : la liste portée par le candidate (sortie ``score_profile``) est
+    # la source de vérité ; ``"humour"`` en dernier recours. Le candidate
+    # propage ``_seed_niches`` du seed parent.
+    niches_raw = candidate.get("niches") or ["humour"]
     niches: list[str] = [
         str(n).strip()
         for n in (niches_raw or [])
@@ -789,23 +749,6 @@ def add_to_watchlist(
 # ---------------------------------------------------------------------------
 
 
-def _validation_record(
-    candidate: dict[str, Any],
-    *,
-    action: str,
-    t_type_final: str | None,
-) -> dict[str, Any]:
-    return {
-        "username": str(candidate.get("username") or "").lstrip("@").strip().lower(),
-        "action": action,
-        "t_type_original": str(candidate.get("t_type_dominant") or ""),
-        "t_type_final": t_type_final or "",
-        "score": candidate.get("score"),
-        "domain": candidate.get("domain"),
-        "validated_at": _now_iso(),
-    }
-
-
 def _persist_validation_in_db(
     username: str,
     t_type_final: str,
@@ -816,7 +759,7 @@ def _persist_validation_in_db(
 
     Best-effort : si le profil n'existe pas (validation manuelle d'un profil
     jamais scoré) ou si la DB est illisible, on logge juste un warning — on ne
-    veut **jamais** bloquer la chaîne ``add_to_watchlist + append_validation``.
+    veut **jamais** bloquer la chaîne ``add_to_watchlist``.
     """
     try:
         from database import (  # tardif : évite cycle d'import au chargement
@@ -848,7 +791,6 @@ def _handle_validate(
     username: str,
     *,
     candidates_path: Path | None,
-    validations_path: Path | None,
     watchlist_path: Path | None,
     seeds_path: Path | None,
     db_path: Path | None,
@@ -863,10 +805,6 @@ def _handle_validate(
         watchlist_path=watchlist_path,
         seeds_path=seeds_path,
     )
-    append_validation(
-        _validation_record(cand, action="validated", t_type_final=t_final),
-        path=validations_path,
-    )
     _persist_validation_in_db(username, t_final, db_path=db_path)
     _remove_candidate(username, candidates_path=candidates_path)
     if added:
@@ -878,15 +816,7 @@ def _handle_reject(
     username: str,
     *,
     candidates_path: Path | None,
-    validations_path: Path | None,
 ) -> str:
-    cand = _find_candidate(username, candidates_path=candidates_path) or {
-        "username": username
-    }
-    append_validation(
-        _validation_record(cand, action="rejected", t_type_final=None),
-        path=validations_path,
-    )
     _remove_candidate(username, candidates_path=candidates_path)
     return f"❌ @{username} ignoré"
 
@@ -896,7 +826,6 @@ def _handle_set_ttype(
     new_t_type: str,
     *,
     candidates_path: Path | None,
-    validations_path: Path | None,
     watchlist_path: Path | None,
     seeds_path: Path | None,
     db_path: Path | None,
@@ -915,10 +844,6 @@ def _handle_set_ttype(
         seeds_path=seeds_path,
     )
     action = "corrected" if t_original and t_original != new_t_type else "validated"
-    append_validation(
-        _validation_record(cand, action=action, t_type_final=new_t_type),
-        path=validations_path,
-    )
     _persist_validation_in_db(username, new_t_type, db_path=db_path)
     _remove_candidate(username, candidates_path=candidates_path)
     if action == "corrected":
@@ -1038,7 +963,6 @@ def handle_callback(
     token: str | None = None,
     expected_chat_id: str | None = None,
     candidates_path: Path | None = None,
-    validations_path: Path | None = None,
     watchlist_path: Path | None = None,
     seeds_path: Path | None = None,
     db_path: Path | None = None,
@@ -1075,7 +999,6 @@ def handle_callback(
         text = _handle_validate(
             username,
             candidates_path=candidates_path,
-            validations_path=validations_path,
             watchlist_path=watchlist_path,
             seeds_path=seeds_path,
             db_path=db_path,
@@ -1092,7 +1015,6 @@ def handle_callback(
         text = _handle_reject(
             username,
             candidates_path=candidates_path,
-            validations_path=validations_path,
         )
         if bot_token and message_id:
             _edit_message(chat_id, message_id, text, token=bot_token, reply_markup=None)
@@ -1129,7 +1051,6 @@ def handle_callback(
             username,
             new_t_type,
             candidates_path=candidates_path,
-            validations_path=validations_path,
             watchlist_path=watchlist_path,
             seeds_path=seeds_path,
             db_path=db_path,
@@ -1200,7 +1121,6 @@ def run_bot(
     poll_timeout_s: int = POLL_TIMEOUT_S,
     state_path: Path | None = None,
     candidates_path: Path | None = None,
-    validations_path: Path | None = None,
     watchlist_path: Path | None = None,
     seeds_path: Path | None = None,
     db_path: Path | None = None,
@@ -1246,7 +1166,6 @@ def run_bot(
                         token=token,
                         expected_chat_id=str(chat_id),
                         candidates_path=candidates_path,
-                        validations_path=validations_path,
                         watchlist_path=watchlist_path,
                         seeds_path=seeds_path,
                         db_path=db_path,
@@ -1299,18 +1218,14 @@ if __name__ == "__main__":
 
 __all__ = [
     "DEFAULT_BOT_STATE_PATH",
-    "DEFAULT_VALIDATIONS_PATH",
     "DiscoveryBotConfigError",
     "DiscoveryBotIOError",
     "T_TYPES_AVAILABLE",
     "TREND_EMOJI",
     "add_to_watchlist",
-    "append_validation",
     "handle_callback",
-    "load_validations",
     "notify_candidate",
     "notify_score_evolution",
     "run_bot",
-    "save_validations",
     "setup_bot_logger",
 ]

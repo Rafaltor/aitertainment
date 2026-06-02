@@ -26,9 +26,14 @@ _REELS_GRID_COLUMNS = 5
 _REELS_GRID_ROW_HEIGHT_PX = 430
 _REELS_SCROLL_WAIT_MS = 2_000
 _REQUEST_TIMEOUT_MS = 15_000
-RAW_COMMENTS_PATH = Path("data/raw_comments.json")
+_PROFILE_GOTO_TIMEOUT_MS = 30_000
+VIRAL_COMMENTS_PATH = Path("data/viral_comments.json")
+TRAINING_COMMENTS_VIRAL_PATH = Path("data/training_comments_viral.json")
 COMMENTS_COLLECT_REELS_MAX = 3
 COMMENTS_PANEL_SCROLL_ROUNDS = 6
+MIN_COMMENT_COUNT_TO_SCRAPE = 20
+_FEED_REEL_STABLE_WAIT_MS = 500
+_FEED_AFTER_PANEL_CLOSE_MS = 1500
 _GRAPHQL_METRIC_KEYS = (
     "view_count",
     "play_count",
@@ -97,9 +102,11 @@ _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._]{2,30}$")
 _REEL_COMMENT_ARIA_LABELS = (
     "Commentaire",
     "Commenter",
+    "Commentaires",
     "Comment",
     "Comments",
-    "Commentaires",
+    "Voir les commentaires",
+    "View comments",
 )
 
 _REEL_COMMENTS_PANEL_SELECTORS = (
@@ -107,6 +114,9 @@ _REEL_COMMENTS_PANEL_SELECTORS = (
     "div._aano",
     '[role="dialog"]',
     "section ul",
+    "article ul",
+    "main ul",
+    'div[role="presentation"] ul',
 )
 
 _COMMENT_META_RE = re.compile(
@@ -338,14 +348,37 @@ def build_comment_dedup_key(media_id: str, text: str) -> str:
 
 
 def load_raw_comments_file(
-    path: Path | str | None = None,
+    path: Path | str,
 ) -> tuple[list[dict[str, Any]], set[str]]:
-    """Charge ``raw_comments.json`` et retourne ``(entries, clés dédup)``."""
-    p = Path(path) if path is not None else RAW_COMMENTS_PATH
+    """Charge un fichier commentaires JSON → ``(entries, clés dédup)``.
+
+    Formats acceptés (comme ``load_viral_comments``) :
+
+    * ``[{...}, ...]`` (liste racine, écriture scrape)
+    * ``{"entries": [...]}`` ou ``{"comments": [...]}``
+    """
+    p = Path(path)
     if not p.exists():
         return [], set()
-    data = json.loads(p.read_text(encoding="utf-8"))
-    entries = data if isinstance(data, list) else []
+    raw = p.read_text(encoding="utf-8").strip()
+    if not raw:
+        return [], set()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        log.warning("JSON invalide ou vide (%s) — repart de zéro.", p)
+        return [], set()
+    if isinstance(data, list):
+        entries = [e for e in data if isinstance(e, dict)]
+    elif isinstance(data, dict):
+        raw_entries = data.get("entries") or data.get("comments") or []
+        entries = (
+            [e for e in raw_entries if isinstance(e, dict)]
+            if isinstance(raw_entries, list)
+            else []
+        )
+    else:
+        entries = []
     keys = {
         build_comment_dedup_key(str(e["media_id"]), str(e["text"]))
         for e in entries
@@ -354,25 +387,27 @@ def load_raw_comments_file(
     return entries, keys
 
 
-def save_raw_comments_file(entries: list[dict[str, Any]], path: Path | str | None = None) -> None:
-    p = Path(path) if path is not None else RAW_COMMENTS_PATH
+def save_raw_comments_file(entries: list[dict[str, Any]], path: Path | str) -> None:
+    p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(p)
 
 
-def collect_top_comments(
+def scrape_profile_comments(
     username: str,
     context: BrowserContext,
     reels: list[dict[str, Any]],
     niches: list[str] | str,
     *,
-    raw_comments_path: Path | str | None = None,
-    classify: bool = True,
     logger: logging.Logger | None = None,
-) -> int:
-    """Collecte tous les commentaires visibles sur les 3 reels les plus commentés."""
+) -> list[dict[str, Any]]:
+    """Scrape les commentaires visibles sur les reels profil (sans persistance).
+
+    Retourne une liste de dicts ``media_id``, ``text``, ``comment_likes``, ``views``,
+  ``username``, ``niches``. Utilisé par l'embedder (mémoire seulement).
+    """
     log_cb = logger or log
     u = (username or "").lstrip("@").strip()
     reels_sorted = sorted(
@@ -382,23 +417,7 @@ def collect_top_comments(
     )
     reels_to_visit = reels_sorted[:COMMENTS_COLLECT_REELS_MAX]
     if not u or not reels_to_visit:
-        return 0
-
-    entries, dedup_keys = load_raw_comments_file(raw_comments_path)
-    classifier = None
-    if classify:
-        try:
-            from modules.classifier import CommentClassifier
-
-            classifier = CommentClassifier()
-        except Exception as e:
-            log_cb.warning(
-                "Collecte commentaires @%s : classifier indisponible (%s) — "
-                "commentaires non classifiés.",
-                u,
-                e,
-            )
-            classify = False
+        return []
 
     niches_list = list(niches) if isinstance(niches, list) else [str(niches)]
     candidates: list[dict[str, Any]] = []
@@ -465,9 +484,11 @@ def collect_top_comments(
                     candidates.append(
                         {
                             "media_id": media_id,
+                            "username": u,
+                            "niches": niches_list,
                             "views": view_count,
                             "text": text,
-                            "like_count": int(comment.get("like_count") or 0),
+                            "comment_likes": int(comment.get("like_count") or 0),
                         }
                     )
             except Exception as e:
@@ -481,73 +502,924 @@ def collect_top_comments(
                 if grid_ok:
                     return_to_reels_grid(page, u)
             polite_sleep(seconds=1)
-
-        collected = 0
-
-        for comment in candidates:
-            media_id = str(comment.get("media_id") or "").strip()
-            comment_text = str(comment.get("text") or "").strip()
-            view_count = int(comment.get("views") or 0)
-
-            t_type = ""
-            llm_validated = False
-            if classify and classifier is not None:
-                try:
-                    from modules.classifier import ClassificationError
-
-                    clf = classifier.classify([comment_text], niches=niches_list)
-                    t_type = str(clf.get("type") or "")
-                    llm_validated = True
-                except (ValueError, ClassificationError) as e:
-                    log_cb.warning(
-                        "Collecte commentaires @%s reel %s : classify KO (%s).",
-                        u,
-                        media_id,
-                        e,
-                    )
-                    continue
-
-            dedup_key = build_comment_dedup_key(media_id, comment_text)
-            if dedup_key in dedup_keys:
-                continue
-            dedup_keys.add(dedup_key)
-            entries.append(
-                {
-                    "media_id": media_id,
-                    "username": u,
-                    "niches": niches_list,
-                    "text": comment_text,
-                    "comment_likes": int(comment.get("like_count") or 0),
-                    "views": view_count,
-                    "comment_to_like_ratio": 0.0,
-                    "caption": "",
-                    "hashtags": [],
-                    "audio_id": "",
-                    "t_type": t_type or None,
-                    "t_type_profile": None,
-                    "llm_validated": llm_validated,
-                    "collected_at": datetime.now(timezone.utc)
-                    .replace(microsecond=0)
-                    .isoformat(),
-                }
-            )
-            collected += 1
     finally:
         page.close()
 
-    if collected:
-        save_raw_comments_file(entries, raw_comments_path)
     if candidates:
         reels_with_data = len({c.get("media_id") for c in candidates if c.get("media_id")})
         log_cb.info(
-            "Collecte commentaires @%s : %d nouveau(x) enregistré(s) "
-            "(%d parsé(s) sur %d reel(s)).",
+            "Scrape commentaires @%s : %d commentaire(s) sur %d reel(s) (non persistés).",
             u,
-            collected,
             len(candidates),
             reels_with_data,
         )
+    return candidates
+
+
+def collect_top_comments(
+    username: str,
+    context: BrowserContext,
+    reels: list[dict[str, Any]],
+    niches: list[str] | str,
+    *,
+    comments_path: Path | str,
+    logger: logging.Logger | None = None,
+) -> int:
+    """Scrape profil et fusionne dans ``comments_path`` (legacy / opt-in discovery)."""
+    log_cb = logger or log
+    store_path = Path(comments_path)
+    entries, dedup_keys = load_raw_comments_file(store_path)
+    scraped = scrape_profile_comments(
+        username, context, reels, niches, logger=log_cb
+    )
+    collected = 0
+    for comment in scraped:
+        media_id = str(comment.get("media_id") or "").strip()
+        comment_text = str(comment.get("text") or "").strip()
+        if not media_id or not comment_text:
+            continue
+        dedup_key = build_comment_dedup_key(media_id, comment_text)
+        if dedup_key in dedup_keys:
+            continue
+        dedup_keys.add(dedup_key)
+        entries.append(
+            {
+                "media_id": media_id,
+                "username": str(comment.get("username") or username).lstrip("@").strip(),
+                "niches": list(comment.get("niches") or niches),
+                "text": comment_text,
+                "comment_likes": int(comment.get("comment_likes") or 0),
+                "views": int(comment.get("views") or 0),
+                "comment_to_like_ratio": 0.0,
+                "caption": "",
+                "hashtags": [],
+                "audio_id": "",
+                "t_type": None,
+                "t_type_profile": None,
+                "llm_validated": False,
+                "collected_at": datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat(),
+            }
+        )
+        collected += 1
+    if collected:
+        save_raw_comments_file(entries, store_path)
     return collected
+
+
+def collect_viral_comments(
+    username: str,
+    context: BrowserContext,
+    reels: list[dict[str, Any]],
+    niches: list[str] | str,
+    *,
+    min_likes: int = 1000,
+    max_reels: int = 30,
+    scroll_rounds: int = 25,
+    top_per_reel: int | None = None,
+    output_path: Path | str | None = None,
+    between_reels_min_s: float = 20,
+    between_reels_max_s: float = 45,
+    french_only: bool = True,
+    creator_index: dict[str, dict[str, Any]] | None = None,
+    logger: logging.Logger | None = None,
+) -> dict[str, int]:
+    """Collecte les commentaires à fort engagement sur plusieurs reels d'un compte.
+
+    Parcourt la grille ``/{user}/reels/`` (jusqu'à ``max_reels``), ouvre le
+    panneau commentaires avec un scroll profond, ne retient que les commentaires
+    dont ``like_count >= min_likes``.
+    """
+    from modules.comment_quality import is_french_comment
+    from modules.creator_registry import build_creator_index, resolve_creator_fields
+
+    log_cb = logger or log
+    u = (username or "").lstrip("@").strip()
+    reels_sorted = sorted(
+        [r for r in (reels or []) if str(r.get("media_id") or "").strip()],
+        key=lambda r: int(r.get("comment_count") or 0),
+        reverse=True,
+    )
+    reels_to_visit = reels_sorted[: max(1, max_reels)]
+    stats = {
+        "collected": 0,
+        "parsed": 0,
+        "reels_visited": 0,
+        "kept": 0,
+        "skipped_english": 0,
+    }
+    if not u or not reels_to_visit or min_likes < 0:
+        return stats
+
+    idx = creator_index if creator_index is not None else build_creator_index()
+    creator_meta = resolve_creator_fields(u, index=idx)
+    niches_list = list(creator_meta["niches"])
+
+    out_path = Path(output_path) if output_path is not None else VIRAL_COMMENTS_PATH
+    entries, dedup_keys = load_raw_comments_file(out_path)
+    page = context.new_page()
+
+    try:
+        grid_ok = open_reels_grid(page, u)
+        if not grid_ok:
+            log_cb.warning(
+                "Viral comments @%s : grille /reels/ KO — repli /reel/{{id}}/ direct.",
+                u,
+            )
+
+        for reel in reels_to_visit:
+            media_id = str(reel.get("media_id") or "").strip()
+            view_count = int(reel.get("view_count") or reel.get("views") or 0)
+            caption = str(reel.get("caption") or "").strip()
+            stats["reels_visited"] += 1
+            reel_hits: list[dict[str, Any]] = []
+            try:
+                if grid_ok:
+                    loaded = navigate_to_reel_page(
+                        page, media_id, u, reels_grid_loaded=True
+                    )
+                else:
+                    loaded = navigate_to_reel_page(
+                        page, media_id, u, direct_only=True
+                    )
+                if loaded and _looks_like_profile_not_reel(page):
+                    loaded = navigate_to_reel_page(
+                        page, media_id, u, direct_only=True
+                    )
+                if not loaded:
+                    log_cb.warning(
+                        "Viral comments @%s reel %s : page non chargée.",
+                        u,
+                        media_id,
+                    )
+                    continue
+
+                clicked = click_reel_comment_button(page)
+                if not clicked:
+                    log_cb.warning(
+                        "Viral comments @%s reel %s : bouton commentaire absent.",
+                        u,
+                        media_id,
+                    )
+                    continue
+
+                page.wait_for_timeout(2000)
+                panel_text = extract_reel_comments_panel_text(
+                    page, scroll_rounds=scroll_rounds
+                )
+                parsed = parse_comments_from_dom_text(str(panel_text or ""))
+                stats["parsed"] += len(parsed)
+                for comment in parsed:
+                    text = str(comment.get("text") or "").strip()
+                    likes = int(comment.get("like_count") or 0)
+                    if not text or likes < min_likes:
+                        continue
+                    if french_only and not is_french_comment(text):
+                        stats["skipped_english"] += 1
+                        continue
+                    reel_hits.append(
+                        {
+                            "media_id": media_id,
+                            "views": view_count,
+                            "caption": caption,
+                            "text": text,
+                            "like_count": likes,
+                        }
+                    )
+            except Exception as e:
+                log_cb.warning(
+                    "Viral comments @%s reel %s : erreur (%s).",
+                    u,
+                    media_id,
+                    e,
+                )
+            finally:
+                if grid_ok:
+                    return_to_reels_grid(page, u)
+
+            if top_per_reel is not None and top_per_reel > 0:
+                reel_hits.sort(key=lambda c: int(c.get("like_count") or 0), reverse=True)
+                reel_hits = reel_hits[:top_per_reel]
+
+            for comment in reel_hits:
+                media_id = str(comment.get("media_id") or "").strip()
+                comment_text = str(comment.get("text") or "").strip()
+                dedup_key = build_comment_dedup_key(media_id, comment_text)
+                if dedup_key in dedup_keys:
+                    continue
+                dedup_keys.add(dedup_key)
+                stats["kept"] += 1
+                entries.append(
+                    {
+                        "media_id": media_id,
+                        "username": u,
+                        "niches": niches_list,
+                        "text": comment_text,
+                        "comment_likes": int(comment.get("like_count") or 0),
+                        "views": int(comment.get("views") or 0),
+                        "comment_to_like_ratio": 0.0,
+                        "caption": str(comment.get("caption") or ""),
+                        "hashtags": [],
+                        "audio_id": "",
+                        "t_type": None,
+                        "t_type_profile": creator_meta.get("t_type_profile"),
+                        "llm_validated": False,
+                        "source": "viral_scrape",
+                        "min_likes_threshold": min_likes,
+                        "needs_embed": bool(creator_meta.get("needs_embed")),
+                        "collected_at": datetime.now(timezone.utc)
+                        .replace(microsecond=0)
+                        .isoformat(),
+                    }
+                )
+                stats["collected"] += 1
+
+            polite_sleep(min_s=between_reels_min_s, max_s=between_reels_max_s)
+    finally:
+        page.close()
+
+    if stats["collected"]:
+        save_raw_comments_file(entries, out_path)
+    log_cb.info(
+        "Viral comments @%s : %d nouveau(x) (≥%d likes) — %d parsé(s), "
+        "%d reel(s) visité(s), fichier %s.",
+        u,
+        stats["collected"],
+        min_likes,
+        stats["parsed"],
+        stats["reels_visited"],
+        out_path,
+    )
+    return stats
+
+
+def _is_valid_reel_code(code: str) -> bool:
+    mid = str(code or "").strip()
+    if len(mid) < 8 or len(mid) > 20:
+        return False
+    if mid.lower() in _IG_RESERVED_USERNAMES or mid.lower() in {"audio", "reels", "explore"}:
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9_-]+", mid))
+
+
+def _extract_reel_code_from_page(page: Page) -> str:
+    """Code reel courant depuis l'URL ou le lien DOM le plus visible (fil /reels/)."""
+    try:
+        url = page.url or ""
+        match = re.search(r"/reels?/([A-Za-z0-9_-]{8,20})/?", url)
+        if match:
+            code = match.group(1)
+            if _is_valid_reel_code(code):
+                return code
+        code = page.evaluate(
+            """() => {
+                const pickCode = (href) => {
+                    const m = (href || '').match(/\\/reel\\/([A-Za-z0-9_-]{8,20})/);
+                    return m ? m[1] : '';
+                };
+                let best = '';
+                let bestArea = 0;
+                for (const video of document.querySelectorAll('video')) {
+                    const rect = video.getBoundingClientRect();
+                    const area = rect.width * rect.height;
+                    if (area <= bestArea) continue;
+                    let el = video.parentElement;
+                    for (let d = 0; d < 14 && el; d++) {
+                        for (const a of el.querySelectorAll('a[href*="/reel/"]')) {
+                            const code = pickCode(a.getAttribute('href') || a.href || '');
+                            if (code) {
+                                best = code;
+                                bestArea = area;
+                                break;
+                            }
+                        }
+                        if (best) break;
+                        el = el.parentElement;
+                    }
+                }
+                if (best) return best;
+                for (const a of document.querySelectorAll('a[href*="/reel/"]')) {
+                    const code = pickCode(a.getAttribute('href') || a.href || '');
+                    if (code) return code;
+                }
+                return '';
+            }"""
+        )
+        if code and _is_valid_reel_code(str(code)):
+            return str(code)
+    except Exception:
+        pass
+    return ""
+
+
+def _resolve_feed_reel_code(
+    page: Page,
+    metrics_by_code: dict[str, dict[str, Any]],
+    processed: set[str],
+) -> str:
+    """Reel affiché dans le fil — DOM uniquement (pas de repli GraphQL stale)."""
+    del metrics_by_code  # conservé pour compat appelants
+    code = _extract_reel_code_from_page(page)
+    if code and code not in processed:
+        return code
+    return ""
+
+
+def _close_comments_panel(page: Page) -> None:
+    """Ferme overlay commentaires pour ne pas lire le reel précédent."""
+    for _ in range(3):
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(200)
+        except Exception:
+            pass
+    try:
+        page.mouse.click(80, _VIEWPORT["height"] // 2)
+        page.wait_for_timeout(150)
+    except Exception:
+        pass
+
+
+def _wait_for_feed_reel_change(
+    page: Page,
+    previous_code: str,
+    *,
+    timeout_ms: int = 4000,
+) -> str:
+    """Attend qu'un nouveau code reel apparaisse après scroll."""
+    deadline = time.time() + timeout_ms / 1000.0
+    prev = str(previous_code or "").strip()
+    while time.time() < deadline:
+        code = _extract_reel_code_from_page(page)
+        if code and code != prev and _is_valid_reel_code(code):
+            return code
+        page.wait_for_timeout(200)
+    return _extract_reel_code_from_page(page) or ""
+
+
+def _merge_owner_username_into_bucket(bucket: dict[str, Any], username: str) -> None:
+    user = str(username or "").lstrip("@").strip().lower()
+    if not user or user in _IG_RESERVED_USERNAMES:
+        return
+    existing = str(bucket.get("username") or "").lstrip("@").strip().lower()
+    if not existing:
+        bucket["username"] = user
+
+
+def _extract_owner_username_from_graphql_window(window: str) -> str:
+    for pattern in (
+        r'"owner"\s*:\s*\{[^}]{0,400}?"username"\s*:\s*"([^"]+)"',
+        r'"user"\s*:\s*\{[^}]{0,400}?"username"\s*:\s*"([^"]+)"',
+        r'"coauthor_producers"\s*:\s*\[\s*\{\s*"username"\s*:\s*"([^"]+)"',
+    ):
+        match = re.search(pattern, window)
+        if match:
+            user = str(match.group(1)).lstrip("@").strip().lower()
+            if user and user not in _IG_RESERVED_USERNAMES:
+                return user
+    return ""
+
+
+def _owner_username_from_bucket(bucket: dict[str, Any]) -> str:
+    return str(bucket.get("username") or "").lstrip("@").strip().lower()
+
+
+def _extract_reel_owner_username(page: Page, *, media_id: str = "") -> str:
+    """Username du créateur depuis la page reel (lien proche de la vidéo, pas la nav)."""
+    mid = str(media_id or "").strip()
+    try:
+        owner = page.evaluate(
+            """({ reserved, mediaId }) => {
+                const reservedSet = new Set(reserved);
+                const pick = (href) => {
+                    const m = (href || '').match(/^\\/([\\w.]{2,30})\\/$/);
+                    if (!m || reservedSet.has(m[1])) return '';
+                    return m[1];
+                };
+                if (mediaId) {
+                    for (const a of document.querySelectorAll('a[href*="/reel/"], a[href*="/p/"]')) {
+                        const href = a.getAttribute('href') || '';
+                        if (!href.includes(mediaId)) continue;
+                        let el = a.parentElement;
+                        for (let depth = 0; depth < 10 && el; depth++) {
+                            for (const link of el.querySelectorAll('a[href^="/"]')) {
+                                const user = pick(link.getAttribute('href') || '');
+                                if (user) return user;
+                            }
+                            el = el.parentElement;
+                        }
+                    }
+                }
+                for (const video of document.querySelectorAll('video')) {
+                    let el = video.parentElement;
+                    for (let depth = 0; depth < 12 && el; depth++) {
+                        for (const link of el.querySelectorAll('a[href^="/"]')) {
+                            const user = pick(link.getAttribute('href') || '');
+                            if (user) return user;
+                        }
+                        el = el.parentElement;
+                    }
+                }
+                const main = document.querySelector('main') || document.body;
+                for (const a of main.querySelectorAll('header a[href], nav a[href]')) {
+                    a.setAttribute('data-skip-owner', '1');
+                }
+                for (const a of main.querySelectorAll('a[href^="/"]')) {
+                    if (a.getAttribute('data-skip-owner')) continue;
+                    const user = pick(a.getAttribute('href') || '');
+                    if (user) return user;
+                }
+                return '';
+            }""",
+            {"reserved": sorted(_IG_RESERVED_USERNAMES), "mediaId": mid},
+        )
+        if owner:
+            return str(owner).lstrip("@").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def refresh_reels_feed(page: Page, *, logger: logging.Logger | None = None) -> None:
+    """Reset fil Reels entre sessions (Explore → /reels/ → reload)."""
+    log_cb = logger or log
+    page.set_viewport_size(_VIEWPORT)
+    try:
+        page.goto(
+            f"{BASE_URL}/explore/",
+            timeout=_REQUEST_TIMEOUT_MS,
+            wait_until="domcontentloaded",
+        )
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(int(random.uniform(2000, 4000)))
+    except Exception as e:
+        log_cb.warning("Refresh fil : explore (%s).", e)
+    try:
+        page.goto(
+            f"{BASE_URL}/reels/",
+            timeout=_REQUEST_TIMEOUT_MS,
+            wait_until="domcontentloaded",
+        )
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(1500)
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(int(random.uniform(2000, 3500)))
+        _focus_reels_feed_player(page)
+        log_cb.info("Fil Reels : feed rechargé (explore → reload).")
+    except Exception as e:
+        log_cb.warning("Refresh fil : reels (%s).", e)
+
+
+def _focus_reels_feed_player(page: Page) -> None:
+    """Focus le lecteur Reels (desktop) pour que ArrowDown change de reel."""
+    try:
+        page.mouse.click(_VIEWPORT["width"] // 2, _VIEWPORT["height"] // 2)
+        page.wait_for_timeout(400)
+    except Exception:
+        pass
+
+
+def _advance_reels_feed(page: Page) -> None:
+    """Passe au reel suivant dans le fil (ArrowDown >> molette sur desktop IG)."""
+    _focus_reels_feed_player(page)
+    try:
+        page.keyboard.press("ArrowDown")
+    except Exception:
+        pass
+    page.wait_for_timeout(200)
+
+
+def _discover_reel_candidates_on_feed_page(
+    page: Page,
+    metrics_by_pk: dict[str, dict[str, Any]],
+    metrics_by_code: dict[str, dict[str, Any]],
+    *,
+    pool_size: int,
+    scroll_steps: int,
+    scroll_wait_ms: int = 1200,
+    logger: logging.Logger | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Scroll le fil et collecte des candidats reels (GraphQL uniquement, pas de commentaires).
+
+    Retourne ``(candidats, step_idx+1)``.
+    """
+    log_cb = logger or log
+    order: list[str] = []
+    seen: set[str] = set()
+
+    def _capture_codes() -> None:
+        for code in metrics_by_code:
+            mid = str(code or "").strip()
+            if not _is_valid_reel_code(mid) or mid in seen:
+                continue
+            seen.add(mid)
+            order.append(mid)
+
+    _focus_reels_feed_player(page)
+    _capture_codes()
+    target = max(1, pool_size)
+    steps = max(target, scroll_steps)
+    stagnant = 0
+    step_idx = 0
+    for step_idx in range(steps):
+        if len(order) >= target:
+            break
+        before = len(order)
+        _advance_reels_feed(page)
+        page.wait_for_timeout(scroll_wait_ms)
+        _capture_codes()
+        if len(order) == before:
+            stagnant += 1
+            if stagnant >= 8:
+                log_cb.info("Fil Reels : scroll stagnant après %d step(s).", step_idx + 1)
+                break
+        else:
+            stagnant = 0
+
+    out: list[dict[str, Any]] = []
+    for code in order:
+        bucket = _metrics_bucket_for_dom_media_id(code, metrics_by_pk, metrics_by_code)
+        metrics = _metrics_for_dom_media_id(code, metrics_by_pk, metrics_by_code)
+        out.append(
+            {
+                "media_id": code,
+                "view_count": metrics["view_count"],
+                "comment_count": metrics["comment_count"],
+                "caption": str(bucket.get("caption") or ""),
+                "username": _owner_username_from_bucket(bucket),
+            }
+        )
+    return out, step_idx + 1 if order else 0
+
+
+def _filter_reels_for_comment_scrape(
+    candidates: list[dict[str, Any]],
+    *,
+    max_reels: int,
+    min_comment_count: int = MIN_COMMENT_COUNT_TO_SCRAPE,
+) -> list[dict[str, Any]]:
+    """Phase 2 : filtre local sans réseau."""
+    filtered = [
+        c
+        for c in candidates
+        if int(c.get("comment_count") or 0) > 0
+        and int(c.get("comment_count") or 0) >= min_comment_count
+    ]
+    filtered.sort(key=lambda c: int(c.get("comment_count") or 0), reverse=True)
+    return filtered[:max_reels]
+
+
+def discover_reels_from_feed(
+    context: BrowserContext,
+    *,
+    max_reels: int = 30,
+    scroll_steps: int = 40,
+    scroll_wait_ms: int = 1200,
+    logger: logging.Logger | None = None,
+) -> list[dict[str, Any]]:
+    """Parcourt le fil Reels aléatoire (``/reels/``) — pas les grilles profil."""
+    log_cb = logger or log
+    page = context.new_page()
+    metrics_by_pk, metrics_by_code = _attach_graphql_metrics_listener(page)
+
+    try:
+        page.goto(f"{BASE_URL}/reels/", timeout=_REQUEST_TIMEOUT_MS, wait_until="domcontentloaded")
+        page.set_viewport_size(_VIEWPORT)
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(3000)
+
+        out, steps_done = _discover_reel_candidates_on_feed_page(
+            page,
+            metrics_by_pk,
+            metrics_by_code,
+            pool_size=max_reels,
+            scroll_steps=scroll_steps,
+            scroll_wait_ms=scroll_wait_ms,
+            logger=log_cb,
+        )
+        log_cb.info(
+            "Fil Reels : %d reel(s) découverts (%d step(s), %d codes GraphQL).",
+            len(out[:max_reels]),
+            steps_done,
+            len(metrics_by_code),
+        )
+        return out[:max_reels]
+    except Exception as e:
+        log_cb.warning("Fil Reels : erreur (%s).", e)
+        return []
+    finally:
+        page.close()
+
+
+def _probe_reel_max_comment_likes(
+    page: Page,
+    *,
+    scroll_wait_ms: int = 250,
+) -> tuple[int, int]:
+    """Lit les commentaires visibles sans scroll. Retourne ``(max_likes, nb_parsés)``."""
+    parsed, _ = scrape_reel_comments_panel(
+        page,
+        scroll_rounds=0,
+        scroll_wait_ms=scroll_wait_ms,
+    )
+    _close_comments_panel(page)
+    if not parsed:
+        return 0, 0
+    max_likes = max(int(c.get("like_count") or 0) for c in parsed)
+    return max_likes, len(parsed)
+
+
+def _next_reel(page: Page, wait_ms: int) -> None:
+    """Ferme le panneau commentaires et passe au reel suivant."""
+    try:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+        page.mouse.click(80, _VIEWPORT["height"] // 2)
+        page.wait_for_timeout(300)
+        page.keyboard.press("ArrowDown")
+        page.wait_for_timeout(wait_ms)
+    except Exception:
+        pass
+
+
+def collect_viral_comments_from_feed(
+    context: BrowserContext,
+    *,
+    min_likes: int = 1000,
+    max_reels: int = 30,
+    scroll_steps: int = 40,
+    scroll_wait_ms: int = 800,
+    scroll_rounds: int = 8,
+    panel_scroll_wait_ms: int = 400,
+    top_per_reel: int | None = None,
+    output_path: Path | str | None = None,
+    between_reels_min_s: float = 90,
+    between_reels_max_s: float = 180,
+    french_only: bool = True,
+    fresh_feed: bool = False,
+    creator_index: dict[str, dict[str, Any]] | None = None,
+    logger: logging.Logger | None = None,
+) -> dict[str, int]:
+    """Découverte passive sur /reels/, puis scrape commentaires via grille profil."""
+    from modules.comment_quality import is_french_comment
+    from modules.creator_registry import build_creator_index, resolve_creator_fields
+
+    log_cb = logger or log
+    stats: dict[str, int] = {
+        "collected": 0,
+        "parsed": 0,
+        "reels_visited": 0,
+        "kept": 0,
+        "skipped_english": 0,
+        "skipped_no_creator": 0,
+        "skipped_low_engagement": 0,
+    }
+    idx = creator_index if creator_index is not None else build_creator_index()
+    out_path = Path(output_path) if output_path is not None else VIRAL_COMMENTS_PATH
+    entries, dedup_keys = load_raw_comments_file(out_path)
+    new_since_save = 0
+
+    # —— Phase 1 : découverte feed passive (GraphQL, pas de panneau commentaires) ——
+    feed_page = context.new_page()
+    metrics_by_pk, metrics_by_code = _attach_graphql_metrics_listener(feed_page)
+    candidates: dict[str, dict[str, Any]] = {}
+    stagnant = 0
+    pool_target = max(max_reels * 2, max_reels)
+    max_steps = max(max_reels * 3, scroll_steps)
+
+    try:
+        if fresh_feed:
+            refresh_reels_feed(feed_page, logger=log_cb)
+        else:
+            feed_page.goto(
+                f"{BASE_URL}/reels/",
+                timeout=_REQUEST_TIMEOUT_MS,
+                wait_until="domcontentloaded",
+            )
+        feed_page.set_viewport_size(_VIEWPORT)
+        feed_page.wait_for_load_state("load")
+        feed_page.wait_for_timeout(3000)
+        feed_page.mouse.click(_VIEWPORT["width"] // 2, _VIEWPORT["height"] // 2)
+        feed_page.wait_for_timeout(400)
+
+        for step_idx in range(max_steps):
+            if len(candidates) >= pool_target:
+                break
+
+            code = _extract_reel_code_from_page(feed_page)
+            if not code or not _is_valid_reel_code(code) or code in candidates:
+                stagnant += 1
+                if stagnant >= 8:
+                    log_cb.info("Fil Reels : scroll stagnant après %d step(s).", step_idx + 1)
+                    break
+                _advance_reels_feed(feed_page)
+                feed_page.wait_for_timeout(scroll_wait_ms)
+                continue
+
+            stagnant = 0
+            bucket = _metrics_bucket_for_dom_media_id(
+                code, metrics_by_pk, metrics_by_code
+            )
+            metrics = _metrics_for_dom_media_id(code, metrics_by_pk, metrics_by_code)
+            candidates[code] = {
+                "media_id": code,
+                "username": _owner_username_from_bucket(bucket),
+                "comment_count": int(metrics.get("comment_count") or 0),
+                "view_count": int(metrics.get("view_count") or 0),
+                "caption": str(bucket.get("caption") or ""),
+            }
+
+            _advance_reels_feed(feed_page)
+            feed_page.wait_for_timeout(scroll_wait_ms)
+            _wait_for_feed_reel_change(feed_page, code)
+    finally:
+        feed_page.close()
+
+    # —— Phase 2 : filtre local ——
+    to_scrape = [
+        c
+        for c in candidates.values()
+        if c.get("username")
+        and len(str(c["username"])) >= 4
+        and str(c["username"]).lower() not in _IG_RESERVED_USERNAMES
+        and int(c.get("comment_count") or 0) >= MIN_COMMENT_COUNT_TO_SCRAPE
+    ]
+    to_scrape.sort(key=lambda c: int(c.get("comment_count") or 0), reverse=True)
+    to_scrape = to_scrape[:max_reels]
+    log_cb.info(
+        "Phase 1 : %d découverts → Phase 2 : %d retenus (comment_count >= %d).",
+        len(candidates),
+        len(to_scrape),
+        MIN_COMMENT_COUNT_TO_SCRAPE,
+    )
+
+    if not to_scrape:
+        log_cb.info("Fil Reels : aucun reel à scraper après filtrage.")
+        return stats
+
+    # —— Phase 3 : scrape via grille profil ——
+    profile_page = context.new_page()
+    profile_page.set_viewport_size(_VIEWPORT)
+
+    try:
+        for visit_idx, reel in enumerate(to_scrape, start=1):
+            media_id = str(reel.get("media_id") or "").strip()
+            username = str(reel.get("username") or "").lstrip("@").strip()
+            view_count = int(reel.get("view_count") or 0)
+            caption = str(reel.get("caption") or "")
+            stats["reels_visited"] += 1
+            creator_meta = resolve_creator_fields(username, index=idx)
+
+            try:
+                profile_page.goto(
+                    f"{BASE_URL}/{username}/",
+                    wait_until="domcontentloaded",
+                    timeout=_PROFILE_GOTO_TIMEOUT_MS,
+                )
+            except Exception:
+                log_cb.warning("Profil @%s : timeout goto — skip.", username)
+                if visit_idx < len(to_scrape):
+                    polite_sleep(min_s=between_reels_min_s, max_s=between_reels_max_s)
+                continue
+
+            try:
+                profile_page.wait_for_load_state("load")
+                profile_page.wait_for_timeout(2500)
+
+                link = profile_page.locator(f'a[href*="/reel/{media_id}/"], a[href*="/p/{media_id}/"]')
+                if link.count() == 0:
+                    profile_page.mouse.wheel(0, 2000)
+                    profile_page.wait_for_timeout(1500)
+                    link = profile_page.locator(
+                        f'a[href*="/reel/{media_id}/"], a[href*="/p/{media_id}/"]'
+                    )
+                if link.count() == 0:
+                    log_cb.warning(
+                        "reel %s introuvable dans grille @%s — skip.",
+                        media_id,
+                        username,
+                    )
+                    stats["skipped_no_creator"] += 1
+                    continue
+
+                link.first.click(timeout=8000)
+                profile_page.wait_for_load_state("load")
+                profile_page.wait_for_timeout(2500)
+
+                panel_text = extract_reel_comments_panel_text(
+                    profile_page,
+                    scroll_rounds=scroll_rounds,
+                    scroll_wait_ms=panel_scroll_wait_ms,
+                )
+                if len(str(panel_text or "").strip()) < 40:
+                    click_reel_comment_button(profile_page)
+                    profile_page.wait_for_timeout(1500)
+                    panel_text = extract_reel_comments_panel_text(
+                        profile_page,
+                        scroll_rounds=scroll_rounds,
+                        scroll_wait_ms=panel_scroll_wait_ms,
+                    )
+                parsed = parse_comments_from_dom_text(str(panel_text or ""))
+                stats["parsed"] += len(parsed)
+
+                reel_hits: list[dict[str, Any]] = []
+                for comment in parsed:
+                    text = str(comment.get("text") or "").strip()
+                    likes = int(comment.get("like_count") or 0)
+                    if not text or likes < min_likes:
+                        continue
+                    if french_only and not is_french_comment(text):
+                        stats["skipped_english"] += 1
+                        continue
+                    reel_hits.append(
+                        {
+                            "media_id": media_id,
+                            "views": view_count,
+                            "caption": caption,
+                            "text": text,
+                            "like_count": likes,
+                            "username": creator_meta["username"],
+                            "niches": creator_meta["niches"],
+                            "t_type_profile": creator_meta["t_type_profile"],
+                            "needs_embed": creator_meta["needs_embed"],
+                        }
+                    )
+
+                if top_per_reel is not None and top_per_reel > 0:
+                    reel_hits.sort(key=lambda c: int(c.get("like_count") or 0), reverse=True)
+                    reel_hits = reel_hits[:top_per_reel]
+
+                new_on_reel = 0
+                for comment in reel_hits:
+                    comment_text = str(comment.get("text") or "").strip()
+                    dedup_key = build_comment_dedup_key(media_id, comment_text)
+                    if dedup_key in dedup_keys:
+                        continue
+                    dedup_keys.add(dedup_key)
+                    stats["kept"] += 1
+                    new_on_reel += 1
+                    entries.append(
+                        {
+                            "media_id": media_id,
+                            "username": creator_meta["username"],
+                            "niches": list(creator_meta.get("niches") or ["humour"]),
+                            "text": comment_text,
+                            "comment_likes": int(comment.get("like_count") or 0),
+                            "views": view_count,
+                            "comment_to_like_ratio": 0.0,
+                            "caption": caption,
+                            "hashtags": [],
+                            "audio_id": "",
+                            "t_type": None,
+                            "t_type_profile": creator_meta.get("t_type_profile"),
+                            "llm_validated": False,
+                            "source": "reels_feed",
+                            "min_likes_threshold": min_likes,
+                            "needs_embed": bool(creator_meta.get("needs_embed")),
+                            "collected_at": datetime.now(timezone.utc)
+                            .replace(microsecond=0)
+                            .isoformat(),
+                        }
+                    )
+                    stats["collected"] += 1
+
+                if new_on_reel > 0:
+                    save_raw_comments_file(entries, out_path)
+                    new_since_save += new_on_reel
+
+                log_cb.info(
+                    "Fil Reels [%d/%d] %s @%s — %d gardé(s) / %d parsés (total %d).",
+                    visit_idx,
+                    len(to_scrape),
+                    media_id,
+                    username,
+                    new_on_reel,
+                    len(parsed),
+                    stats["collected"],
+                )
+
+                profile_page.keyboard.press("Escape")
+                profile_page.wait_for_timeout(500)
+            except Exception as e:
+                log_cb.warning("Profil @%s reel %s : erreur (%s).", username, media_id, e)
+                continue
+
+            if visit_idx < len(to_scrape):
+                polite_sleep(min_s=between_reels_min_s, max_s=between_reels_max_s)
+    finally:
+        profile_page.close()
+
+    if stats["collected"] and new_since_save == 0:
+        save_raw_comments_file(entries, out_path)
+    log_cb.info(
+        "Fil Reels : %d commentaire(s) viral(aux) (≥%d likes) → %s.",
+        stats["collected"],
+        min_likes,
+        out_path,
+    )
+    return stats
 
 
 def _list_reel_page_aria_labels(page: Page, limit: int = 40) -> list[str]:
@@ -575,6 +1447,7 @@ def click_reel_comment_button(page: Page) -> str | None:
         for selector in (
             f'button:has(svg[aria-label="{label}"])',
             f'div[role="button"]:has(svg[aria-label="{label}"])',
+            f'span[role="button"]:has(svg[aria-label="{label}"])',
             f'svg[aria-label="{label}"]',
             f'[aria-label="{label}"]',
         ):
@@ -587,12 +1460,23 @@ def click_reel_comment_button(page: Page) -> str | None:
             except Exception:
                 continue
 
+    for pattern in (
+        r"comment",
+        r"commentaire",
+    ):
+        try:
+            page.get_by_role("button", name=re.compile(pattern, re.IGNORECASE)).first.click(
+                timeout=8_000
+            )
+            return f"role=button({pattern})"
+        except Exception:
+            pass
+
     try:
-        page.get_by_role(
-            "button",
-            name=re.compile(r"comment", re.IGNORECASE),
-        ).first.click(timeout=10_000)
-        return "role=button(name~/comment/i)"
+        link = page.locator('a[href*="/comments/"]').first
+        if link.count() > 0:
+            link.click(timeout=8_000)
+            return "href=/comments/"
     except Exception:
         pass
 
@@ -607,9 +1491,12 @@ def click_reel_comment_button(page: Page) -> str | None:
                     if (!svg) continue;
                     const btn = svg.closest('div[role="button"]')
                         || svg.closest('button')
+                        || svg.closest('span[role="button"]')
                         || svg.parentElement;
                     if (btn) { btn.click(); return label; }
                 }
+                const links = document.querySelectorAll('a[href*="/comments/"]');
+                if (links.length) { links[0].click(); return 'comments-link'; }
                 return null;
             }"""
             % json.dumps(list(_REEL_COMMENT_ARIA_LABELS))
@@ -619,10 +1506,70 @@ def click_reel_comment_button(page: Page) -> str | None:
         return None
 
 
+def _extract_comments_panel_text_heuristic(page: Page) -> str:
+    """Repli : plus grand bloc type liste de commentaires (layout /reel/ desktop)."""
+    try:
+        return str(
+            page.evaluate(
+                """() => {
+                    const noise = /Ne pas suggérer|Ajouter un commentaire|Masquer/i;
+                    let best = '';
+                    for (const ul of document.querySelectorAll('ul')) {
+                        const t = (ul.innerText || '').trim();
+                        if (t.length < 40 || noise.test(t)) continue;
+                        if (/Répondre|J.aime|like|sem\\b|j\\b|h\\b/i.test(t)
+                            && t.length > best.length) {
+                            best = t;
+                        }
+                    }
+                    return best;
+                }"""
+            )
+            or ""
+        )
+    except Exception:
+        return ""
+
+
+def scrape_reel_comments_panel(
+    page: Page,
+    *,
+    scroll_rounds: int = COMMENTS_PANEL_SCROLL_ROUNDS,
+    scroll_wait_ms: int = 700,
+) -> tuple[list[dict[str, Any]], str]:
+    """Ouvre si besoin et parse le panneau commentaires. Retourne ``(parsed, source)``."""
+    clicked = click_reel_comment_button(page)
+    page.wait_for_timeout(1200 if clicked else 400)
+    panel_text = extract_reel_comments_panel_text(
+        page,
+        scroll_rounds=scroll_rounds,
+        scroll_wait_ms=scroll_wait_ms,
+    )
+    source = "dialog" if clicked else "visible"
+    parsed = parse_comments_from_dom_text(str(panel_text or ""))
+    if not parsed:
+        panel_text = _extract_comments_panel_text_heuristic(page)
+        parsed = parse_comments_from_dom_text(str(panel_text or ""))
+        source = "heuristic"
+    if not parsed and not clicked:
+        clicked = click_reel_comment_button(page)
+        if clicked:
+            page.wait_for_timeout(1200)
+            panel_text = extract_reel_comments_panel_text(
+                page,
+                scroll_rounds=scroll_rounds,
+                scroll_wait_ms=scroll_wait_ms,
+            )
+            parsed = parse_comments_from_dom_text(str(panel_text or ""))
+            source = "dialog-retry"
+    return parsed, source
+
+
 def extract_reel_comments_panel_text(
     page: Page,
     *,
     scroll_rounds: int = COMMENTS_PANEL_SCROLL_ROUNDS,
+    scroll_wait_ms: int = 700,
 ) -> str:
     """Texte brut du panneau commentaires (scroll pour charger plus de lignes)."""
     try:
@@ -637,7 +1584,7 @@ def extract_reel_comments_panel_text(
                     scrollable.scrollTop = scrollable.scrollHeight;
                 }"""
             )
-            page.wait_for_timeout(700)
+            page.wait_for_timeout(scroll_wait_ms)
         return str(
             page.evaluate(
                 """(selectors) => {
@@ -717,6 +1664,13 @@ def _parse_dom_comment_likes(likes_line: str) -> int:
     line = str(likes_line or "")
     m = re.search(
         r"(\d[\d\s\u202f\xa0.,]*)\s*J['\u2019]?aime",
+        line,
+        re.IGNORECASE,
+    )
+    if m:
+        return _parse_count(m.group(1))
+    m = re.search(
+        r"(\d[\d\s\u202f\xa0.,]*)\s*(?:likes?)\b",
         line,
         re.IGNORECASE,
     )
@@ -1070,12 +2024,20 @@ def _ingest_graphql_media_node(
             patch[key] = int(value)
 
     caption = _extract_caption_from_node(node)
+    owner_username = ""
+    for user_key in ("user", "owner"):
+        user_obj = node.get(user_key)
+        if isinstance(user_obj, dict):
+            raw_user = user_obj.get("username")
+            if raw_user:
+                owner_username = str(raw_user).lstrip("@").strip().lower()
+                break
     has_pinned_field = "clips_tab_pinned_user_ids" in node
     is_pinned: bool | None = None
     if has_pinned_field:
         is_pinned = _is_pinned_from_clips_tab_ids(node.get("clips_tab_pinned_user_ids"))
 
-    if not patch and not caption and not has_pinned_field:
+    if not patch and not caption and not has_pinned_field and not owner_username:
         return
 
     normalized = _normalize_metric_bucket(patch) if patch else {}
@@ -1085,6 +2047,8 @@ def _ingest_graphql_media_node(
             _merge_metric_bucket(bucket, normalized)
         if caption:
             _merge_caption_into_bucket(bucket, caption)
+        if owner_username:
+            _merge_owner_username_into_bucket(bucket, owner_username)
         if has_pinned_field:
             _merge_pinned_into_bucket(bucket, is_pinned)
         if code:
@@ -1095,6 +2059,8 @@ def _ingest_graphql_media_node(
             _merge_metric_bucket(bucket, normalized)
         if caption:
             _merge_caption_into_bucket(bucket, caption)
+        if owner_username:
+            _merge_owner_username_into_bucket(bucket, owner_username)
         if has_pinned_field:
             _merge_pinned_into_bucket(bucket, is_pinned)
 
@@ -1168,10 +2134,13 @@ def _ingest_metrics_from_graphql_text(
         window_start = max(0, match.start() - block_window)
         window = text[window_start : match.start() + block_window]
         caption = _extract_caption_from_graphql_window(window)
+        owner_username = _extract_owner_username_from_graphql_window(window)
         is_pinned = _extract_pinned_from_graphql_window(window)
         if code in metrics_by_code:
             if caption:
                 _merge_caption_into_bucket(metrics_by_code[code], caption)
+            if owner_username:
+                _merge_owner_username_into_bucket(metrics_by_code[code], owner_username)
             if is_pinned is not None:
                 _merge_pinned_into_bucket(metrics_by_code[code], is_pinned)
             continue
@@ -1180,6 +2149,8 @@ def _ingest_metrics_from_graphql_text(
             metrics_by_code[code] = dict(metrics_by_pk[pk_match.group(1)])
             if caption:
                 _merge_caption_into_bucket(metrics_by_code[code], caption)
+            if owner_username:
+                _merge_owner_username_into_bucket(metrics_by_code[code], owner_username)
             if is_pinned is not None:
                 _merge_pinned_into_bucket(metrics_by_code[code], is_pinned)
             continue
@@ -1193,6 +2164,8 @@ def _ingest_metrics_from_graphql_text(
             _merge_metric_bucket(bucket, _normalize_metric_bucket(patch))
         if caption:
             _merge_caption_into_bucket(bucket, caption)
+        if owner_username:
+            _merge_owner_username_into_bucket(bucket, owner_username)
         if is_pinned is not None:
             _merge_pinned_into_bucket(bucket, is_pinned)
 
@@ -1738,6 +2711,21 @@ def _collect_media_ids_from_grid(page: Page, max_reels: int) -> list[dict[str, s
     return out
 
 
+def _grid_rows_from_graphql_codes(
+    metrics_by_code: dict[str, dict[str, Any]],
+    max_reels: int,
+) -> list[dict[str, str]]:
+    """Repli quand la grille /reels/ n'expose plus les liens DOM (IG 2025+)."""
+    rows: list[dict[str, str]] = []
+    for code in metrics_by_code:
+        if len(rows) >= max_reels:
+            break
+        mid = str(code or "").strip()
+        if mid:
+            rows.append({"media_id": mid, "thumbnail_url": ""})
+    return rows
+
+
 def _reels_grid_rows_needed(max_reels: int) -> int:
     """Nombre de lignes de grille à couvrir (5 colonnes par ligne)."""
     return max(1, (max_reels + _REELS_GRID_COLUMNS - 1) // _REELS_GRID_COLUMNS)
@@ -1862,6 +2850,14 @@ def get_recent_reels(
 
         if max_reels > 5:
             grid_rows = _scroll_reels_grid_until_loaded(page, max_reels, grid_rows)
+
+        if not grid_rows and metrics_by_code:
+            log.info(
+                "@%s : grille DOM vide — repli GraphQL (%d code(s)).",
+                username,
+                len(metrics_by_code),
+            )
+            grid_rows = _grid_rows_from_graphql_codes(metrics_by_code, max_reels)
 
         for row in grid_rows:
             media_id = row["media_id"]

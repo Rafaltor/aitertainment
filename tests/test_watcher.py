@@ -81,6 +81,17 @@ class CheckNewPostTest(unittest.TestCase):
         self.assertTrue(out["bootstrap"])
 
     @patch("watcher.get_recent_reels")
+    def test_bootstrap_high_views(self, mock_reels: MagicMock) -> None:
+        """Bootstrap ignore le seuil de vues — mémorise le Reel le plus récent."""
+        mock_reels.return_value = [_reel("viral", NEW_POST_VIEW_THRESHOLD + 50_000)]
+        creator = {"username": "u", "platform": "instagram", "last_post_id": None}
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out["video_id"], "viral")
+        self.assertTrue(out["bootstrap"])
+
+    @patch("watcher.get_recent_reels")
     def test_no_reels_returns_none(self, mock_reels: MagicMock) -> None:
         mock_reels.return_value = []
         creator = {"username": "ghost", "platform": "instagram", "last_post_id": None}
@@ -172,7 +183,7 @@ class RunWatcherMockTest(unittest.TestCase):
                         {
                             "username": "creator_a",
                             "platform": "instagram",
-                            "niche": "streetwear",
+                            "niches": ["streetwear"],
                             "t_type": "T2",
                             "engagement_baseline": 0.05,
                             "last_post_id": "old_id_a",
@@ -181,7 +192,7 @@ class RunWatcherMockTest(unittest.TestCase):
                         {
                             "username": "creator_b",
                             "platform": "instagram",
-                            "niche": "lifestyle",
+                            "niches": ["lifestyle"],
                             "t_type": None,  # Discovery pas encore passé
                             "engagement_baseline": None,
                             "last_post_id": None,
@@ -236,7 +247,7 @@ class RunWatcherRealCycleTest(unittest.TestCase):
                         {
                             "username": "atelier_xyz",
                             "platform": "instagram",
-                            "niche": "streetwear",
+                            "niches": ["streetwear"],
                             "t_type": "T2",
                             "engagement_baseline": 0.05,
                             "last_post_id": "old_post_id",
@@ -312,7 +323,7 @@ class RunWatcherRealCycleTest(unittest.TestCase):
                         {
                             "username": "newbie",
                             "platform": "instagram",
-                            "niche": "streetwear",
+                            "niches": ["streetwear"],
                             "t_type": "T2",
                             "engagement_baseline": 0.05,
                             "last_post_id": None,
@@ -355,7 +366,7 @@ class RunWatcherProtectionsTest(unittest.TestCase):
             {
                 "username": f"creator_{i}",
                 "platform": "instagram",
-                "niche": "streetwear",
+                "niches": ["streetwear"],
                 "t_type": "T2",
                 "engagement_baseline": 0.04,
                 "last_post_id": f"old_{i}",
@@ -489,11 +500,9 @@ class GenerateForPostTest(unittest.TestCase):
     ) -> None:
         from watcher import _generate_for_post
 
-        # Schéma 2026-05 : ``niches`` (liste) priorité sur ``niche`` (string).
         ctx = {
             "t_type": "T2",
             "niches": ["humour", "sketch"],
-            "niche": "humour",  # alias rétro-compat
             "caption": "moment culte F1",
             "hashtags": ["F1", "monaco"],
             "audio_id": "AUD42",
@@ -505,7 +514,7 @@ class GenerateForPostTest(unittest.TestCase):
         kwargs = mock_gen.call_args.kwargs
         # comments_sample = [] (pas de scrape en phase Watcher).
         self.assertEqual(mock_gen.call_args.args[1], [])
-        # ``niches`` (liste) propagée — pas l'alias string.
+        # ``niches`` (liste) propagée.
         self.assertEqual(kwargs["niches"], ["humour", "sketch"])
         # ``t_type_profile`` égal au t_type du créateur (sa persona).
         self.assertEqual(kwargs["t_type_profile"], "T2")
@@ -515,18 +524,13 @@ class GenerateForPostTest(unittest.TestCase):
         )
 
     @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
-    def test_falls_back_to_niche_string_for_legacy_context(
-        self, mock_gen: MagicMock
-    ) -> None:
+    def test_missing_niches_yields_empty_list(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
-        # Rétro-compat : context ancien schéma (uniquement ``niche`` string,
-        # sans ``niches`` liste).
-        _generate_for_post(
-            {"t_type": "T2", "niche": "humour", "audio": "OLD_KEY"}
-        )
+        # Context sans ``niches`` → liste vide propagée (plus de lecture legacy).
+        _generate_for_post({"t_type": "T2", "audio": "OLD_KEY"})
         kwargs = mock_gen.call_args.kwargs
-        self.assertEqual(kwargs["niches"], "humour")
+        self.assertEqual(kwargs["niches"], [])
         self.assertEqual(kwargs["video_context"]["audio_id"], "OLD_KEY")
 
     @patch("modules.classifier.generate_comments")
@@ -547,9 +551,7 @@ class GenerateForPostTest(unittest.TestCase):
 
 
 class WatchlistSchemaMigrationTest(unittest.TestCase):
-    """Schéma 2026-05 : ``_normalize_entry`` accepte ``niches`` (liste) et
-    migre lazy depuis ``niche`` (string) sans casser les watchlists historiques.
-    """
+    """``_normalize_entry`` : ``niches`` (liste) est la source de vérité."""
 
     @staticmethod
     def _entry(**overrides: object) -> dict[str, object]:
@@ -572,23 +574,14 @@ class WatchlistSchemaMigrationTest(unittest.TestCase):
             index=0,
         )
         self.assertEqual(out["niches"], ["humour", "sketch", "imitation"])
-        self.assertEqual(out["niche"], "humour")
 
-    def test_lazy_migration_from_legacy_niche_string(self) -> None:
-        """Watchlist historique avec uniquement ``niche`` (string) → ``niches=[niche]``."""
+    def test_missing_niches_yields_empty_list(self) -> None:
+        """Entrée sans ``niches`` → ``[]`` (reste valide)."""
         from watcher import _normalize_entry
 
-        out = _normalize_entry(self._entry(niche="streetwear"), index=0)
-        self.assertEqual(out["niches"], ["streetwear"])
-        self.assertEqual(out["niche"], "streetwear")
-
-    def test_legacy_empty_niche_remains_valid(self) -> None:
-        """Rétro-compat : ``niche=""`` historiquement autorisé reste valide."""
-        from watcher import _normalize_entry
-
-        out = _normalize_entry(self._entry(niche=""), index=0)
+        out = _normalize_entry(self._entry(), index=0)
         self.assertEqual(out["niches"], [])
-        self.assertEqual(out["niche"], "")
+        self.assertNotIn("niche", out)
 
     def test_t_type_placeholder_becomes_none(self) -> None:
         from watcher import _normalize_entry
@@ -620,8 +613,8 @@ class WatchlistSchemaMigrationTest(unittest.TestCase):
         )
         self.assertEqual(out["niches"], ["humour", "sketch"])
 
-    def test_niches_priority_overrides_legacy_niche(self) -> None:
-        """Si les deux champs sont présents, ``niches`` (liste) prime."""
+    def test_legacy_niche_field_is_dropped(self) -> None:
+        """Un champ ``niche`` (string) résiduel est ignoré, pas réexposé."""
         from watcher import _normalize_entry
 
         out = _normalize_entry(
@@ -629,7 +622,9 @@ class WatchlistSchemaMigrationTest(unittest.TestCase):
             index=0,
         )
         self.assertEqual(out["niches"], ["humour", "réaction"])
-        self.assertEqual(out["niche"], "humour")  # alias = niches[0], pas l'ancien
+        # ``niche`` passe par le passthrough des clés inconnues mais n'est plus
+        # produit comme alias dérivé de ``niches``.
+        self.assertEqual(out.get("niche"), "ignored_legacy")
 
     def test_round_trip_save_load_preserves_niches(self) -> None:
         from watcher import load_watchlist, save_watchlist
@@ -643,7 +638,7 @@ class WatchlistSchemaMigrationTest(unittest.TestCase):
             loaded = load_watchlist(path=p)
             self.assertEqual(len(loaded), 1)
             self.assertEqual(loaded[0]["niches"], ["humour", "sketch"])
-            self.assertEqual(loaded[0]["niche"], "humour")
+            self.assertNotIn("niche", loaded[0])
 
 
 if __name__ == "__main__":
