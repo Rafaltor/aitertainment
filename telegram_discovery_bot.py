@@ -141,22 +141,13 @@ def _read_json(path: Path, default: Any) -> Any:
 
 
 def _atomic_write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from modules.atomic_json import JsonLockTimeout, atomic_write_json
+
     try:
-        with NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=str(path.parent),
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as tmp:
-            json.dump(data, tmp, ensure_ascii=False, indent=2)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-            tmp_path = Path(tmp.name)
-        tmp_path.replace(path)
+        atomic_write_json(path, data)
     except OSError as e:
+        raise DiscoveryBotIOError(f"écriture {path} : {e}") from e
+    except (TimeoutError, JsonLockTimeout) as e:
         raise DiscoveryBotIOError(f"écriture {path} : {e}") from e
 
 
@@ -571,82 +562,6 @@ def _log_reply_markup_debug(username: str, reply_markup: dict[str, Any] | None) 
         len(rows),
         " | ".join(summary),
     )
-
-
-def _format_score_evolution_text(
-    username: str,
-    old_score: float,
-    new_score: float,
-    old_tier: str,
-    new_tier: str,
-) -> str:
-    """Texte court pour ``notify_score_evolution``.
-
-    Format : ``📈 @raikkonenaf : 448 → 745 (+66%) — Tier B→A``.
-
-    L'emoji suit le **sens** de la variation (pas son amplitude). Si
-    ``old_score`` est ≤ 0 ou ``None``, on affiche ``±0%`` plutôt que de
-    faire planter le formattage.
-    """
-    u = (username or "").lstrip("@").strip()
-    try:
-        old_f = float(old_score) if old_score is not None else 0.0
-    except (TypeError, ValueError):
-        old_f = 0.0
-    try:
-        new_f = float(new_score) if new_score is not None else 0.0
-    except (TypeError, ValueError):
-        new_f = 0.0
-
-    if old_f > 0:
-        pct = (new_f - old_f) / old_f * 100.0
-    else:
-        pct = 0.0
-
-    arrow = "📈" if new_f > old_f else "📉" if new_f < old_f else "➡️"
-    sign = "+" if pct >= 0 else ""
-    return (
-        f"{arrow} @{u} : {old_f:.0f} → {new_f:.0f} "
-        f"({sign}{pct:.0f}%) — Tier {old_tier or '?'}→{new_tier or '?'}"
-    )
-
-
-def notify_score_evolution(
-    username: str,
-    old_score: float,
-    new_score: float,
-    old_tier: str,
-    new_tier: str,
-    *,
-    token: str | None = None,
-    chat_id: str | None = None,
-    mock: bool = False,
-) -> dict[str, Any] | None:
-    """Pousse une notif d'**évolution de score** (rescore) — info pure, pas de boutons.
-
-    Distinct de ``notify_candidate`` (qui ouvre les actions de validation).
-    Utilisé par ``rescore_scheduler.run_rescore_cycle`` quand un profil rescoré
-    franchit ``±15 % / ±20 %``.
-    """
-    setup_bot_logger()
-    text = _format_score_evolution_text(
-        username, old_score, new_score, old_tier, new_tier
-    )
-    if mock:
-        _LOG.info("[mock] notify_score_evolution : %s", text)
-        return None
-    try:
-        t, c = _resolve_credentials(token=token, chat_id=chat_id)
-    except DiscoveryBotConfigError as e:
-        _LOG.warning("notify_score_evolution skip : %s", e)
-        return None
-
-    payload = {
-        "chat_id": c,
-        "text": text,
-        "disable_web_page_preview": True,
-    }
-    return _telegram_post("sendMessage", payload, token=t)
 
 
 def _edit_message(
@@ -1225,7 +1140,6 @@ __all__ = [
     "add_to_watchlist",
     "handle_callback",
     "notify_candidate",
-    "notify_score_evolution",
     "run_bot",
     "setup_bot_logger",
 ]

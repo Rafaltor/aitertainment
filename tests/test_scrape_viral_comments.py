@@ -47,7 +47,7 @@ class CountEntriesTest(unittest.TestCase):
             self.assertEqual(_count_entries(path), 1)
 
     def test_count_entries_wrapped_entries_key(self) -> None:
-        from scripts.instagram_browser import load_raw_comments_file
+        from scripts.instagram_browser import load_viral_comments_file
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "viral.json"
@@ -62,9 +62,52 @@ class CountEntriesTest(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            entries, keys = load_raw_comments_file(path)
+            entries, keys = load_viral_comments_file(path)
             self.assertEqual(len(entries), 2)
             self.assertEqual(len(keys), 2)
+
+    def test_load_raises_on_corrupt_json(self) -> None:
+        from scripts.instagram_browser import ViralCommentsIOError, load_viral_comments_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "viral.json"
+            path.write_text("[{not valid json", encoding="utf-8")
+            with self.assertRaises(ViralCommentsIOError):
+                load_viral_comments_file(path, retries=1, retry_delay_s=0)
+
+    def test_save_merge_keeps_existing(self) -> None:
+        from scripts.instagram_browser import load_viral_comments_file, save_viral_comments_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "viral.json"
+            save_viral_comments_file(
+                [{"media_id": "a", "text": "un", "username": "u1"}],
+                path,
+                merge=False,
+                allow_shrink=True,
+            )
+            save_viral_comments_file(
+                [{"media_id": "b", "text": "deux", "username": "u2"}],
+                path,
+                merge=True,
+            )
+            entries, _ = load_viral_comments_file(path)
+            self.assertEqual(len(entries), 2)
+
+    def test_save_refuses_empty_pool(self) -> None:
+        from scripts.instagram_browser import load_viral_comments_file, save_viral_comments_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "viral.json"
+            save_viral_comments_file(
+                [{"media_id": "a", "text": "un", "username": "u"}],
+                path,
+                merge=False,
+                allow_shrink=True,
+            )
+            save_viral_comments_file([], path, merge=True, allow_empty=False)
+            entries, _ = load_viral_comments_file(path)
+            self.assertEqual(len(entries), 1)
 
 
 class FilterReelsForScrapeTest(unittest.TestCase):

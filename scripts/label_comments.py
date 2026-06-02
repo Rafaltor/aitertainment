@@ -105,9 +105,6 @@ def load_viral_comments(path: Path | str | None = None) -> list[dict[str, Any]]:
     return []
 
 
-load_raw_comments = load_viral_comments  # alias rétrocompat tests / scripts
-
-
 def load_training_comments(
     path: Path | str | None = None,
 ) -> tuple[list[dict[str, Any]], set[str]]:
@@ -615,16 +612,21 @@ _LABEL_FIELDS_ON_RAW = (
 def save_viral_comments(
     entries: list[dict[str, Any]],
     path: Path | str | None = None,
+    *,
+    allow_shrink: bool = False,
+    allow_empty: bool = False,
 ) -> None:
-    """Écrit ``viral_comments.json`` de façon atomique."""
+    """Écrit ``viral_comments.json`` (verrou + garde-fou anti-écrasement)."""
+    from scripts.instagram_browser import save_viral_comments_file
+
     p = _resolve_path(Path(path) if path is not None else VIRAL_COMMENTS_PATH)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(entries, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    save_viral_comments_file(
+        entries,
+        p,
+        merge=False,
+        allow_shrink=allow_shrink,
+        allow_empty=allow_empty,
     )
-    os.replace(tmp, p)
 
 
 def purge_labeled_from_viral_pool(
@@ -654,7 +656,12 @@ def purge_labeled_from_viral_pool(
 
     removed = len(viral_entries) - len(remaining)
     if removed:
-        save_viral_comments(remaining, viral_path)
+        save_viral_comments(
+            remaining,
+            viral_path,
+            allow_shrink=True,
+            allow_empty=True,
+        )
     return removed, len(remaining)
 
 
@@ -761,12 +768,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Pool viral source (défaut : data/viral_comments.json).",
     )
     parser.add_argument(
-        "--raw-path",
-        type=Path,
-        default=None,
-        help="Alias de --viral-path (déprécié).",
-    )
-    parser.add_argument(
         "--training-path",
         type=Path,
         default=None,
@@ -781,7 +782,7 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-    viral_path = args.viral_path or args.raw_path or VIRAL_COMMENTS_PATH
+    viral_path = args.viral_path or VIRAL_COMMENTS_PATH
     training_path = args.training_path or TRAINING_COMMENTS_PATH
 
     if args.reset_all_labels:

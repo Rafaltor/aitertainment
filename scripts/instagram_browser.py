@@ -347,8 +347,64 @@ def build_comment_dedup_key(media_id: str, text: str) -> str:
     return f"{media_id}||{text.strip().lower()}"
 
 
-def load_raw_comments_file(
+class ViralCommentsIOError(RuntimeError):
+    """Lecture / écriture pool viral refusée pour éviter perte de données."""
+
+
+def _parse_viral_comments_payload(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, list):
+        return [e for e in data if isinstance(e, dict)]
+    if isinstance(data, dict):
+        raw_entries = data.get("entries") or data.get("comments") or []
+        if isinstance(raw_entries, list):
+            return [e for e in raw_entries if isinstance(e, dict)]
+    return []
+
+
+def _dedup_keys_for_entries(entries: list[dict[str, Any]]) -> set[str]:
+    return {
+        build_comment_dedup_key(str(e["media_id"]), str(e["text"]))
+        for e in entries
+        if isinstance(e, dict) and e.get("media_id") and e.get("text")
+    }
+
+
+def _load_viral_comments_unlocked(
+    path: Path,
+    *,
+    retries: int = 5,
+    retry_delay_s: float = 0.15,
+) -> tuple[list[dict[str, Any]], set[str]]:
+    import time
+
+    if not path.exists():
+        return [], set()
+    last_err: json.JSONDecodeError | None = None
+    for attempt in range(max(1, retries)):
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+            if not raw:
+                return [], set()
+            data = json.loads(raw)
+            entries = _parse_viral_comments_payload(data)
+            return entries, _dedup_keys_for_entries(entries)
+        except json.JSONDecodeError as e:
+            last_err = e
+            if attempt + 1 < retries:
+                time.sleep(retry_delay_s)
+                continue
+            break
+    raise ViralCommentsIOError(
+        f"JSON invalide dans {path} après {retries} tentative(s) — "
+        "arrêt pour ne pas écraser le pool viral."
+    ) from last_err
+
+
+def load_viral_comments_file(
     path: Path | str,
+    *,
+    retries: int = 5,
+    retry_delay_s: float = 0.15,
 ) -> tuple[list[dict[str, Any]], set[str]]:
     """Charge un fichier commentaires JSON → ``(entries, clés dédup)``.
 
@@ -356,43 +412,85 @@ def load_raw_comments_file(
 
     * ``[{...}, ...]`` (liste racine, écriture scrape)
     * ``{"entries": [...]}`` ou ``{"comments": [...]}``
+
+    En cas de JSON illisible (souvent lecture pendant un ``save`` concurrent),
+    réessaie puis lève ``ViralCommentsIOError`` — **ne repart jamais silencieusement
+    de zéro**, ce qui provoquait des écrasements du pool à ``[]``.
     """
     p = Path(path)
-    if not p.exists():
-        return [], set()
-    raw = p.read_text(encoding="utf-8").strip()
-    if not raw:
-        return [], set()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        log.warning("JSON invalide ou vide (%s) — repart de zéro.", p)
-        return [], set()
-    if isinstance(data, list):
-        entries = [e for e in data if isinstance(e, dict)]
-    elif isinstance(data, dict):
-        raw_entries = data.get("entries") or data.get("comments") or []
-        entries = (
-            [e for e in raw_entries if isinstance(e, dict)]
-            if isinstance(raw_entries, list)
-            else []
-        )
-    else:
-        entries = []
-    keys = {
-        build_comment_dedup_key(str(e["media_id"]), str(e["text"]))
-        for e in entries
-        if isinstance(e, dict) and e.get("media_id") and e.get("text")
-    }
-    return entries, keys
+    return _load_viral_comments_unlocked(
+        p, retries=retries, retry_delay_s=retry_delay_s
+    )
 
 
-def save_raw_comments_file(entries: list[dict[str, Any]], path: Path | str) -> None:
+def save_viral_comments_file(
+    entries: list[dict[str, Any]],
+    path: Path | str,
+    *,
+    merge: bool = True,
+    allow_shrink: bool = False,
+    allow_empty: bool = False,
+) -> None:
+    """Persiste le pool viral.
+
+    * ``merge=True`` (défaut scrape) : recharge le disque sous verrou et fusionne
+      par clé ``media_id||text`` avant écriture.
+    * ``merge=False`` (ex. clean) : remplace le fichier ; refuse une chute brutale
+      sauf si ``allow_shrink=True``.
+    """
+    from modules.atomic_json import json_lock
+
     p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(p)
+    with json_lock(p):
+        on_disk, _ = _load_viral_comments_unlocked(p, retries=5)
+        if merge:
+            merged: dict[str, dict[str, Any]] = {}
+            for entry in on_disk + list(entries):
+                if not isinstance(entry, dict):
+                    continue
+                media_id = str(entry.get("media_id") or "")
+                text = str(entry.get("text") or "")
+                if not media_id or not text:
+                    continue
+                merged[build_comment_dedup_key(media_id, text)] = entry
+            final = list(merged.values())
+        else:
+            final = list(entries)
+
+        if (
+            not allow_shrink
+            and len(on_disk) >= 50
+            and len(final) < len(on_disk) * 0.5
+        ):
+            raise ViralCommentsIOError(
+                f"Refus d'écrire {len(final)} entrée(s) (fichier en avait {len(on_disk)}). "
+                "Utilisez --force sur clean_comments ou corrigez la cause."
+            )
+
+        if len(final) == 0 and not allow_empty:
+            log.warning(
+                "Refus d'écrire %s vide (%d entrée(s) sur disque) — fichier inchangé.",
+                p.name,
+                len(on_disk),
+            )
+            return
+
+        if len(on_disk) >= 50:
+            autobak = p.with_suffix(p.suffix + ".autobak")
+            try:
+                import shutil
+
+                shutil.copy2(p, autobak)
+            except OSError as e:
+                log.warning("Backup auto %s impossible : %s", autobak.name, e)
+
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(final, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        tmp.replace(p)
 
 
 def scrape_profile_comments(
@@ -516,58 +614,6 @@ def scrape_profile_comments(
     return candidates
 
 
-def collect_top_comments(
-    username: str,
-    context: BrowserContext,
-    reels: list[dict[str, Any]],
-    niches: list[str] | str,
-    *,
-    comments_path: Path | str,
-    logger: logging.Logger | None = None,
-) -> int:
-    """Scrape profil et fusionne dans ``comments_path`` (legacy / opt-in discovery)."""
-    log_cb = logger or log
-    store_path = Path(comments_path)
-    entries, dedup_keys = load_raw_comments_file(store_path)
-    scraped = scrape_profile_comments(
-        username, context, reels, niches, logger=log_cb
-    )
-    collected = 0
-    for comment in scraped:
-        media_id = str(comment.get("media_id") or "").strip()
-        comment_text = str(comment.get("text") or "").strip()
-        if not media_id or not comment_text:
-            continue
-        dedup_key = build_comment_dedup_key(media_id, comment_text)
-        if dedup_key in dedup_keys:
-            continue
-        dedup_keys.add(dedup_key)
-        entries.append(
-            {
-                "media_id": media_id,
-                "username": str(comment.get("username") or username).lstrip("@").strip(),
-                "niches": list(comment.get("niches") or niches),
-                "text": comment_text,
-                "comment_likes": int(comment.get("comment_likes") or 0),
-                "views": int(comment.get("views") or 0),
-                "comment_to_like_ratio": 0.0,
-                "caption": "",
-                "hashtags": [],
-                "audio_id": "",
-                "t_type": None,
-                "t_type_profile": None,
-                "llm_validated": False,
-                "collected_at": datetime.now(timezone.utc)
-                .replace(microsecond=0)
-                .isoformat(),
-            }
-        )
-        collected += 1
-    if collected:
-        save_raw_comments_file(entries, store_path)
-    return collected
-
-
 def collect_viral_comments(
     username: str,
     context: BrowserContext,
@@ -617,7 +663,7 @@ def collect_viral_comments(
     niches_list = list(creator_meta["niches"])
 
     out_path = Path(output_path) if output_path is not None else VIRAL_COMMENTS_PATH
-    entries, dedup_keys = load_raw_comments_file(out_path)
+    entries, dedup_keys = load_viral_comments_file(out_path)
     page = context.new_page()
 
     try:
@@ -740,7 +786,7 @@ def collect_viral_comments(
         page.close()
 
     if stats["collected"]:
-        save_raw_comments_file(entries, out_path)
+        save_viral_comments_file(entries, out_path)
     log_cb.info(
         "Viral comments @%s : %d nouveau(x) (≥%d likes) — %d parsé(s), "
         "%d reel(s) visité(s), fichier %s.",
@@ -1178,7 +1224,7 @@ def collect_viral_comments_from_feed(
     }
     idx = creator_index if creator_index is not None else build_creator_index()
     out_path = Path(output_path) if output_path is not None else VIRAL_COMMENTS_PATH
-    entries, dedup_keys = load_raw_comments_file(out_path)
+    entries, dedup_keys = load_viral_comments_file(out_path)
     new_since_save = 0
 
     # —— Phase 1 : découverte feed passive (GraphQL, pas de panneau commentaires) ——
@@ -1386,7 +1432,7 @@ def collect_viral_comments_from_feed(
                     stats["collected"] += 1
 
                 if new_on_reel > 0:
-                    save_raw_comments_file(entries, out_path)
+                    save_viral_comments_file(entries, out_path)
                     new_since_save += new_on_reel
 
                 log_cb.info(
@@ -1412,7 +1458,7 @@ def collect_viral_comments_from_feed(
         profile_page.close()
 
     if stats["collected"] and new_since_save == 0:
-        save_raw_comments_file(entries, out_path)
+        save_viral_comments_file(entries, out_path)
     log_cb.info(
         "Fil Reels : %d commentaire(s) viral(aux) (≥%d likes) → %s.",
         stats["collected"],
@@ -2037,7 +2083,16 @@ def _ingest_graphql_media_node(
     if has_pinned_field:
         is_pinned = _is_pinned_from_clips_tab_ids(node.get("clips_tab_pinned_user_ids"))
 
-    if not patch and not caption and not has_pinned_field and not owner_username:
+    product_type = node.get("product_type")
+    product_type_str = str(product_type).strip() if product_type is not None else ""
+
+    if (
+        not patch
+        and not caption
+        and not has_pinned_field
+        and not owner_username
+        and not product_type_str
+    ):
         return
 
     normalized = _normalize_metric_bucket(patch) if patch else {}
@@ -2051,6 +2106,8 @@ def _ingest_graphql_media_node(
             _merge_owner_username_into_bucket(bucket, owner_username)
         if has_pinned_field:
             _merge_pinned_into_bucket(bucket, is_pinned)
+        if product_type_str:
+            bucket["product_type"] = product_type_str
         if code:
             metrics_by_code[code] = dict(bucket)
     elif code:
@@ -2063,6 +2120,8 @@ def _ingest_graphql_media_node(
             _merge_owner_username_into_bucket(bucket, owner_username)
         if has_pinned_field:
             _merge_pinned_into_bucket(bucket, is_pinned)
+        if product_type_str:
+            bucket["product_type"] = product_type_str
 
 
 def _walk_graphql_metrics(
@@ -2818,6 +2877,63 @@ def get_reel_caption(media_id: str, context: BrowserContext) -> str:
     return caption
 
 
+def get_reel_page_metadata(media_id: str, context: BrowserContext) -> dict[str, str]:
+    """Caption + propriétaire depuis une seule visite ``/reel/{id}/``."""
+    mid = str(media_id or "").strip()
+    if not mid:
+        return {"caption": "", "owner_username": ""}
+
+    caption = ""
+
+    def capture(response: Response) -> None:
+        nonlocal caption
+        if "graphql" not in response.url or caption:
+            return
+        try:
+            text = response.text()
+            if mid not in text:
+                return
+            idx = text.find(mid)
+            if idx < 0:
+                return
+            window = text[idx : idx + 2000]
+            matches = re.findall(
+                r'"(?:caption_text|text)"\s*:\s*"((?:[^"\\]|\\.){5,500})"',
+                window,
+            )
+            for raw in matches:
+                decoded = _unescape_json_string_fragment(raw)
+                if len(decoded.split()) >= 3 and "Ne pas suggérer" not in decoded:
+                    caption = decoded
+                    break
+        except Exception:
+            pass
+
+    owner_username = ""
+    page = context.new_page()
+    try:
+        page.on("response", capture)
+        page.goto(
+            f"{BASE_URL}/reel/{mid}/",
+            timeout=_REQUEST_TIMEOUT_MS,
+            wait_until="domcontentloaded",
+        )
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(3000)
+        if not caption:
+            caption = extract_reel_caption_from_dom(page)
+        owner_username = _extract_reel_owner_username(page, media_id=mid)
+    except Exception:
+        pass
+    finally:
+        page.close()
+
+    return {
+        "caption": str(caption or "").strip(),
+        "owner_username": str(owner_username or "").lstrip("@").strip().lower(),
+    }
+
+
 def get_recent_reels(
     username: str, context: BrowserContext, max_reels: int = 5
 ) -> list[dict[str, Any]]:
@@ -2878,6 +2994,8 @@ def get_recent_reels(
                     "reshare_count": 0,
                     "caption": caption,
                     "is_pinned": is_pinned,
+                    "product_type": str(entry.get("product_type") or ""),
+                    "owner_username": _owner_username_from_bucket(entry),
                 }
             )
         # caption vide : pas de get_reel_caption() ici (réservé à l'embedder).

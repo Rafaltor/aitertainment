@@ -39,6 +39,58 @@ class GeneratorPromptTest(unittest.TestCase):
         self.assertNotIn("🤣", out)
         self.assertLessEqual(len(out.split()), 10)
 
+    def test_transcript_in_input_block_and_alpaca_prompt(self) -> None:
+        block = build_generator_input_block(
+            t_type_profile="T2b",
+            niches=["humour"],
+            caption="reel test",
+            transcript="il dit que le drop est vendredi",
+        )
+        self.assertIn("Transcript: il dit que le drop est vendredi", block)
+        prompt = build_alpaca_prompt(block)
+        self.assertIn("Transcript: il dit que le drop est vendredi", prompt)
+        self.assertIn("Transcript est fourni", prompt)
+
+    def test_transcript_truncated_at_500_chars(self) -> None:
+        long_tr = "x" * 600
+        block = build_generator_input_block(
+            t_type_profile="T2",
+            niches=["humour"],
+            transcript=long_tr,
+        )
+        self.assertIn(f"Transcript: {'x' * 500}", block)
+        self.assertNotIn("x" * 501, block)
+
+    def test_creator_and_reel_in_input_block(self) -> None:
+        block = build_generator_input_block(
+            t_type_profile="T2b",
+            niches=["humour"],
+            creator_username="compte_a",
+            reel_id="ABC123",
+        )
+        self.assertIn("Creator: @compte_a", block)
+        self.assertIn("Reel: ABC123", block)
+
+    def test_visual_description_in_input_block(self) -> None:
+        block = build_generator_input_block(
+            t_type_profile="T2b",
+            niches=["humour"],
+            visual_description="Un homme fait tomber un gâteau.",
+        )
+        self.assertIn("Visuel: Un homme fait tomber un gâteau.", block)
+        prompt = build_alpaca_prompt(block)
+        self.assertIn("Visuel est fourni", prompt)
+
+    def test_visual_description_truncated_at_300_chars(self) -> None:
+        long_vis = "y" * 400
+        block = build_generator_input_block(
+            t_type_profile="T2",
+            niches=["humour"],
+            visual_description=long_vis,
+        )
+        self.assertIn(f"Visuel: {'y' * 300}", block)
+        self.assertNotIn("y" * 301, block)
+
 
 if __name__ == "__main__":
     unittest.main()

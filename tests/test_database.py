@@ -1,4 +1,4 @@
-"""Tests database.py — persistance + tier + rescore (pas de réseau)."""
+"""Tests database.py — persistance + tier (pas de réseau)."""
 
 from __future__ import annotations
 
@@ -70,25 +70,6 @@ class ComputeTierTest(unittest.TestCase):
         self.assertEqual(database.compute_tier(399), "C")
         self.assertEqual(database.compute_tier(0), "C")
         self.assertEqual(database.compute_tier(-10), "C")
-
-
-class ComputeNextRescoreTest(unittest.TestCase):
-    def test_tier_A_in_seven_days(self) -> None:
-        anchor = datetime(2026, 5, 8, 12, 0, 0)
-        out = database.compute_next_rescore_at("A", anchor=anchor)
-        self.assertEqual(out, "2026-05-15T12:00:00")
-
-    def test_tier_B_in_thirty_days(self) -> None:
-        anchor = datetime(2026, 5, 8, 12, 0, 0)
-        out = database.compute_next_rescore_at("B", anchor=anchor)
-        self.assertEqual(out, "2026-06-07T12:00:00")
-
-    def test_tier_C_returns_none(self) -> None:
-        self.assertIsNone(database.compute_next_rescore_at("C"))
-
-    def test_invalid_tier_raises(self) -> None:
-        with self.assertRaises(database.DatabaseIOError):
-            database.compute_next_rescore_at("D")
 
 
 class LoadSaveTest(unittest.TestCase):
@@ -163,8 +144,6 @@ class UpsertProfileTest(unittest.TestCase):
         self.assertEqual(profile["added_via"], "discovery")
         self.assertEqual(profile["added_at"], "2026-05-08T12:00:00")
         self.assertEqual(profile["last_scored_at"], "2026-05-08T12:00:00")
-        # Tier B → +30 jours
-        self.assertEqual(profile["next_rescore_at"], "2026-06-07T12:00:00")
         self.assertFalse(profile["archived"])
         self.assertEqual(len(profile["scores_history"]), 1)
 
@@ -176,10 +155,9 @@ class UpsertProfileTest(unittest.TestCase):
             added_via="discovery",
         )
         self.assertEqual(profile["tier"], "A")
-        self.assertEqual(profile["next_rescore_at"], "2026-05-15T12:00:00")
         self.assertFalse(profile["archived"])
 
-    def test_insert_tier_C_archives_and_no_next_rescore(self) -> None:
+    def test_insert_tier_C_archives(self) -> None:
         db: dict[str, Any] = {"profiles": {}}
         profile = database.upsert_profile(
             db,
@@ -188,7 +166,6 @@ class UpsertProfileTest(unittest.TestCase):
         )
         self.assertEqual(profile["tier"], "C")
         self.assertTrue(profile["archived"])
-        self.assertIsNone(profile["next_rescore_at"])
 
     def test_history_entry_contains_all_metric_fields(self) -> None:
         db: dict[str, Any] = {"profiles": {}}
@@ -231,7 +208,6 @@ class UpsertProfileTest(unittest.TestCase):
         self.assertEqual(profile["t_type_original"], "T2")
         self.assertEqual(profile["last_scored_at"], "2026-05-08T12:00:00")
         self.assertEqual(profile["tier"], "A")
-        self.assertEqual(profile["next_rescore_at"], "2026-05-15T12:00:00")
         self.assertEqual(len(profile["scores_history"]), 2)
         self.assertEqual(profile["scores_history"][0]["date"], "2026-05-01T12:00:00")
         self.assertEqual(profile["scores_history"][1]["date"], "2026-05-08T12:00:00")
@@ -278,7 +254,6 @@ class UpsertProfileTest(unittest.TestCase):
                     "added_via": "seed",
                     "added_at": "2026-04-01T00:00:00",
                     "last_scored_at": "2026-04-01T00:00:00",
-                    "next_rescore_at": "2026-05-01T00:00:00",
                     "archived": False,
                     "scores_history": [],
                 }
@@ -340,70 +315,6 @@ class UpsertProfileTest(unittest.TestCase):
             database.upsert_profile(db, bad, added_via="discovery")
 
 
-class GetProfilesDueForRescoreTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.now = datetime(2026, 6, 1, 12, 0, 0)
-        self.db: dict[str, Any] = {
-            "profiles": {
-                "due_a": {
-                    "tier": "A",
-                    "archived": False,
-                    "next_rescore_at": "2026-05-30T12:00:00",
-                    "scores_history": [],
-                },
-                "future_b": {
-                    "tier": "B",
-                    "archived": False,
-                    "next_rescore_at": "2026-06-30T12:00:00",
-                    "scores_history": [],
-                },
-                "archived_c": {
-                    "tier": "C",
-                    "archived": True,
-                    "next_rescore_at": None,
-                    "scores_history": [],
-                },
-                "due_b_exactly_now": {
-                    "tier": "B",
-                    "archived": False,
-                    "next_rescore_at": "2026-06-01T12:00:00",
-                    "scores_history": [],
-                },
-                "no_next_rescore": {
-                    "tier": "B",
-                    "archived": False,
-                    "next_rescore_at": None,
-                    "scores_history": [],
-                },
-            }
-        }
-
-    def test_returns_only_due_and_active(self) -> None:
-        out = database.get_profiles_due_for_rescore(self.db, now=self.now)
-        usernames = {p["username"] for p in out}
-        self.assertEqual(usernames, {"due_a", "due_b_exactly_now"})
-
-    def test_returned_dicts_include_username(self) -> None:
-        out = database.get_profiles_due_for_rescore(self.db, now=self.now)
-        for p in out:
-            self.assertIn("username", p)
-            self.assertIsInstance(p["username"], str)
-
-    def test_returned_dicts_are_copies(self) -> None:
-        """Muter le retour ne doit pas altérer la db."""
-        out = database.get_profiles_due_for_rescore(self.db, now=self.now)
-        for p in out:
-            p["tier"] = "Z"
-        for username, profile in self.db["profiles"].items():
-            self.assertNotEqual(profile.get("tier"), "Z", msg=username)
-
-    def test_empty_db(self) -> None:
-        self.assertEqual(
-            database.get_profiles_due_for_rescore({"profiles": {}}, now=self.now),
-            [],
-        )
-
-
 class PromoteTierTest(unittest.TestCase):
     def setUp(self) -> None:
         self.db: dict[str, Any] = {"profiles": {}}
@@ -413,25 +324,21 @@ class PromoteTierTest(unittest.TestCase):
             added_via="manual",
         )
 
-    def test_promote_C_to_A_unarchives_and_sets_next_rescore(self) -> None:
+    def test_promote_C_to_A_unarchives(self) -> None:
         profile = database.promote_tier(self.db, "creator_a", "A")
         self.assertEqual(profile["tier"], "A")
         self.assertFalse(profile["archived"])
-        self.assertEqual(profile["next_rescore_at"], "2026-05-15T12:00:00")
 
-    def test_promote_to_B_unarchives_and_uses_30d(self) -> None:
+    def test_promote_to_B_unarchives(self) -> None:
         profile = database.promote_tier(self.db, "creator_a", "B")
         self.assertEqual(profile["tier"], "B")
         self.assertFalse(profile["archived"])
-        self.assertEqual(profile["next_rescore_at"], "2026-06-07T12:00:00")
 
-    def test_promote_to_C_archives_and_clears_next_rescore(self) -> None:
-        # On part d'un tier B forcé.
+    def test_promote_to_C_archives(self) -> None:
         database.promote_tier(self.db, "creator_a", "B")
         profile = database.promote_tier(self.db, "creator_a", "C")
         self.assertEqual(profile["tier"], "C")
         self.assertTrue(profile["archived"])
-        self.assertIsNone(profile["next_rescore_at"])
 
     def test_invalid_tier_raises(self) -> None:
         with self.assertRaises(database.DatabaseIOError):
@@ -459,21 +366,10 @@ class ArchiveProfileTest(unittest.TestCase):
         profile = database.archive_profile(self.db, "creator_a")
         self.assertTrue(profile["archived"])
         self.assertEqual(profile["tier"], "C")
-        self.assertIsNone(profile["next_rescore_at"])
 
     def test_archive_unknown_raises(self) -> None:
         with self.assertRaises(database.DatabaseIOError):
             database.archive_profile(self.db, "ghost")
-
-    def test_archive_excludes_from_due(self) -> None:
-        # Sans archivage le profil A est due à j+7. On l'archive → exclu.
-        database.archive_profile(self.db, "creator_a")
-        far_future = datetime(2099, 1, 1)
-        self.assertEqual(
-            database.get_profiles_due_for_rescore(self.db, now=far_future),
-            [],
-        )
-
 
 class ValidateProfileTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -613,10 +509,7 @@ class IntegrationTest(unittest.TestCase):
             self.assertEqual(reloaded["profiles"]["alice"]["tier"], "A")
             self.assertEqual(reloaded["profiles"]["bob"]["tier"], "C")
             self.assertTrue(reloaded["profiles"]["bob"]["archived"])
-
-            now = datetime(2026, 5, 16, 12, 0, 0)
-            due = database.get_profiles_due_for_rescore(reloaded, now=now)
-            self.assertEqual([p["username"] for p in due], ["alice"])
+            self.assertFalse(reloaded["profiles"]["alice"]["archived"])
 
 
 if __name__ == "__main__":

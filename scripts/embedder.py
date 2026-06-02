@@ -313,6 +313,108 @@ def download_audio_from_reel(
     return wav_files[0] if wav_files else None
 
 
+def download_reel_video(
+    media_id: str, context: BrowserContext, tmp_dir: Path
+) -> Path | None:
+    """Télécharge la vidéo MP4 d'un Reel via yt-dlp et les cookies Playwright."""
+    cookie_file = tmp_dir / "cookies.txt"
+    export_playwright_cookies(context, cookie_file)
+
+    media_id = str(media_id or "").strip()
+    mp4_path = tmp_dir / f"{media_id}.mp4"
+    try:
+        result = subprocess.run(
+            [
+                "yt-dlp",
+                "--cookies",
+                str(cookie_file),
+                "-f",
+                "best[ext=mp4]/best",
+                "-o",
+                str(tmp_dir / "%(id)s.%(ext)s"),
+                "--quiet",
+                f"https://www.instagram.com/reel/{media_id}/",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except FileNotFoundError:
+        _LOG.warning("yt-dlp absent — vidéo ignorée pour %s.", media_id)
+        return None
+    except subprocess.TimeoutExpired:
+        _LOG.warning("yt-dlp timeout (vidéo) pour %s.", media_id)
+        return None
+
+    if result.returncode != 0:
+        stderr = result.stderr or ""
+        if "No video formats found" in stderr:
+            _LOG.debug(
+                "Reel %s : pas de vidéo (carousel/photo) — skip transcript.",
+                media_id,
+            )
+            return None
+        _LOG.warning("yt-dlp vidéo échoué pour %s : %s", media_id, stderr[:200])
+        return None
+
+    if mp4_path.exists():
+        return mp4_path
+    for candidate in sorted(tmp_dir.glob("*.mp4")):
+        if candidate.stem == media_id or media_id in candidate.name:
+            return candidate
+    mp4_files = sorted(tmp_dir.glob("*.mp4"))
+    if len(mp4_files) == 1:
+        return mp4_files[0]
+    if mp4_files:
+        _LOG.warning(
+            "plusieurs MP4 dans %s pour %s — fichier ambigu ignoré.",
+            tmp_dir,
+            media_id,
+        )
+    return None
+
+
+def extract_wav_from_video(video_path: Path, tmp_dir: Path | None = None) -> Path | None:
+    """Extrait un WAV mono 16 kHz depuis un MP4 (entrée Whisper)."""
+    video_path = Path(video_path)
+    if not video_path.exists():
+        return None
+    out_dir = Path(tmp_dir) if tmp_dir else video_path.parent
+    wav_path = out_dir / f"{video_path.stem}.wav"
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(video_path),
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                str(wav_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except FileNotFoundError:
+        _LOG.warning("ffmpeg absent — extraction audio ignorée pour %s.", video_path)
+        return None
+    except subprocess.TimeoutExpired:
+        _LOG.warning("ffmpeg timeout pour %s.", video_path)
+        return None
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "")[:200]
+        _LOG.warning("ffmpeg échoué pour %s : %s", video_path, stderr)
+        return None
+    return wav_path if wav_path.exists() else None
+
+
 _OG_UI_NOISE = ("Ne pas suggérer", "View this reel", "Watch on Instagram")
 
 

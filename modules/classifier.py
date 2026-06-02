@@ -96,6 +96,10 @@ def _generate_comments_alpaca(
         caption=str(ctx.get("caption") or "").strip(),
         hashtags=hashtags,
         audio_id=str(ctx.get("audio_id") or ctx.get("audio") or "").strip(),
+        transcript=str(ctx.get("transcript") or "").strip(),
+        visual_description=str(ctx.get("visual_description") or "").strip(),
+        reel_id=str(ctx.get("reel_id") or ctx.get("video_id") or "").strip(),
+        creator_username=str(ctx.get("creator_username") or ctx.get("username") or "").strip(),
         named_axes=named_axes if isinstance(named_axes, dict) and named_axes else None,
     )
     prompt = build_alpaca_prompt(input_block, instruction=GENERATOR_INSTRUCTION)
@@ -116,6 +120,7 @@ def _generate_comments_alpaca(
                 "num_predict": 28,
                 "stop": ["\n", "###", "@"],
             },
+            "keep_alive": 0,
         }
         try:
             resp = _http_post(ollama_url, json_body=body, timeout=120)

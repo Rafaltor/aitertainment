@@ -15,6 +15,7 @@ from modules.comment_quality import (
     is_repetitive_comment,
     strip_emojis,
 )
+from modules.generator_prompt import MAX_GENERATOR_OUTPUT_WORDS
 
 
 class AssessCommentQualityTest(unittest.TestCase):
@@ -29,7 +30,7 @@ class AssessCommentQualityTest(unittest.TestCase):
         self.assertIn(REJECT_EMOJI_ONLY, q.reasons)
 
     def test_rejects_too_long(self) -> None:
-        text = " ".join(["mot"] * 6)
+        text = " ".join(["mot"] * (MAX_GENERATOR_OUTPUT_WORDS + 1))
         q = assess_comment_quality(text)
         self.assertFalse(q.ok)
         self.assertIn(REJECT_TOO_LONG, q.reasons)

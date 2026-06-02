@@ -2,7 +2,9 @@
 
 Guide complet pour faire tourner le pipeline en autonome sur un Mac Mini Apple Silicon (M4 ou M4 Pro). Toutes les commandes sont à exécuter dans Terminal.
 
-> **Cible** : machine dédiée allumée 24/7, daemons Watcher + scheduler de rescore lancés au boot via `launchd` (équivalent macOS de cron + systemd).
+> **Cible** : machine dédiée allumée 24/7, daemons Watcher + bot Discovery lancés au boot via `launchd` (équivalent macOS de cron + systemd).
+
+**Checklist prod `.env`** : `DISABLE_HUMAN_SCHEDULE=false`, `OLLAMA_GENERATOR_MODEL` défini, `data/instagram_cookies.json` présent. Remplir `data/seeds.json` (comptes seed) pour lancer Discovery.
 
 ---
 
@@ -186,7 +188,7 @@ Doit afficher quelque chose comme :
 
 ```bash
 python -m unittest discover -s tests
-# Doit afficher : Ran 242 tests in ~30s -> OK
+# Doit afficher : Ran 330+ tests -> OK
 ```
 
 ### 7.3 Discovery — score d'un profil unique (mock)
@@ -195,18 +197,17 @@ python -m unittest discover -s tests
 python discovery.py --score @raikkonenaf --mock
 ```
 
-### 7.4 Scheduler de rescore — mode dry-run
+### 7.4 Pipeline viral (commentaires → générateur)
 
 ```bash
-python rescore_scheduler.py --due    # liste les profils dûs
-python rescore_scheduler.py --mock   # lance un cycle sans réseau
+.venv/bin/python scripts/scrape_viral_comments.py --target 5000 --min-likes 200
+.venv/bin/python scripts/clean_comments.py --viral
+.venv/bin/python scripts/label_comments.py --limit 100
+.venv/bin/python scripts/clean_comments.py --training
+.venv/bin/python scripts/prepare_dataset.py
 ```
 
-### 7.5 Dataset builder — collectes différées
-
-```bash
-python dataset_builder.py --pending
-```
+Puis fine-tune Colab (`notebooks/finetune_generator.ipynb`) et déploiement Ollama (`scripts/deploy_generator.py`).
 
 Si tout est vert : tu peux passer en mode prod.
 
@@ -314,66 +315,7 @@ Mêmes principes pour `telegram_discovery_bot.py` (long-polling Telegram). Crée
 launchctl load -w ~/Library/LaunchAgents/com.aitertainment.discovery_bot.plist
 ```
 
-### 8.3 Rescore scheduler — 1×/jour à 09:30
-
-Crée `~/Library/LaunchAgents/com.aitertainment.rescore.plist` :
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.aitertainment.rescore</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/paulm/Apps/aitertainment/.venv/bin/python</string>
-        <string>/Users/paulm/Apps/aitertainment/rescore_scheduler.py</string>
-    </array>
-
-    <key>WorkingDirectory</key>
-    <string>/Users/paulm/Apps/aitertainment</string>
-
-    <!-- One-shot quotidien : pas KeepAlive, juste StartCalendarInterval -->
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>9</integer>
-        <key>Minute</key>
-        <integer>30</integer>
-    </dict>
-
-    <key>StandardOutPath</key>
-    <string>/Users/paulm/Apps/aitertainment/logs/launchd_rescore.out.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/paulm/Apps/aitertainment/logs/launchd_rescore.err.log</string>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>LANG</key>
-        <string>fr_FR.UTF-8</string>
-        <key>PYTHONUNBUFFERED</key>
-        <string>1</string>
-    </dict>
-</dict>
-</plist>
-```
-
-```bash
-launchctl load -w ~/Library/LaunchAgents/com.aitertainment.rescore.plist
-```
-
-Le scheduler tournera à 09:30 chaque jour, traitera les profils dûs (next_rescore_at ≤ now) et poussera les notifs `📈 / 📉` sur Telegram en cas de variation ≥ ±15-20%.
-
-### 8.4 Forcer un déclenchement immédiat (debug)
-
-```bash
-launchctl start com.aitertainment.rescore
-```
-
-### 8.5 Désactiver complètement un service
+### 8.3 Désactiver complètement un service
 
 ```bash
 launchctl unload -w ~/Library/LaunchAgents/com.aitertainment.<label>.plist
@@ -442,18 +384,36 @@ sudo pmset -a autorestart 1
 
 | Fichier | Géré par | Remarque |
 |---|---|---|
-| `data/database.json` | `database.py` | Profils + scores_history + tier + planning rescore |
+| `data/database.json` | `database.py` | Profils + scores_history + tier |
 | `data/candidates.json` | `discovery.py` | Candidats Discovery (en attente de validation Telegram) |
 | `data/viral_comments.json` | `scrape_viral_comments.py` | Pool de commentaires non labellisés (fil Reels) |
 | `data/training_comments_viral.json` | `label_comments.py` | Commentaires labellisés (T-types) pour le générateur |
 | `data/generator_dataset.json` | `prepare_dataset.py` | Export Alpaca pour fine-tune Colab |
-| `data/discovery_session.json` | `discovery.py` | Compteur de quota humain quotidien |
 | `data/discovery_bot_state.json` | `telegram_discovery_bot.py` | Offset Telegram pour `getUpdates` |
 | `data/watchlist.json` | `watcher.py`, `scripts/embedder.py` | Créateurs surveillés (watcher + embeddings) |
+| `data/vector_store.json` | `scripts/embedder.py` | Embeddings + axes 32D |
+| `data/dataset_generator.jsonl` | `scripts/prepare_dataset.py` | Export JSONL (fine-tune) |
 | `data/instagram_cookies.json` | `scripts/instagram_browser.py` | Session Playwright (non versionné) |
-| `seeds.json` (racine) | `discovery.py` | Domaines + comptes seed pour exploration |
+| `data/seeds.json` | `discovery.py` | Domaines + comptes seed pour exploration |
 
-Toutes les écritures sont **atomiques** (`tempfile + replace`), donc safe en cas de coupure brutale (panne de courant Mac Mini, kill -9, etc.).
+Écritures **atomiques** + verrou fichier (`modules/atomic_json.py`) sur `database.json`, `watchlist.json`, `candidates.json`, `seeds.json` et état bot.
+
+**Pool viral** : `label_comments` retire du viral ce qui part en training — un viral « bas » est normal si tu as beaucoup labellisé. `clean_comments --viral` réécrit le fichier (backup auto sauf `--no-backup`).
+
+### Scripts (`scripts/`)
+
+| Script | Rôle |
+|---|---|
+| `scrape_viral_comments.py` | Pool `viral_comments.json` (fil Reels) |
+| `clean_comments.py` | Nettoyage viral (`--viral`) et training (`--training`) |
+| `label_comments.py` | Labélisation T-types → `training_comments_viral.json` |
+| `prepare_dataset.py` | Export `generator_dataset.json` + `dataset_generator.jsonl` |
+| `train_from_viral.py` | Orchestrateur clean → label → prepare |
+| `embedder.py` | Embeddings + `vector_store.json` |
+| `deploy_generator.py` / `merge_generator_lora.py` | Post-Colab → Ollama |
+| `instagram_browser.py` | Couche Playwright partagée |
+
+Dépendances merge/deploy : `pip install -r requirements-ml.txt` (hors runtime quotidien).
 
 ---
 
@@ -469,3 +429,37 @@ Toutes les écritures sont **atomiques** (`tempfile + replace`), donc safe en ca
 | Compte Instagram bloqué (challenge) | Pattern trop régulier | Baisser `MAX_PROFILES_PER_DAY`, augmenter les pauses Discovery, renouveler les cookies, attendre 24-48h |
 
 Pour aller plus loin : `man launchd.plist`, `man launchctl`.
+
+---
+
+## 12. Roadmap audit (juin 2026)
+
+| Priorité | Sujet | Statut |
+|---|---|---|
+| P0 | Vestiges instagrapi / `telegram_notify` | Fait |
+| P0 | Suppression `rescore_scheduler`, `sync_discovery_state`, `curate_*` | Fait |
+| P0 | Fusion `clean_comments.py` | Fait |
+| P0 | Verrous JSON cross-process (`atomic_json`) | Fait |
+| P0 | `DISABLE_HUMAN_SCHEDULE` défaut prod (`false`) | Fait |
+| P0 | `seeds.json` vide sur ta machine | **À remplir** (comptes seed) |
+| P1 | Unifier loaders watchlist (`embedder` / `label` / `watcher`) | À faire |
+| P1 | Découper `instagram_browser.py` | À faire |
+| P1 | Label/prepare incrémental (gros JSON) | À faire |
+| P2 | `Makefile` / cibles smoke | Optionnel |
+
+**Parcours opérationnel type**
+
+```bash
+# Services Mac Mini
+launchctl load com.aitertainment.watcher.plist
+launchctl load com.aitertainment.discovery_bot.plist
+
+# Discovery (après seeds remplis)
+.venv/bin/python discovery.py --domain humour
+
+# Pipeline générateur (manuel, hors heures de pointe)
+.venv/bin/python scripts/train_from_viral.py --label-limit 200
+# Colab → models/incoming_lora/ → deploy_generator.py
+
+.venv/bin/python watcher.py --once
+```

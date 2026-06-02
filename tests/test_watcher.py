@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -28,8 +29,10 @@ def _reel(
     is_pinned: bool = False,
     caption: str = "",
     audio_id: str = "",
+    product_type: str = "",
+    owner_username: str = "",
 ) -> dict:
-    return {
+    out = {
         "media_id": media_id,
         "view_count": view_count,
         "like_count": 0,
@@ -40,6 +43,11 @@ def _reel(
         "audio_id": audio_id,
         "thumbnail_url": "",
     }
+    if product_type:
+        out["product_type"] = product_type
+    if owner_username:
+        out["owner_username"] = owner_username
+    return out
 
 
 class CheckNewPostTest(unittest.TestCase):
@@ -135,6 +143,38 @@ class CheckNewPostTest(unittest.TestCase):
         mock_reels.return_value = [_reel("big", NEW_POST_VIEW_THRESHOLD + 1)]
         creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
         self.assertIsNone(check_new_post(creator, self.context))
+
+    @patch("watcher.get_recent_reels")
+    def test_skips_carousel_zero_views(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [
+            _reel("carousel", 0),
+            _reel("fresh", 400, caption="new #drop"),
+        ]
+        creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out["video_id"], "fresh")
+
+    @patch("watcher.get_recent_reels")
+    def test_skips_reel_owned_by_other_account(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [
+            _reel("stolen", 400, product_type="clips", owner_username="other_user"),
+        ]
+        creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
+        self.assertIsNone(check_new_post(creator, self.context))
+
+    @patch("watcher.get_recent_reels")
+    def test_skips_non_clips_product_type(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [
+            _reel("photo", 500, product_type="feed"),
+            _reel("fresh", 400, product_type="clips"),
+        ]
+        creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out["video_id"], "fresh")
 
     @patch("watcher.get_recent_reels")
     def test_skips_pinned_uses_first_non_pinned(self, mock_reels: MagicMock) -> None:
@@ -260,6 +300,9 @@ class RunWatcherRealCycleTest(unittest.TestCase):
             encoding="utf-8",
         )
 
+    @patch("watcher._describe_reel_visually", return_value="")
+    @patch("watcher._sync_post_metadata_from_reel_page", return_value=True)
+    @patch("watcher._transcribe_reel", return_value=("", None))
     @patch("watcher.get_browser_context")
     @patch("watcher.sync_playwright")
     @patch("watcher.notify_new_post")
@@ -274,6 +317,9 @@ class RunWatcherRealCycleTest(unittest.TestCase):
         mock_notify: MagicMock,
         mock_pw: MagicMock,
         mock_ctx: MagicMock,
+        mock_transcribe: MagicMock,
+        mock_sync: MagicMock,
+        mock_describe: MagicMock,
     ) -> None:
         mock_pw.return_value.start.return_value = MagicMock()
         mock_ctx.return_value = MagicMock()
@@ -491,6 +537,63 @@ class GenerateWithVectorTest(unittest.TestCase):
         self.assertTrue(any("pas de vecteur" in msg for msg in logs.output))
 
 
+class NotifyNewPostTest(unittest.TestCase):
+    @patch("telegram_notify.send_telegram_markdown")
+    def test_uses_post_username_not_stale_creator(self, mock_send: MagicMock) -> None:
+        from watcher import notify_new_post
+
+        notify_new_post(
+            {"username": "wrong_watchlist", "t_type": "T2", "niches": ["humour"]},
+            {
+                "username": "real_owner",
+                "video_id": "ABC123",
+                "caption": "drop",
+                "hashtags": ["drop"],
+                "url": "https://www.instagram.com/reel/ABC123/",
+            },
+            ["mdr", "trop vrai", "dead"],
+        )
+        text = mock_send.call_args.args[0]
+        self.assertIn("👤 @real", text)
+        self.assertNotIn("wrong_watchlist", text)
+        self.assertIn("reel/ABC123", text)
+        self.assertNotIn("(instagram)", text)
+        self.assertNotIn("Caption", text)
+        self.assertNotIn("Hashtags", text)
+        self.assertNotIn("Reel :", text)
+
+    @patch("telegram_notify.send_telegram_markdown")
+    def test_t1_lists_generated_comments(self, mock_send: MagicMock) -> None:
+        from watcher import notify_new_post
+
+        notify_new_post(
+            {"username": "brand_x", "platform": "instagram", "t_type": "T1", "niches": ["mode"]},
+            {
+                "username": "brand_x",
+                "video_id": "x1",
+                "caption": "nouveau drop",
+                "hashtags": ["mode"],
+                "url": "https://instagram.com/reel/x1/",
+            },
+            ["bravo le drop", "trop fort", "incroyable"],
+        )
+        text = mock_send.call_args.args[0]
+        self.assertIn("1. bravo le drop", text)
+        self.assertNotIn("pas de commentaire suggéré", text)
+
+    @patch("telegram_notify.send_telegram_markdown")
+    def test_t2_lists_generated_comments(self, mock_send: MagicMock) -> None:
+        from watcher import notify_new_post
+
+        notify_new_post(
+            {"username": "u", "t_type": "T2", "niches": ["humour"]},
+            {"username": "u", "video_id": "r1", "caption": "c", "hashtags": [], "url": "—"},
+            ["mdr", "trop vrai", "dead"],
+        )
+        text = mock_send.call_args.args[0]
+        self.assertIn("1. mdr", text)
+
+
 class GenerateForPostTest(unittest.TestCase):
     """Vérifie le câblage Watcher → ``modules.classifier.generate_comments``."""
 
@@ -507,6 +610,7 @@ class GenerateForPostTest(unittest.TestCase):
             "hashtags": ["F1", "monaco"],
             "audio_id": "AUD42",
             "username": "raikkonenaf",
+            "video_id": "REEL42",
         }
         out = _generate_for_post(ctx)
         self.assertEqual(out, ["a", "b", "c"])
@@ -520,7 +624,15 @@ class GenerateForPostTest(unittest.TestCase):
         self.assertEqual(kwargs["t_type_profile"], "T2")
         self.assertEqual(
             kwargs["video_context"],
-            {"caption": "moment culte F1", "hashtags": ["F1", "monaco"], "audio_id": "AUD42"},
+            {
+                "caption": "moment culte F1",
+                "hashtags": ["F1", "monaco"],
+                "audio_id": "AUD42",
+                "transcript": "",
+                "visual_description": "",
+                "video_id": "REEL42",
+                "username": "raikkonenaf",
+            },
         )
 
     @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
@@ -533,21 +645,207 @@ class GenerateForPostTest(unittest.TestCase):
         self.assertEqual(kwargs["niches"], [])
         self.assertEqual(kwargs["video_context"]["audio_id"], "OLD_KEY")
 
-    @patch("modules.classifier.generate_comments")
-    def test_t1_skips_generation(self, mock_gen: MagicMock) -> None:
+    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    def test_t1_generates_comments(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
-        out = _generate_for_post({"t_type": "T1", "niches": ["x"]})
-        self.assertEqual(out, [])
-        mock_gen.assert_not_called()
+        out = _generate_for_post({"t_type": "T1", "niches": ["x"], "username": "u"})
+        self.assertEqual(out, ["a", "b", "c"])
+        mock_gen.assert_called_once()
 
-    @patch("modules.classifier.generate_comments")
-    def test_t3a_skips_generation(self, mock_gen: MagicMock) -> None:
+    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    def test_t3a_generates_comments(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
-        out = _generate_for_post({"t_type": "T3a", "niches": ["x"]})
-        self.assertEqual(out, [])
-        mock_gen.assert_not_called()
+        out = _generate_for_post({"t_type": "T3a", "niches": ["x"], "username": "u"})
+        self.assertEqual(out, ["a", "b", "c"])
+        mock_gen.assert_called_once()
+
+    @patch("watcher.notify_new_post")
+    @patch("watcher._generate_for_post", return_value=["c1", "c2", "c3"])
+    @patch("watcher._transcribe_reel", return_value=("", None))
+    @patch("watcher._sync_post_metadata_from_reel_page", return_value=True)
+    @patch("watcher.check_new_post")
+    def test_t1_new_post_generates_and_notifies(
+        self,
+        mock_check: MagicMock,
+        mock_sync: MagicMock,
+        mock_transcribe: MagicMock,
+        mock_gen: MagicMock,
+        mock_notify: MagicMock,
+    ) -> None:
+        from watcher import _process_creator
+
+        creator = {
+            "username": "brand_t1",
+            "platform": "instagram",
+            "niches": ["mode"],
+            "t_type": "T1",
+            "last_post_id": "old",
+        }
+        mock_check.return_value = {
+            "video_id": "new_reel",
+            "username": "brand_t1",
+            "caption": "drop",
+            "hashtags": ["mode"],
+            "audio_id": "snd",
+            "url": "https://www.instagram.com/reel/new_reel/",
+            "bootstrap": False,
+        }
+        log = MagicMock()
+        _process_creator(
+            creator,
+            mock=False,
+            log=log,
+            browser_context=MagicMock(),
+        )
+        mock_gen.assert_called_once()
+        mock_notify.assert_called_once()
+        self.assertEqual(mock_notify.call_args.args[2], ["c1", "c2", "c3"])
+
+    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    def test_passes_visual_description_in_video_context(
+        self, mock_gen: MagicMock
+    ) -> None:
+        from watcher import _generate_for_post
+
+        _generate_for_post(
+            {
+                "t_type": "T2",
+                "niches": ["humour"],
+                "visual_description": "Scène de rue de nuit.",
+            }
+        )
+        self.assertEqual(
+            mock_gen.call_args.kwargs["video_context"]["visual_description"],
+            "Scène de rue de nuit.",
+        )
+
+    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    def test_passes_transcript_in_video_context(self, mock_gen: MagicMock) -> None:
+        from watcher import _generate_for_post
+
+        _generate_for_post(
+            {
+                "t_type": "T2",
+                "niches": ["humour"],
+                "transcript": "il parle du GP de Monaco",
+            }
+        )
+        self.assertEqual(
+            mock_gen.call_args.kwargs["video_context"]["transcript"],
+            "il parle du GP de Monaco",
+        )
+
+
+class TranscribeReelTest(unittest.TestCase):
+    @patch("scripts.embedder.transcribe_audio")
+    @patch("scripts.embedder.extract_wav_from_video")
+    @patch("scripts.embedder.download_reel_video")
+    def test_returns_transcript_and_mp4(
+        self,
+        mock_dl: MagicMock,
+        mock_extract: MagicMock,
+        mock_tr: MagicMock,
+    ) -> None:
+        from watcher import _transcribe_reel
+
+        mp4 = Path("/tmp/fake.mp4")
+        wav = Path("/tmp/fake.wav")
+        mock_dl.return_value = mp4
+        mock_extract.return_value = wav
+        mock_tr.return_value = "bonjour le monde"
+        browser_ctx = MagicMock()
+        transcript, path = _transcribe_reel("reel123", browser_ctx)
+        self.assertEqual(transcript, "bonjour le monde")
+        self.assertEqual(path, mp4)
+        mock_dl.assert_called_once()
+        mock_extract.assert_called_once()
+        mock_tr.assert_called_once_with(wav)
+
+    @patch("scripts.embedder.download_reel_video", return_value=None)
+    def test_ytdlp_failure_returns_empty(self, mock_dl: MagicMock) -> None:
+        from watcher import _transcribe_reel
+
+        self.assertEqual(_transcribe_reel("reel123", MagicMock()), ("", None))
+
+    @patch("scripts.embedder.subprocess.run")
+    def test_download_no_video_formats_logs_debug_not_warning(
+        self, mock_run: MagicMock
+    ) -> None:
+        from scripts.embedder import download_reel_video
+
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stderr="ERROR: No video formats found",
+        )
+        with self.assertLogs("aitertainment.embedder", level="DEBUG") as logs:
+            out = download_reel_video("carousel_id", MagicMock(), Path(tempfile.mkdtemp()))
+        self.assertIsNone(out)
+        self.assertTrue(
+            any("pas de vidéo (carousel/photo)" in msg for msg in logs.output)
+        )
+        self.assertFalse(any("yt-dlp vidéo échoué" in msg for msg in logs.output))
+
+    @patch("scripts.embedder.transcribe_audio", return_value="ok")
+    @patch("scripts.embedder.extract_wav_from_video")
+    @patch("scripts.embedder.download_reel_video")
+    def test_tmp_dir_not_removed_when_provided(
+        self,
+        mock_dl: MagicMock,
+        mock_extract: MagicMock,
+        mock_tr: MagicMock,
+    ) -> None:
+        from watcher import _transcribe_reel
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(tmp, ignore_errors=True))
+        mp4 = tmp / "reel.mp4"
+        mp4.touch()
+        mock_dl.return_value = mp4
+        mock_extract.return_value = tmp / "reel.wav"
+        _transcribe_reel("reel123", MagicMock(), tmp_dir=tmp)
+        self.assertTrue(tmp.exists())
+
+
+class DescribeReelVisuallyTest(unittest.TestCase):
+    @patch("watcher.requests.post")
+    @patch("watcher.subprocess.run")
+    def test_returns_description_from_lm_studio(
+        self, mock_run: MagicMock, mock_post: MagicMock
+    ) -> None:
+        from watcher import _describe_reel_visually
+
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(work, ignore_errors=True))
+        mp4 = work / "v.mp4"
+        mp4.write_bytes(b"x" * 2000)
+
+        def fake_run(cmd, **kwargs):
+            r = MagicMock()
+            r.returncode = 0
+            if cmd and cmd[0] == "ffprobe":
+                r.stdout = json.dumps(
+                    {"streams": [{"codec_type": "video", "duration": "12.0"}]}
+                )
+            elif cmd and cmd[0] == "ffmpeg":
+                out_path = Path(cmd[-1])
+                out_path.write_bytes(b"\xff" * 2000)
+            return r
+
+        mock_run.side_effect = fake_run
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json.return_value = {
+            "choices": [{"message": {"content": " Deux potes dans une cuisine."}}]
+        }
+        mock_post.return_value = resp
+
+        out = _describe_reel_visually(
+            mp4, "http://127.0.0.1:1234/v1", "qwen2.5-vl-7b-instruct"
+        )
+        self.assertEqual(out, "Deux potes dans une cuisine.")
+        self.assertIn("/chat/completions", mock_post.call_args.args[0])
 
 
 class WatchlistSchemaMigrationTest(unittest.TestCase):

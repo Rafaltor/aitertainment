@@ -12,7 +12,6 @@ try:
 except ImportError:
     pass
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
@@ -67,7 +66,7 @@ DISCOVERY_BETWEEN_PROFILES_MAX_S = float(
 # pause de burst toutes les 2h). À mettre à True pour pouvoir tester à tout
 # moment sans attendre la prochaine fenêtre active.
 DISABLE_HUMAN_SCHEDULE = (
-    os.environ.get("DISABLE_HUMAN_SCHEDULE", "true").strip().lower()
+    os.environ.get("DISABLE_HUMAN_SCHEDULE", "false").strip().lower()
     in ("1", "true", "yes", "on")
 )
 
@@ -79,14 +78,7 @@ DISABLE_HUMAN_SCHEDULE = (
 DISCOVERY_NOTIFY_THRESHOLD = float(
     os.environ.get("DISCOVERY_NOTIFY_THRESHOLD", "350")
 )
-# Collecte Playwright des commentaires sur les profils découverts (grille 3 reels).
-# Désactivé par défaut : corpus commentaires = fil Reels uniquement (viral_comments.json).
-DISCOVERY_COLLECT_COMMENTS = (
-    os.environ.get("DISCOVERY_COLLECT_COMMENTS", "false").strip().lower()
-    in ("1", "true", "yes", "on")
-)
-
-# Ollama (classifier / generate_comments) — OLLAMA_GENERATE_URL reste accepté en repli
+# Ollama (labélisation T-type + generate_comments) — OLLAMA_GENERATE_URL reste accepté en repli
 OLLAMA_URL = (
     os.environ.get("OLLAMA_URL")
     or os.environ.get("OLLAMA_GENERATE_URL")
@@ -95,8 +87,7 @@ OLLAMA_URL = (
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b").strip()
 
 # Modèle Ollama fine-tuné pour ``generate_comments`` (format Alpaca).
-# Si défini, le pipeline utilise 3 appels « un commentaire » au lieu du JSON legacy.
-# Ex. : ``aitertainment-generator`` après ``ollama create`` (cf. deploy/Modelfile).
+# Requis pour ``generate_comments`` (Watcher). Ex. après ``ollama create`` (cf. deploy/).
 OLLAMA_GENERATOR_MODEL = os.environ.get("OLLAMA_GENERATOR_MODEL", "").strip()
 
 # LM Studio — embeddings profils (``scripts/embedder.py`` uniquement)

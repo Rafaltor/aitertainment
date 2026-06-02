@@ -1,0 +1,6 @@
+# Dépendances optionnelles — merge LoRA + déploiement Ollama (hors runtime Mac Mini)
+# pip install -r requirements-ml.txt
+torch>=2.2.0
+peft>=0.10.0
+transformers>=4.40.0
+huggingface_hub>=0.23.0

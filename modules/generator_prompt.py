@@ -9,7 +9,13 @@ from modules.named_axes import NAMED_AXES
 
 GENERATOR_INSTRUCTION = (
     "Tu es un utilisateur Instagram. Écris UN commentaire court (5 à 10 mots). "
-    "Pas d'emoji. Pas de @mention. Une seule phrase complète, jamais coupée."
+    "Pas d'emoji. Pas de @mention. Une seule phrase complète, jamais coupée. "
+    "Si un Transcript est fourni, utilise son contenu pour rendre "
+    "le commentaire spécifique à ce qui est dit dans la vidéo. "
+    "Si un Visuel est fourni, utilise la description pour rendre "
+    "le commentaire encore plus spécifique au contenu visible. "
+    "Les champs Creator et Reel identifient le post cible — ne commente "
+    "que le contenu de ce Reel (pas un autre créateur)."
 )
 
 # Médiane viral_comments ~8 mots ; cap inférence légèrement au-dessus.
@@ -103,6 +109,10 @@ def build_generator_input_block(
     caption: str = "",
     hashtags: str | list[Any] | None = None,
     audio_id: str = "",
+    transcript: str = "",
+    visual_description: str = "",
+    reel_id: str = "",
+    creator_username: str = "",
     named_axes: dict[str, Any] | None = None,
 ) -> str:
     """Bloc ``input`` identique à ``prepare_dataset.py`` (entraînement = inférence)."""
@@ -110,6 +120,12 @@ def build_generator_input_block(
         f"T-type commentateur: {t_type_profile}",
         f"Niches: {format_niches(niches)}",
     ]
+    creator = str(creator_username or "").lstrip("@").strip()
+    if creator:
+        lines.append(f"Creator: @{creator}")
+    rid = str(reel_id or "").strip()
+    if rid:
+        lines.append(f"Reel: {rid}")
     if named_axes:
         lines.append(named_axes_block(named_axes))
     lines.extend(
@@ -119,6 +135,12 @@ def build_generator_input_block(
             f"Audio: {audio_id}",
         ]
     )
+    tr = str(transcript or "").strip()
+    if tr:
+        lines.append(f"Transcript: {tr[:500]}")
+    vis = str(visual_description or "").strip()
+    if vis:
+        lines.append(f"Visuel: {vis[:300]}")
     return "\n".join(lines)
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test local du générateur (legacy ou fine-tuné via OLLAMA_GENERATOR_MODEL)."""
+"""Test local du générateur (OLLAMA_GENERATOR_MODEL requis)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def main() -> int:
     args = parser.parse_args()
 
     model = config.OLLAMA_GENERATOR_MODEL or config.OLLAMA_MODEL
-    mode = "finetuned (Alpaca)" if config.OLLAMA_GENERATOR_MODEL else "legacy (JSON)"
+    mode = f"Ollama ({config.OLLAMA_GENERATOR_MODEL})"
     print(f"Mode: {mode}")
     print(f"Modèle: {model}")
     print(f"URL: {config.OLLAMA_URL}\n")

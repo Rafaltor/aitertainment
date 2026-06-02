@@ -33,9 +33,9 @@ from scripts.instagram_browser import (
     collect_viral_comments_from_feed,
     get_browser_context,
     get_recent_reels,
-    load_raw_comments_file,
+    load_viral_comments_file,
     polite_sleep,
-    save_raw_comments_file,
+    save_viral_comments_file,
     session_ok,
 )
 from scripts.label_comments import TRAINING_COMMENTS_PATH, load_training_comments
@@ -45,7 +45,7 @@ _LOG = logging.getLogger(__name__)
 
 
 def _count_entries(path: Path) -> int:
-    entries, _ = load_raw_comments_file(path)
+    entries, _ = load_viral_comments_file(path)
     return len(entries)
 
 

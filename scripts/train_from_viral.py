@@ -2,7 +2,7 @@
 """Pipeline entraînement à partir de viral_comments.json uniquement.
 
 Étapes :
-  1. clean_viral_comments (FR + métadonnées créateur)
+  1. clean_comments --viral (FR + métadonnées créateur)
   2. label_comments → training_comments_viral.json (LM Studio / Ollama)
   3. prepare_dataset → data/generator_dataset.json + dataset_generator.jsonl
   4. (optionnel) indique la commande notebook / GPU pour le fine-tune
@@ -28,7 +28,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from scripts.instagram_browser import VIRAL_COMMENTS_PATH, load_raw_comments_file
+from scripts.instagram_browser import VIRAL_COMMENTS_PATH, load_viral_comments_file
 
 _LOG = logging.getLogger(__name__)
 
@@ -58,7 +58,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Répertoire de sortie prepare_dataset (défaut: data/).",
     )
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--skip-clean", action="store_true")
+    parser.add_argument(
+        "--skip-clean",
+        action="store_true",
+        help="Skip clean viral (le scrape filtre déjà FR/créateur).",
+    )
+    parser.add_argument(
+        "--clean-viral",
+        action="store_true",
+        help="Force clean_comments --viral (avec backup) avant label.",
+    )
     parser.add_argument("--skip-label", action="store_true")
     parser.add_argument("--skip-prepare", action="store_true")
     parser.add_argument(
@@ -80,12 +89,19 @@ def main(argv: list[str] | None = None) -> int:
         _LOG.error("Fichier viral introuvable : %s", args.viral_path)
         return 1
 
-    entries, _ = load_raw_comments_file(args.viral_path)
+    entries, _ = load_viral_comments_file(args.viral_path)
     _LOG.info("Viral : %d entrée(s) dans %s", len(entries), args.viral_path)
 
-    if not args.skip_clean:
+    if args.clean_viral and not args.skip_clean:
         code = _run(
-            [PYTHON, "scripts/clean_viral_comments.py", "--input", str(args.viral_path)],
+            [
+                PYTHON,
+                "scripts/clean_comments.py",
+                "--viral",
+                "--viral-path",
+                str(args.viral_path),
+                "--backup",
+            ],
             dry_run=args.dry_run,
         )
         if code != 0:

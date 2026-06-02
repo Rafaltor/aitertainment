@@ -8,7 +8,7 @@ Ce module est la **mémoire long-terme** du pipeline AItertainment : tous les
 profils scorés (par ``discovery.score_profile``, par seed, ou ajoutés à la
 main) y sont rangés avec :
 
-- leur **tier** courant (A / B / C) — décide de la fréquence de rescore,
+- leur **tier** courant (A / B / C),
 - leur **historique** de scores (chaque exécution append une ligne),
 - leur statut **validation humaine** + ``t_type_final`` éventuellement
   corrigé après visionnage,
@@ -29,7 +29,6 @@ Le fichier ``data/database.json`` a la structure suivante::
           "added_via": "manual|discovery|seed",
           "added_at": "2026-05-08T00:00:00",
           "last_scored_at": "2026-05-08T00:00:00",
-          "next_rescore_at": "2026-05-15T00:00:00",
           "archived": false,
           "scores_history": [
             {
@@ -50,17 +49,18 @@ Le fichier ``data/database.json`` a la structure suivante::
       }
     }
 
-Pas de réseau : c'est de la pure persistance + un peu
-de logique de tier / planning de rescore.
+Pas de réseau : c'est de la pure persistance + logique de tier.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from modules.atomic_json import atomic_write_json
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = _PROJECT_ROOT / "data"
@@ -71,10 +71,6 @@ _LOGGER = logging.getLogger("aitertainment.database")
 # Seuils de score → tier. Tier A = score > 700, tier B = 400 ≤ score ≤ 700,
 # tier C = score < 400 (auto-archivé).
 TIER_SCORE_THRESHOLDS: dict[str, int] = {"A": 700, "B": 400}
-
-# Délai avant le prochain rescore, par tier. Tier C → pas de rescore (None).
-RESCORE_DELAY_DAYS: dict[str, int] = {"A": 7, "B": 30}
-
 
 class DatabaseIOError(ValueError):
     """Erreur de lecture / écriture ou de schéma database invalide."""
@@ -104,16 +100,6 @@ def _read_json(path: Path) -> dict[str, Any]:
             f"reçu {type(data).__name__}"
         )
     return data
-
-
-def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    tmp.replace(path)
 
 
 def _now() -> datetime:
@@ -195,7 +181,7 @@ def _refresh_profile_niches_in_place(
 
 
 # ---------------------------------------------------------------------------
-# Tier / planning de rescore
+# Tier
 # ---------------------------------------------------------------------------
 
 
@@ -207,18 +193,6 @@ def compute_tier(score: float | int) -> str:
     if s >= TIER_SCORE_THRESHOLDS["B"]:
         return "B"
     return "C"
-
-
-def compute_next_rescore_at(
-    tier: str, *, anchor: datetime | None = None
-) -> str | None:
-    """Tier A → ``anchor + 7j``, B → ``+30j``, C → ``None`` (archivé)."""
-    if tier == "C":
-        return None
-    if tier not in RESCORE_DELAY_DAYS:
-        raise DatabaseIOError(f"tier inconnu : {tier!r}")
-    base = anchor if anchor is not None else _now()
-    return _iso(base + timedelta(days=RESCORE_DELAY_DAYS[tier]))
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +231,7 @@ def save_db(db: dict[str, Any], path: str | Path | None = None) -> None:
     if profiles is None or not isinstance(profiles, dict):
         raise DatabaseIOError('"profiles" doit être un dict non absent')
     p = Path(path) if path else DB_PATH
-    _atomic_write_json(p, {"profiles": profiles})
+    atomic_write_json(p, {"profiles": profiles})
     _LOGGER.info("Database sauvegardée : %d profil(s) -> %s", len(profiles), p)
 
 
@@ -300,7 +274,6 @@ def upsert_profile(
 
     - Recalcule ``tier`` à partir du score (cf. ``compute_tier``).
     - Append une ligne dans ``scores_history`` (un point par exécution).
-    - Recalcule ``next_rescore_at`` (None pour tier C).
     - Tier C → ``archived = True`` ; sinon ``archived = False``.
     - Sur **première insertion** : enregistre ``added_at``, ``added_via``,
       ``t_type_original`` (= ``t_type_dominant`` du scoring), ``validated =
@@ -331,9 +304,7 @@ def upsert_profile(
     last_scored_at = (
         str(score_result.get("scored_at") or "") or _iso(_now())
     )
-    last_scored_dt = _parse_iso(last_scored_at) or _now()
     tier = compute_tier(float(score))
-    next_rescore = compute_next_rescore_at(tier, anchor=last_scored_dt)
     archived = tier == "C"
 
     niches: list[str] = _coerce_incoming_niches(score_result)
@@ -354,7 +325,6 @@ def upsert_profile(
             "added_via": str(added_via),
             "added_at": last_scored_at,
             "last_scored_at": last_scored_at,
-            "next_rescore_at": next_rescore,
             "archived": archived,
             "scores_history": [],
         }
@@ -374,7 +344,6 @@ def upsert_profile(
         _refresh_profile_niches_in_place(profile, incoming=niches)
         profile["tier"] = tier
         profile["last_scored_at"] = last_scored_at
-        profile["next_rescore_at"] = next_rescore
         profile["archived"] = archived
         profile.setdefault("scores_history", [])
 
@@ -383,42 +352,13 @@ def upsert_profile(
     )
 
     _LOGGER.info(
-        "upsert @%s : score=%.1f tier=%s archived=%s next_rescore=%s",
+        "upsert @%s : score=%.1f tier=%s archived=%s",
         username,
         float(score),
         tier,
         archived,
-        next_rescore or "—",
     )
     return profile
-
-
-def get_profiles_due_for_rescore(
-    db: dict[str, Any], *, now: datetime | None = None
-) -> list[dict[str, Any]]:
-    """Retourne les profils non archivés dont ``next_rescore_at <= now``.
-
-    Chaque dict retourné est une **copie** enrichie d'une clé ``username`` (les
-    profils sont stockés sous forme de mapping ``{username: {...}}``, le caller
-    a besoin de l'identifiant pour relancer un scoring).
-    """
-    if not isinstance(db, dict) or not isinstance(db.get("profiles"), dict):
-        raise DatabaseIOError("db invalide : attendu {'profiles': {...}}")
-    cutoff = now if now is not None else _now()
-    out: list[dict[str, Any]] = []
-    for username, profile in db["profiles"].items():
-        if not isinstance(profile, dict):
-            continue
-        if profile.get("archived"):
-            continue
-        nxt = _parse_iso(profile.get("next_rescore_at"))
-        if nxt is None:
-            continue
-        if nxt <= cutoff:
-            enriched = dict(profile)
-            enriched["username"] = username
-            out.append(enriched)
-    return out
 
 
 def _require_profile(db: dict[str, Any], username: str) -> dict[str, Any]:
@@ -436,16 +376,12 @@ def promote_tier(
 ) -> dict[str, Any]:
     """Force ``tier`` manuellement.
 
-    - Recalcule ``next_rescore_at`` (depuis ``last_scored_at`` si dispo,
-      sinon ``now``).
     - ``archived = False`` si nouveau tier ∈ {A, B}, ``True`` si C.
     """
     if new_tier not in {"A", "B", "C"}:
         raise DatabaseIOError(f"tier invalide : {new_tier!r}")
     profile = _require_profile(db, username)
-    anchor = _parse_iso(profile.get("last_scored_at")) or _now()
     profile["tier"] = new_tier
-    profile["next_rescore_at"] = compute_next_rescore_at(new_tier, anchor=anchor)
     profile["archived"] = new_tier == "C"
     _LOGGER.info(
         "promote_tier @%s -> %s (archived=%s)",
@@ -457,13 +393,10 @@ def promote_tier(
 
 
 def archive_profile(db: dict[str, Any], username: str) -> dict[str, Any]:
-    """Retire un profil de la rotation : ``archived=True``, ``tier='C'``,
-    ``next_rescore_at=None``.
-    """
+    """Retire un profil de la rotation : ``archived=True``, ``tier='C'``."""
     profile = _require_profile(db, username)
     profile["archived"] = True
     profile["tier"] = "C"
-    profile["next_rescore_at"] = None
     _LOGGER.info("archive_profile @%s", _normalize_username(username))
     return profile
 
@@ -571,12 +504,9 @@ __all__ = [
     "DB_PATH",
     "DEFAULT_DATA_DIR",
     "DatabaseIOError",
-    "RESCORE_DELAY_DAYS",
     "TIER_SCORE_THRESHOLDS",
     "archive_profile",
-    "compute_next_rescore_at",
     "compute_tier",
-    "get_profiles_due_for_rescore",
     "load_db",
     "merge_profile_pipeline",
     "promote_tier",

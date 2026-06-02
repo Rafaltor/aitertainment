@@ -37,7 +37,7 @@ Le script consomme un schéma **plat** : chaque entrée du training représente
     }
 
 La racine du fichier accepte indifféremment ``{"entries": [...]}`` (format
-``dataset_builder.py``) ou une liste brute ``[...]``.
+``label_comments.py``) ou une liste brute ``[...]``.
 
 ============================================================================
 CLI
@@ -103,7 +103,7 @@ def load_training(path: Path) -> list[dict]:
 
     La racine peut être :
 
-    * ``{"entries": [...]}`` (format produit par ``dataset_builder.py``).
+    * ``{"entries": [...]}`` (format dict optionnel).
     * ``[...]`` (liste brute — utile pour les datasets externes).
 
     Les éléments non-``dict`` sont silencieusement filtrés (best-effort,

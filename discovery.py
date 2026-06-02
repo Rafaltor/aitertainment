@@ -70,7 +70,6 @@ from scripts.instagram_browser import (
     get_profile_data,
     get_recent_reels,
     get_suggested_accounts,
-    parse_comments_from_dom_text,
     polite_sleep,
 )
 
@@ -166,10 +165,8 @@ DISCOVERY_NOTIFY_THRESHOLD = float(config.DISCOVERY_NOTIFY_THRESHOLD)
 # prennent les mêmes décisions notif/database.
 CANDIDATE_SCORE_THRESHOLD = DISCOVERY_NOTIFY_THRESHOLD
 
-# Collecte commentaires Playwright (profils score > seuil, avant notif Telegram)
-TOP_COMMENTS_COLLECT_SCORE_THRESHOLD = 400.0
-TOP_COMMENTS_REELS_MAX = 3  # reels avec le plus de comment_count
-TOP_COMMENTS_PER_REEL = 999  # legacy : plus de plafond par reel (tous les parsés)
+# Mock score_profile : nombre de reels synthétiques dans le résultat.
+TOP_COMMENTS_REELS_MAX = 3
 
 # Suggestions Instagram (``discover/*``) en source principale ; followings du
 # seed uniquement en fallback final via ``_fetch_followings``.
@@ -232,13 +229,9 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    tmp.replace(path)
+    from modules.atomic_json import atomic_write_json
+
+    atomic_write_json(path, payload)
 
 
 # --- seeds ---
@@ -1246,7 +1239,7 @@ def score_profile(
         # Schéma 2026-05 : ``niches`` (liste validée contre ``VALID_NICHES``)
         # est désormais l'**unique** source de vérité — le champ string
         # ``niche`` n'est plus produit. Les callers downstream (database,
-        # dataset_builder, telegram bot) lisent ``niches`` en priorité avec
+        # telegram bot) lisent ``niches`` en priorité avec
         # un fallback rétro-compat sur l'ancien champ.
         "niches": list(niches),
         "platform": "instagram",
