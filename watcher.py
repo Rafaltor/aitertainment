@@ -1023,11 +1023,19 @@ def notify_new_post(
 ) -> bool:
     """Envoie une notif Telegram pour un nouveau post détecté.
 
+    Inclut un bouton par T-type pour publier le commentaire sur Instagram
+    (compte IG 1 — ``data/instagram_cookies.json``).
+
     Retourne ``True`` si l'envoi a réussi, ``False`` sinon (config absente,
     erreur réseau…). N'interrompt jamais la boucle en cas d'échec.
     """
     log = logging.getLogger("aitertainment.watcher")
-    from telegram_notify import send_telegram_markdown
+    from config import ORDERED_T_TYPES
+    from telegram_watcher_callbacks import (
+        build_comment_keyboard,
+        register_pending_post,
+        send_watcher_post_alert,
+    )
 
     display_user = str(
         post.get("username") or creator.get("username") or "?"
@@ -1040,12 +1048,17 @@ def notify_new_post(
     if not url and reel_id:
         url = f"https://www.instagram.com/reel/{reel_id}/"
 
+    comments_dict: dict[str, str] = {}
     if isinstance(comments, dict):
-        from config import ORDERED_T_TYPES
-
-        lines = [
-            f"*{_telegram_md_escape(t)}* : {_telegram_md_escape(comments.get(t, '—'))}"
+        comments_dict = {
+            t: str(comments.get(t) or "").strip()
             for t in ORDERED_T_TYPES
+            if str(comments.get(t) or "").strip()
+        }
+        lines = [
+            f"*{_telegram_md_escape(t)}* : {_telegram_md_escape(comments_dict[t])}"
+            for t in ORDERED_T_TYPES
+            if t in comments_dict
         ]
         comments_block = "📝 *Commentaires par catégorie :*\n" + "\n".join(lines)
     else:
@@ -1064,11 +1077,26 @@ def notify_new_post(
         f"🎭 Type figé : {_telegram_md_escape(t_type)}  · "
         f"Niche : {_telegram_md_escape(niche)}\n\n"
         f"{comments_block}\n\n"
+        f"📤 *Publier* : bouton = poster via compte IG 1\n\n"
         f"🔗 {_telegram_md_escape(url)}"
     )
 
+    reply_markup: dict[str, Any] | None = None
+    if comments_dict:
+        try:
+            token = register_pending_post(
+                creator=creator, post=post, comments=comments_dict
+            )
+            reply_markup = build_comment_keyboard(token, comments_dict)
+        except Exception as e:
+            log.warning(
+                "@%s : boutons Telegram non enregistrés (%s) — alerte sans boutons.",
+                display_user,
+                e,
+            )
+
     try:
-        send_telegram_markdown(text, parse_mode="Markdown")
+        send_watcher_post_alert(text, reply_markup=reply_markup)
     except ValueError as e:
         log.warning(
             "Telegram non envoyée @%s (config manquante) : %s", display_user, e
@@ -1785,8 +1813,18 @@ def run_watcher(
     playwright_instance = None
     context: BrowserContext | None = None
     grid_page: Page | None = None
+    telegram_stop: threading.Event | None = None
 
     if not mock:
+        try:
+            from telegram_watcher_callbacks import start_poller_thread
+
+            _, telegram_stop = start_poller_thread()
+            log.info(
+                "Poller Telegram actif — boutons commentaire → compte IG 1."
+            )
+        except Exception as e:
+            log.warning("Poller Telegram non démarré : %s", e)
         dual_account = _dual_account_enabled()
         if config.WATCHER_DUAL_ACCOUNT and not dual_account:
             log.warning(
@@ -1875,6 +1913,8 @@ def run_watcher(
     except KeyboardInterrupt:
         log.info("Watcher arrêté (Ctrl+C).")
     finally:
+        if telegram_stop is not None:
+            telegram_stop.set()
         if grid_page is not None:
             try:
                 grid_page.close()

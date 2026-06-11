@@ -1664,6 +1664,100 @@ def _list_reel_page_aria_labels(page: Page, limit: int = 40) -> list[str]:
         return []
 
 
+def post_reel_comment(
+    media_id: str,
+    comment_text: str,
+    context: BrowserContext,
+) -> tuple[bool, str]:
+    """Publie un commentaire sur ``/reel/{id}/`` (session connectée).
+
+    Retourne ``(ok, message_erreur)``.
+    """
+    mid = str(media_id or "").strip()
+    text = str(comment_text or "").strip()
+    if not mid:
+        return False, "media_id vide"
+    if not text:
+        return False, "commentaire vide"
+
+    page = context.new_page()
+    try:
+        page.goto(
+            f"{BASE_URL}/reel/{mid}/",
+            timeout=_REQUEST_TIMEOUT_MS,
+            wait_until="domcontentloaded",
+        )
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(2000)
+
+        blocked = _instagram_page_blocked(page)
+        if blocked:
+            return False, f"page bloquée ({blocked})"
+
+        if not click_reel_comment_button(page):
+            return False, "bouton commentaire introuvable"
+
+        page.wait_for_timeout(1500)
+
+        filled = False
+        for selector in (
+            'textarea[placeholder*="commentaire" i]',
+            'textarea[placeholder*="comment" i]',
+            'textarea[aria-label*="commentaire" i]',
+            'textarea[aria-label*="comment" i]',
+            "form textarea",
+            'div[contenteditable="true"][role="textbox"]',
+            'div[contenteditable="true"]',
+        ):
+            loc = page.locator(selector)
+            if loc.count() == 0:
+                continue
+            try:
+                target = loc.first
+                if not target.is_visible(timeout=2_000):
+                    continue
+                target.click(timeout=5_000)
+                target.fill(text, timeout=8_000)
+                filled = True
+                break
+            except Exception:
+                continue
+
+        if not filled:
+            try:
+                ph = page.get_by_placeholder(re.compile(r"comment", re.IGNORECASE))
+                if ph.count() > 0:
+                    ph.first.click(timeout=5_000)
+                    ph.first.fill(text, timeout=8_000)
+                    filled = True
+            except Exception:
+                pass
+
+        if not filled:
+            return False, "champ commentaire introuvable"
+
+        page.wait_for_timeout(400)
+
+        for label in ("Publier", "Poster", "Post", "Publish"):
+            try:
+                page.get_by_role("button", name=label).first.click(timeout=4_000)
+                page.wait_for_timeout(1500)
+                return True, ""
+            except Exception:
+                continue
+
+        try:
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(2000)
+            return True, ""
+        except Exception as e:
+            return False, f"soumission échouée ({e})"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        page.close()
+
+
 def click_reel_comment_button(page: Page) -> str | None:
     """Ouvre le panneau commentaires. Retourne le aria-label cliqué ou None."""
     for label in _REEL_COMMENT_ARIA_LABELS:

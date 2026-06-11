@@ -620,8 +620,15 @@ class GenerateWithVectorTest(unittest.TestCase):
 
 
 class NotifyNewPostTest(unittest.TestCase):
-    @patch("telegram_notify.send_telegram_markdown")
-    def test_uses_post_username_not_stale_creator(self, mock_send: MagicMock) -> None:
+    @patch("telegram_watcher_callbacks.send_watcher_post_alert")
+    @patch("telegram_watcher_callbacks.register_pending_post", return_value="tok")
+    @patch("telegram_watcher_callbacks.build_comment_keyboard", return_value={"inline_keyboard": []})
+    def test_uses_post_username_not_stale_creator(
+        self,
+        _mock_kb: MagicMock,
+        _mock_reg: MagicMock,
+        mock_send: MagicMock,
+    ) -> None:
         from watcher import notify_new_post
 
         notify_new_post(
@@ -644,8 +651,12 @@ class NotifyNewPostTest(unittest.TestCase):
         self.assertNotIn("Hashtags", text)
         self.assertNotIn("Reel :", text)
 
-    @patch("telegram_notify.send_telegram_markdown")
-    def test_t1_lists_generated_comments(self, mock_send: MagicMock) -> None:
+    @patch("telegram_watcher_callbacks.send_watcher_post_alert")
+    @patch("telegram_watcher_callbacks.register_pending_post", return_value="tok")
+    @patch("telegram_watcher_callbacks.build_comment_keyboard", return_value={"inline_keyboard": []})
+    def test_t1_lists_generated_comments(
+        self, _mock_kb: MagicMock, _mock_reg: MagicMock, mock_send: MagicMock
+    ) -> None:
         from watcher import notify_new_post
 
         notify_new_post(
@@ -663,8 +674,12 @@ class NotifyNewPostTest(unittest.TestCase):
         self.assertIn("1. bravo le drop", text)
         self.assertNotIn("pas de commentaire suggéré", text)
 
-    @patch("telegram_notify.send_telegram_markdown")
-    def test_t2_lists_generated_comments(self, mock_send: MagicMock) -> None:
+    @patch("telegram_watcher_callbacks.send_watcher_post_alert")
+    @patch("telegram_watcher_callbacks.register_pending_post", return_value="tok")
+    @patch("telegram_watcher_callbacks.build_comment_keyboard", return_value={"inline_keyboard": []})
+    def test_t2_lists_generated_comments(
+        self, _mock_kb: MagicMock, _mock_reg: MagicMock, mock_send: MagicMock
+    ) -> None:
         from watcher import notify_new_post
 
         notify_new_post(
@@ -675,8 +690,12 @@ class NotifyNewPostTest(unittest.TestCase):
         text = mock_send.call_args.args[0]
         self.assertIn("1. mdr", text)
 
-    @patch("telegram_notify.send_telegram_markdown")
-    def test_dict_lists_comments_per_category(self, mock_send: MagicMock) -> None:
+    @patch("telegram_watcher_callbacks.send_watcher_post_alert")
+    @patch("telegram_watcher_callbacks.register_pending_post", return_value="tok")
+    @patch("telegram_watcher_callbacks.build_comment_keyboard", return_value={"inline_keyboard": []})
+    def test_dict_lists_comments_per_category(
+        self, _mock_kb: MagicMock, _mock_reg: MagicMock, mock_send: MagicMock
+    ) -> None:
         from watcher import notify_new_post
 
         notify_new_post(
