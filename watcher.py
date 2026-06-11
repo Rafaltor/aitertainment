@@ -94,6 +94,11 @@ VIEW_FILTER_ENABLED = config.WATCHER_VIEW_FILTER_ENABLED
 SPA_WAIT_MS = config.WATCHER_SPA_WAIT_MS
 SKIP_T_TYPES = config.WATCHER_SKIP_T_TYPES
 REEL_PRODUCT_TYPE = "clips"  # product_type Instagram pour les Reels vidéo
+GRID_REELS = config.WATCHER_GRID_REELS
+NEW_REEL_MAX_AGE_HOURS = config.WATCHER_NEW_REEL_MAX_AGE_HOURS
+KNOWN_REEL_IDS_CAP = 16
+SKIP_TRANSCRIPT = config.WATCHER_SKIP_TRANSCRIPT
+OLLAMA_TIMEOUT_S = config.WATCHER_OLLAMA_TIMEOUT_S
 
 VISION_MODEL = os.environ.get(
     "LM_STUDIO_VISION_MODEL", "qwen2.5-vl-7b-instruct"
@@ -208,6 +213,54 @@ def _filter_video_reels(reels: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return filtered
 
 
+def _reel_taken_at_ts(reel: dict[str, Any]) -> int:
+    value = reel.get("taken_at")
+    if isinstance(value, (int, float)) and int(value) > 0:
+        return int(value)
+    return 0
+
+
+def _strip_pinned_reels(
+    reels: list[dict[str, Any]],
+    *,
+    username: str,
+    log_prefix: str = "check_new_post",
+) -> list[dict[str, Any]]:
+    """Exclut les reels épinglés (flag ``is_pinned`` ou tête plus vieille que le suivant)."""
+    non_pinned: list[dict[str, Any]] = []
+    for reel in reels:
+        media_id = str(reel.get("media_id") or "")
+        if reel.get("is_pinned", False):
+            _LOGGER.info(
+                "%s @%s : reel %s ignoré (épinglé).",
+                log_prefix,
+                username,
+                media_id,
+            )
+            continue
+        non_pinned.append(reel)
+
+    while len(non_pinned) >= 2:
+        head = non_pinned[0]
+        second = non_pinned[1]
+        t_head = _reel_taken_at_ts(head)
+        t_next = _reel_taken_at_ts(second)
+        if t_head and t_next and t_head < t_next:
+            _LOGGER.info(
+                "%s @%s : reel %s ignoré (tête plus ancienne que le suivant — "
+                "probable épinglé non marqué, taken_at %d < %d).",
+                log_prefix,
+                username,
+                str(head.get("media_id") or ""),
+                t_head,
+                t_next,
+            )
+            non_pinned = non_pinned[1:]
+            continue
+        break
+    return non_pinned
+
+
 def _creator_username_platform(
     creator: dict[str, Any],
 ) -> tuple[str, str] | None:
@@ -232,18 +285,24 @@ def _fetch_recent_reels(
     max_reels: int,
     grid_page: Page | None = None,
 ) -> list[dict[str, Any]]:
+    # dom_only=False : si la grille DOM ne rend plus les ancres /reel/ (rollouts
+    # IG), on retombe sur les codes interceptés via GraphQL/REST (filtrés par
+    # propriétaire dans instagram_browser). Sans ce repli, un seul changement de
+    # markup côté IG fait tomber toute la détection à zéro.
     if grid_page is not None:
         return get_recent_reels_on_page(
             grid_page,
             username,
             max_reels=max_reels,
             spa_wait_ms=SPA_WAIT_MS,
+            dom_only=False,
         )
     return get_recent_reels(
         username,
         context,
         max_reels=max_reels,
         spa_wait_ms=SPA_WAIT_MS,
+        dom_only=False,
     )
 
 
@@ -270,7 +329,7 @@ def _fetch_non_pinned_video_reels(
 
     try:
         reels = _fetch_recent_reels(
-            username, context, max_reels=4, grid_page=grid_page
+            username, context, max_reels=GRID_REELS, grid_page=grid_page
         )
     except Exception as e:
         _LOGGER.warning("%s @%s : erreur (%s)", log_prefix, username, e)
@@ -294,17 +353,19 @@ def _fetch_non_pinned_video_reels(
         )
         return None
 
-    non_pinned = [r for r in reels if not r.get("is_pinned", False)]
+    non_pinned = _strip_pinned_reels(reels, username=username, log_prefix=log_prefix)
     if not non_pinned:
         try:
             reels = _fetch_recent_reels(
-                username, context, max_reels=8, grid_page=grid_page
+                username, context, max_reels=GRID_REELS + 4, grid_page=grid_page
             )
         except Exception as e:
             _LOGGER.warning("%s @%s : erreur retry (%s)", log_prefix, username, e)
             return None
         reels = _filter_video_reels(reels)
-        non_pinned = [r for r in reels if not r.get("is_pinned", False)]
+        non_pinned = _strip_pinned_reels(
+            reels, username=username, log_prefix=log_prefix
+        )
 
     if not non_pinned:
         _LOGGER.info("%s @%s : aucun reel non épinglé trouvé", log_prefix, username)
@@ -340,6 +401,69 @@ def _fetch_non_pinned_video_reels(
     return owned
 
 
+def _creator_known_reel_ids(creator: dict[str, Any]) -> set[str]:
+    """Ensemble des media_id déjà vus pour ce créateur."""
+    known: set[str] = set()
+    for raw in creator.get("known_reel_ids") or []:
+        mid = str(raw or "").strip()
+        if mid:
+            known.add(mid)
+    last = str(creator.get("last_post_id") or "").strip()
+    if last:
+        known.add(last)
+    return known
+
+
+def _merge_known_reel_ids(creator: dict[str, Any], grid_ids: list[str]) -> None:
+    """Fusionne la grille actuelle dans ``known_reel_ids`` (ordre préservé)."""
+    fresh = [str(mid).strip() for mid in grid_ids if str(mid).strip()]
+    existing = [
+        str(mid).strip()
+        for mid in (creator.get("known_reel_ids") or [])
+        if str(mid).strip()
+    ]
+    merged: list[str] = []
+    seen: set[str] = set()
+    for mid in fresh + existing:
+        if mid in seen:
+            continue
+        seen.add(mid)
+        merged.append(mid)
+    creator["known_reel_ids"] = merged[:KNOWN_REEL_IDS_CAP]
+
+
+def _reel_posted_at(reel: dict[str, Any]) -> datetime | None:
+    raw = reel.get("taken_at")
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    if isinstance(raw, (int, float)) and int(raw) > 1_000_000_000:
+        return datetime.fromtimestamp(int(raw), tz=timezone.utc)
+    return None
+
+
+def _is_fresh_reel(reel: dict[str, Any], *, max_age_hours: int | None = None) -> bool:
+    """True si ``taken_at`` est dans la fenêtre récente (sinon fail-open)."""
+    posted = _reel_posted_at(reel)
+    if posted is None:
+        return True
+    limit_h = NEW_REEL_MAX_AGE_HOURS if max_age_hours is None else max_age_hours
+    age = datetime.now(timezone.utc) - posted
+    return age.total_seconds() <= limit_h * 3600
+
+
+def _apply_creator_scan_state(
+    creator: dict[str, Any],
+    reels: list[dict[str, Any]],
+) -> None:
+    """Met à jour ``known_reel_ids``, ``last_post_id`` et ``last_check_at``."""
+    grid_ids = [str(r.get("media_id") or "") for r in reels if r.get("media_id")]
+    if not grid_ids:
+        return
+    _merge_known_reel_ids(creator, grid_ids)
+    creator["last_post_id"] = grid_ids[0]
+    creator["last_check_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 def sync_creator_last_post_id(
     creator: dict[str, Any],
     context: BrowserContext,
@@ -361,12 +485,11 @@ def sync_creator_last_post_id(
     if not non_pinned:
         return False
 
-    media_id = str(non_pinned[0].get("media_id") or "")
+    old = str(creator.get("last_post_id") or "") or None
+    _apply_creator_scan_state(creator, non_pinned)
+    media_id = str(creator.get("last_post_id") or "")
     if not media_id:
         return False
-
-    old = str(creator.get("last_post_id") or "") or None
-    creator["last_post_id"] = media_id
     if old == media_id:
         _LOGGER.info("@%s : last_post_id déjà à jour (%s)", username, media_id)
         return False
@@ -380,60 +503,169 @@ def sync_creator_last_post_id(
     return True
 
 
+def _build_new_post_payload(
+    first: dict[str, Any],
+    username: str,
+    *,
+    bootstrap: bool,
+    repair: bool = False,
+) -> dict[str, Any]:
+    caption = str(first.get("caption") or "")
+    media_id = str(first.get("media_id") or "")
+    return {
+        "video_id": media_id,
+        "username": username,
+        "grid_owner": str(first.get("owner_username") or ""),
+        "caption": caption,
+        "hashtags": _hashtags_from_caption(caption),
+        "audio_id": str(first.get("audio_id") or ""),
+        "url": f"https://www.instagram.com/reel/{media_id}/",
+        "posted_at": _reel_posted_at(first) or datetime.now(timezone.utc),
+        "bootstrap": bootstrap,
+        "repair": repair,
+    }
+
+
 def check_new_post(
     creator: dict[str, Any],
     context: BrowserContext,
     *,
     grid_page: Page | None = None,
+    prefetched: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Détecte un nouveau Reel via Playwright (hors épinglés).
 
-    - **Bootstrap** (``last_post_id`` absent) : mémorise le Reel le plus récent
-      sans condition de vues — point de départ pour la surveillance.
-    - **Surveillance** (``last_post_id`` connu) : alerte si le Reel en tête change.
-      Filtre vues optionnel (``WATCHER_VIEW_FILTER_ENABLED``) pour ignorer les posts
-      déjà viraux quand le polling est lent.
+    - **Bootstrap** (``last_post_id`` absent) : mémorise l'état sans notification.
+    - **Repair** (curseur périmé / reel trop ancien) : resync silencieux.
+    - **Surveillance** : alerte seulement si le reel en tête est nouveau, récent
+      (``taken_at``), visible en DOM, et ``last_post_id`` est juste derrière (index 1).
     """
     parsed = _creator_username_platform(creator)
     if parsed is None:
         return None
     username, _ = parsed
 
-    non_pinned = _fetch_non_pinned_video_reels(creator, context, grid_page=grid_page)
+    non_pinned = (
+        prefetched
+        if prefetched is not None
+        else _fetch_non_pinned_video_reels(creator, context, grid_page=grid_page)
+    )
     if not non_pinned:
         return None
 
+    grid_ids = [str(r.get("media_id") or "") for r in non_pinned if r.get("media_id")]
+    if not grid_ids:
+        return None
+
     first = non_pinned[0]
+    if first.get("is_pinned", False):
+        _LOGGER.warning(
+            "check_new_post @%s : tête %s encore marquée épinglée — ignoré.",
+            username,
+            str(first.get("media_id") or ""),
+        )
+        return None
     first_views = int(first.get("view_count") or 0)
-    media_id = str(first.get("media_id") or "")
-    if not media_id:
-        return None
-
+    media_id = grid_ids[0]
+    _LOGGER.debug(
+        "check_new_post @%s : tête=%s (épinglé=%s, taken_at=%s, source=%s)",
+        username,
+        media_id,
+        bool(first.get("is_pinned", False)),
+        _reel_taken_at_ts(first) or None,
+        str(first.get("row_source") or ""),
+    )
     last_post_id = str(creator.get("last_post_id") or "")
-    if last_post_id and media_id == last_post_id:
+    known = _creator_known_reel_ids(creator)
+
+    if media_id == last_post_id:
+        _merge_known_reel_ids(creator, grid_ids)
+        creator["last_check_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         return None
 
-    caption = str(first.get("caption") or "")
-    hashtags = _hashtags_from_caption(caption)
+    if media_id in known:
+        if media_id != last_post_id:
+            _LOGGER.info(
+                "check_new_post @%s : tête %s déjà connue — resync last_post_id "
+                "(était %s, ex. reel épinglé).",
+                username,
+                media_id,
+                last_post_id or "(null)",
+            )
+            _apply_creator_scan_state(creator, non_pinned)
+        else:
+            _merge_known_reel_ids(creator, grid_ids)
+            creator["last_check_at"] = datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            )
+        return None
+
+    # La vérif DOM anti-cache n'a de sens que si la tête vient du DOM. Avec le
+    # markup IG 2026, la grille ne porte plus les codes en href : la source est
+    # GraphQL (taken_at desc, filtrée par propriétaire). Re-scanner le DOM
+    # échouerait alors systématiquement et bloquerait toute alerte.
+    row_source = str(first.get("row_source") or "")
+    if grid_page is not None and row_source == "dom":
+        from scripts.instagram_browser import verify_reel_on_profile_grid
+
+        if not verify_reel_on_profile_grid(grid_page, media_id, max_reels=GRID_REELS):
+            _LOGGER.warning(
+                "check_new_post @%s : reel %s absent de la grille DOM — ignoré.",
+                username,
+                media_id,
+            )
+            return None
+
+    if media_id in known:
+        creator["last_check_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        return None
 
     if not last_post_id:
         _LOGGER.info(
-            "check_new_post @%s : bootstrap (last_post_id null) -> media_id=%s (%d vues)",
+            "check_new_post @%s : bootstrap -> media_id=%s (%d vues)",
             username,
             media_id,
             first_views,
         )
-        return {
-            "video_id": media_id,
-            "username": username,
-            "grid_owner": str(first.get("owner_username") or ""),
-            "caption": caption,
-            "hashtags": hashtags,
-            "audio_id": str(first.get("audio_id") or ""),
-            "url": f"https://www.instagram.com/reel/{media_id}/",
-            "posted_at": datetime.now(timezone.utc),
-            "bootstrap": True,
-        }
+        _apply_creator_scan_state(creator, non_pinned)
+        return _build_new_post_payload(first, username, bootstrap=True)
+
+    if last_post_id not in grid_ids:
+        # Grille possiblement tronquée (scroll raté, DOM partiel, rate-limit).
+        # Avant de resync en silence — ce qui enterrerait définitivement un vrai
+        # post jamais notifié — on vérifie la fraîcheur de la tête de grille.
+        if _is_fresh_reel(first):
+            _LOGGER.warning(
+                "check_new_post @%s : last_post_id=%s absent de la grille mais "
+                "tête %s récente — ALERTE (pas de resync silencieux).",
+                username,
+                last_post_id,
+                media_id,
+            )
+            _apply_creator_scan_state(creator, non_pinned)
+            return _build_new_post_payload(first, username, bootstrap=False)
+        _LOGGER.warning(
+            "check_new_post @%s : last_post_id=%s absent de la grille (tête non "
+            "récente) — resync sans alerte.",
+            username,
+            last_post_id,
+        )
+        _apply_creator_scan_state(creator, non_pinned)
+        return _build_new_post_payload(first, username, bootstrap=True, repair=True)
+
+    # À ce stade media_id != last_post_id (sorti plus haut sinon), donc
+    # last_post_id ne peut pas être en tête : index garanti >= 1.
+
+    if not _is_fresh_reel(first):
+        posted = _reel_posted_at(first)
+        _LOGGER.info(
+            "check_new_post @%s : reel %s trop ancien (taken_at=%s) — resync sans alerte.",
+            username,
+            media_id,
+            posted.isoformat() if posted else "?",
+        )
+        _apply_creator_scan_state(creator, non_pinned)
+        return _build_new_post_payload(first, username, bootstrap=True, repair=True)
 
     threshold: float | None = None
     if VIEW_FILTER_ENABLED:
@@ -467,32 +699,18 @@ def check_new_post(
             threshold,
         )
     else:
-        _LOGGER.info(
+        logging.getLogger("aitertainment.watcher").info(
             "check_new_post @%s : nouveau post détecté %s (%d vues)",
             username,
             media_id,
             first_views,
         )
 
-    return {
-        "video_id": media_id,
-        "username": username,
-        "grid_owner": str(first.get("owner_username") or ""),
-        "caption": caption,
-        "hashtags": hashtags,
-        "audio_id": str(first.get("audio_id") or ""),
-        "url": f"https://www.instagram.com/reel/{media_id}/",
-        "posted_at": datetime.now(timezone.utc),
-        "bootstrap": False,
-    }
+    return _build_new_post_payload(first, username, bootstrap=False)
 
 
 class WatchlistError(ValueError):
     """Schéma watchlist invalide ou fichier illisible."""
-
-
-def _empty_watchlist() -> dict[str, Any]:
-    return {"creators": []}
 
 
 def _normalize_entry(entry: Any, *, index: int) -> dict[str, Any]:
@@ -717,11 +935,6 @@ def get_poll_interval(now: datetime | None = None) -> int:
     return NIGHT_INTERVAL_S
 
 
-def _truncate(text: str, n: int) -> str:
-    text = (text or "").strip()
-    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
-
-
 def _telegram_md_escape(text: str) -> str:
     """Échappe les caractères spéciaux du Markdown classique Telegram."""
     out: list[str] = []
@@ -790,35 +1003,29 @@ def _describe_reel_visually(
     except Exception:
         pass
 
-    frames: list[Path] = []
-    for pct in (0.25, 0.50, 0.75):
-        t = duration * pct
-        frame_path = mp4_path.parent / f"frame_{pct:.0%}.jpg"
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-ss",
-                str(t),
-                "-i",
-                str(mp4_path),
-                "-frames:v",
-                "1",
-                "-q:v",
-                "2",
-                str(frame_path),
-            ],
-            capture_output=True,
-            check=False,
-        )
-        if frame_path.exists() and frame_path.stat().st_size > 1000:
-            frames.append(frame_path)
-
-    if not frames:
+    frame_path = mp4_path.parent / "frame_mid.jpg"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            str(duration * 0.5),
+            "-i",
+            str(mp4_path),
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+            str(frame_path),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if not frame_path.exists() or frame_path.stat().st_size <= 1000:
         _LOGGER.warning("aucune frame extraite pour %s", mp4_path)
         return ""
 
-    frame = frames[0]
+    frame = frame_path
     img_b64 = base64.b64encode(frame.read_bytes()).decode()
     base_url = lm_studio_url.rstrip("/")
     try:
@@ -1013,7 +1220,33 @@ def _generate_for_post(
             username or "?",
         )
 
-    return generate_comments_per_category(**gen_kwargs)
+    with patch_ollama_timeout(OLLAMA_TIMEOUT_S):
+        return generate_comments_per_category(**gen_kwargs)
+
+
+class patch_ollama_timeout:
+    """Contexte : borne ``_http_post`` du classifier pour le watcher."""
+
+    def __init__(self, timeout_s: int) -> None:
+        self._timeout_s = max(10, int(timeout_s))
+        self._orig: Any = None
+
+    def __enter__(self) -> patch_ollama_timeout:
+        import modules.classifier as clf
+
+        self._orig = clf._http_post
+
+        def _bounded(url: str, *, json_body: dict[str, Any], timeout: int) -> Any:
+            return self._orig(url, json_body=json_body, timeout=self._timeout_s)
+
+        clf._http_post = _bounded
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        import modules.classifier as clf
+
+        if self._orig is not None:
+            clf._http_post = self._orig
 
 
 def notify_new_post(
@@ -1077,23 +1310,22 @@ def notify_new_post(
         f"🎭 Type figé : {_telegram_md_escape(t_type)}  · "
         f"Niche : {_telegram_md_escape(niche)}\n\n"
         f"{comments_block}\n\n"
-        f"📤 *Publier* : bouton = poster via compte IG 1\n\n"
+        f"📤 *Publier* : `lowtaper67` ou numéro 1–{len(ORDERED_T_TYPES)} → IG 1\n\n"
         f"🔗 {_telegram_md_escape(url)}"
     )
 
     reply_markup: dict[str, Any] | None = None
-    if comments_dict:
-        try:
-            token = register_pending_post(
-                creator=creator, post=post, comments=comments_dict
-            )
-            reply_markup = build_comment_keyboard(token, comments_dict)
-        except Exception as e:
-            log.warning(
-                "@%s : boutons Telegram non enregistrés (%s) — alerte sans boutons.",
-                display_user,
-                e,
-            )
+    try:
+        token = register_pending_post(
+            creator=creator, post=post, comments=comments_dict
+        )
+        reply_markup = build_comment_keyboard(token, comments_dict)
+    except Exception as e:
+        log.warning(
+            "@%s : boutons Telegram non enregistrés (%s) — alerte sans boutons.",
+            display_user,
+            e,
+        )
 
     try:
         send_watcher_post_alert(text, reply_markup=reply_markup)
@@ -1154,16 +1386,32 @@ def login_watcher_ig2(*, wait_after_submit_s: float = 300) -> None:
     setup_watcher_logger()
     log = logging.getLogger("aitertainment.watcher")
 
-    if not config.IG_USERNAME or not config.IG_PASSWORD:
+    # Identifiants dédiés au 2e compte si la config les expose (IG2_USERNAME /
+    # IG2_PASSWORD) ; sinon repli sur le compte 1 avec avertissement explicite —
+    # réutiliser IG_USERNAME revient à dédoubler la charge sur un seul compte.
+    ig2_user = (getattr(config, "IG2_USERNAME", "") or "").strip()
+    ig2_pass = getattr(config, "IG2_PASSWORD", "") or ""
+    if ig2_user and ig2_pass:
+        login_user, login_pass = ig2_user, ig2_pass
+    else:
+        log.warning(
+            "IG2_USERNAME/IG2_PASSWORD absents de config — login du 2e compte "
+            "avec les identifiants du compte 1. Le dual-account ne répartira pas "
+            "la charge tant que des identifiants distincts ne sont pas fournis."
+        )
+        login_user, login_pass = config.IG_USERNAME, config.IG_PASSWORD
+
+    if not login_user or not login_pass:
         log.error(
-            "IG_USERNAME et IG_PASSWORD requis dans .env pour --login-ig2."
+            "Identifiants requis dans .env pour --login-ig2 "
+            "(IG2_USERNAME/IG2_PASSWORD ou IG_USERNAME/IG_PASSWORD)."
         )
         raise SystemExit(1)
 
     cookies_path = Path(config.WATCHER_IG2_COOKIES_PATH)
     log.info(
         "=== Login interactif 2e compte @%s → %s ===",
-        config.IG_USERNAME,
+        login_user,
         cookies_path,
     )
     log.info(
@@ -1174,8 +1422,8 @@ def login_watcher_ig2(*, wait_after_submit_s: float = 300) -> None:
     try:
         login_instagram_interactive(
             playwright_instance,
-            config.IG_USERNAME,
-            config.IG_PASSWORD,
+            login_user,
+            login_pass,
             save_cookies_path=cookies_path,
             wait_after_submit_s=wait_after_submit_s,
         )
@@ -1400,26 +1648,43 @@ def _process_creator(
         return False, did_check
 
     if post.get("bootstrap"):
+        action = "repair/resync" if post.get("repair") else "bootstrap"
         log.info(
-            "@%s : bootstrap, mémorise last_post_id=%s sans notification.",
+            "@%s : %s, mémorise last_post_id=%s sans notification.",
             username,
+            action,
             post.get("video_id"),
         )
-        creator["last_post_id"] = str(post["video_id"])
+        mid = str(post.get("video_id") or "")
+        if mid:
+            _merge_known_reel_ids(creator, [mid])
+            creator["last_post_id"] = mid
+            creator["last_check_at"] = datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            )
         return True, did_check
 
     media_id = str(post.get("video_id") or "")
+    if media_id:
+        _merge_known_reel_ids(creator, [media_id])
+        creator["last_post_id"] = media_id
+        creator["last_check_at"] = datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        )
+
     if not mock and browser_context is not None:
+        log.info("@%s reel=%s : enrichissement métadonnées…", username, media_id)
         if not _sync_post_metadata_from_reel_page(post, username, browser_context):
             log.warning(
-                "@%s : métadonnées reel incohérentes — pas de notif ni génération.",
+                "@%s : métadonnées reel incohérentes — pas de notif (last_post_id épinglé).",
                 username,
             )
-            return False, did_check
+            return True, did_check
 
     transcript = ""
     visual_description = ""
-    if not mock and browser_context is not None:
+    if not mock and browser_context is not None and not SKIP_TRANSCRIPT:
+        log.info("@%s reel=%s : transcript/vision…", username, media_id)
         tmp_dir = Path(tempfile.mkdtemp(prefix="ait_watch_"))
         try:
             transcript, mp4_path = _transcribe_reel(
@@ -1441,6 +1706,12 @@ def _process_creator(
             log.warning("@%s transcript/visuel échoué : %s", username, e)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+    elif not mock and SKIP_TRANSCRIPT:
+        log.info(
+            "@%s reel=%s : transcript/vision ignorés (WATCHER_SKIP_TRANSCRIPT).",
+            username,
+            media_id,
+        )
 
     video_context = _fuse_transcript_visual_for_watcher(
         transcript,
@@ -1464,6 +1735,7 @@ def _process_creator(
 
     comments: dict[str, str] = {}
     try:
+        log.info("@%s reel=%s : génération commentaires Ollama…", username, media_id)
         comments = (
             _mock_generate(gen_context)
             if mock
@@ -1483,7 +1755,12 @@ def _process_creator(
     else:
         notify_new_post(creator, post, comments)
 
-    creator["last_post_id"] = str(post["video_id"])
+    _apply_creator_scan_state(
+        creator,
+        [{"media_id": str(post["video_id"])}] + [
+            {"media_id": mid} for mid in (creator.get("known_reel_ids") or [])
+        ],
+    )
     log.info(
         "@%s : last_post_id mis à jour -> %s",
         username,
@@ -1593,7 +1870,15 @@ def _run_cycle(
                 ),
             ]
             for fut in as_completed(futures):
-                accounts_checked += fut.result()
+                try:
+                    accounts_checked += fut.result()
+                except Exception as e:
+                    # Session de slot expirée / Playwright KO : on log et on
+                    # continue avec l'autre slot plutôt que de tuer le watcher.
+                    log.exception(
+                        "Cycle dual : un slot a échoué (%s) — autre slot conservé.",
+                        e,
+                    )
         return accounts_checked
 
     indexed = [(i, c) for i, c in enumerate(creators) if _watcher_eligible(c)]
@@ -1731,7 +2016,13 @@ def sync_watchlist_last_posts(
                     ),
                 ]
                 for fut in as_completed(futs):
-                    fut.result()
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        log.exception(
+                            "Sync dual : un slot a échoué (%s) — autre slot conservé.",
+                            e,
+                        )
         else:
             assert context is not None
 
@@ -1804,7 +2095,6 @@ def run_watcher(
         max_cycles = 1
 
     cycle = 0
-    accounts_since_pause = 0  # compteur global, reset après pause longue
     vector_store = load_vector_store(VECTOR_STORE_PATH)
     log.info("vector_store chargé : %d comptes", len(vector_store))
     last_vector_store_reload = datetime.utcnow()
@@ -1892,7 +2182,7 @@ def run_watcher(
             if not creators:
                 log.warning("Watchlist vide — rien à surveiller ce cycle.")
 
-            accounts_since_pause += _run_cycle(
+            _run_cycle(
                 creators,
                 mock=mock,
                 log=log,
@@ -1940,6 +2230,7 @@ def diagnose_watchlist(
         "checked": 0,
         "unchanged": 0,
         "would_alert": 0,
+        "already_known": 0,
         "filtered_views": 0,
         "no_reels": 0,
         "skipped": 0,
@@ -1993,15 +2284,33 @@ def diagnose_watchlist(
                 stats["unchanged"] += 1
                 continue
 
-            post = check_new_post(creator, ig_context, grid_page=page)
+            post = check_new_post(
+                creator, ig_context, grid_page=page, prefetched=non_pinned
+            )
             if post is None:
-                stats["filtered_views"] += 1
+                known = _creator_known_reel_ids(creator)
+                if media_id in known:
+                    stats["already_known"] += 1
+                    reason = "déjà connu"
+                    if media_id != last_post_id:
+                        reason = (
+                            f"déjà connu (last_post_id réaligné {last_post_id or '(null)'} "
+                            f"→ {media_id})"
+                        )
+                else:
+                    stats["filtered_views"] += 1
+                    reason = "pas d'alerte (filtre vues / autre)"
+                synced_last = str(creator.get("last_post_id") or "")
+                last_label = synced_last or "(null)"
+                if synced_last and synced_last != last_post_id:
+                    last_label = f"{last_post_id or '(null)'}→{synced_last}"
                 log.info(
-                    "@%s : head=%s last=%s (%d vues) — pas d'alerte",
+                    "@%s : head=%s last=%s (%d vues) — %s",
                     username,
                     media_id,
-                    last_post_id or "(null)",
+                    last_label,
                     first_views,
+                    reason,
                 )
             else:
                 stats["would_alert"] += 1

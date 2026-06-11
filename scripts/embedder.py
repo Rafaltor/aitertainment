@@ -339,6 +339,8 @@ def download_reel_video(
             capture_output=True,
             text=True,
             timeout=120,
+            stdin=subprocess.DEVNULL,
+            close_fds=True,
         )
     except FileNotFoundError:
         _LOG.warning("yt-dlp absent — vidéo ignorée pour %s.", media_id)

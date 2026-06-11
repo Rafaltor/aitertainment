@@ -1,0 +1,178 @@
+[
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 183,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 203,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/graphql/query",
+    "status": 302,
+    "len": 0,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 6217,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": true,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/api/v1/web/fxcal/ig_sso_users/",
+    "status": 200,
+    "len": 15,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 114,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": true,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 2341,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": true,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 261,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 1322,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/graphql/query",
+    "status": 200,
+    "len": 432,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": true,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 114,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": true,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 3978,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 268,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 1815,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  },
+  {
+    "url": "https://www.instagram.com/graphql/query",
+    "status": 200,
+    "len": 135957,
+    "has_view_count": true,
+    "has_play_count": false,
+    "has_code": true,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": true
+  },
+  {
+    "url": "https://www.instagram.com/api/graphql",
+    "status": 200,
+    "len": 325,
+    "has_view_count": false,
+    "has_play_count": false,
+    "has_code": false,
+    "mentions_user": false,
+    "has_pinned_field": false,
+    "has_taken_at": false
+  }
+]

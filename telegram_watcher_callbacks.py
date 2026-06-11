@@ -32,6 +32,9 @@ PENDING_TTL_S = 48 * 3600
 POLL_TIMEOUT_S = 25
 HTTP_TIMEOUT_S = 35
 _CALLBACK_PREFIX = "w:"
+# Bouton permanent (texte publié tel quel sur Instagram).
+FIXED_COMMENT_KEY = "lowtaper67"
+FIXED_COMMENT_TEXT = "lowtaper67"
 _IG_POST_LOCK = threading.Lock()
 
 _LOG = logging.getLogger("aitertainment.watcher.telegram")
@@ -119,13 +122,15 @@ def register_pending_post(
         data = _load_pending()
         posts = data.setdefault("posts", {})
         _prune_expired(posts)
+        stored_comments = {k: str(v or "") for k, v in comments.items()}
+        stored_comments[FIXED_COMMENT_KEY] = FIXED_COMMENT_TEXT
         posts[token] = {
             "media_id": str(post.get("video_id") or ""),
             "creator_username": str(
                 post.get("username") or creator.get("username") or ""
             ).lstrip("@"),
             "url": str(post.get("url") or ""),
-            "comments": {k: str(v or "") for k, v in comments.items()},
+            "comments": stored_comments,
             "posted": {},
             "created_at": _now_iso(),
         }
@@ -133,12 +138,19 @@ def register_pending_post(
     return token
 
 
-def _button_label(t_type: str, comment: str, *, posted: bool) -> str:
+def _callback_slots() -> frozenset[str]:
+    return frozenset(ORDERED_T_TYPES) | {FIXED_COMMENT_KEY}
+
+
+def _t_type_button_number(t_type: str) -> str:
+    return str(ORDERED_T_TYPES.index(t_type) + 1)
+
+
+def _button_label(slot: str, *, posted: bool, fixed: bool = False) -> str:
     prefix = "✅ " if posted else "📤 "
-    snippet = (comment or "—").replace("\n", " ").strip()
-    if len(snippet) > 28:
-        snippet = snippet[:27].rstrip() + "…"
-    return f"{prefix}{t_type}: {snippet}"
+    if fixed:
+        return f"{prefix}{FIXED_COMMENT_TEXT}"
+    return f"{prefix}{_t_type_button_number(slot)}"
 
 
 def build_comment_keyboard(
@@ -147,9 +159,25 @@ def build_comment_keyboard(
     *,
     posted: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
-    """Clavier inline : une ligne par T-type avec commentaire non vide."""
+    """Clavier inline : bouton fixe ``lowtaper67`` + un numéro par T-type."""
     posted = posted or {}
     rows: list[list[dict[str, str]]] = []
+
+    fixed_cb = f"{_CALLBACK_PREFIX}{token}:{FIXED_COMMENT_KEY}"
+    if len(fixed_cb.encode("utf-8")) <= 64:
+        rows.append(
+            [
+                {
+                    "text": _button_label(
+                        FIXED_COMMENT_KEY,
+                        posted=bool(posted.get(FIXED_COMMENT_KEY)),
+                        fixed=True,
+                    ),
+                    "callback_data": fixed_cb,
+                }
+            ]
+        )
+
     for t_type in ORDERED_T_TYPES:
         text = str(comments.get(t_type) or "").strip()
         if not text:
@@ -160,7 +188,9 @@ def build_comment_keyboard(
         rows.append(
             [
                 {
-                    "text": _button_label(t_type, text, posted=bool(posted.get(t_type))),
+                    "text": _button_label(
+                        t_type, posted=bool(posted.get(t_type))
+                    ),
                     "callback_data": cb,
                 }
             ]
@@ -222,7 +252,7 @@ def _parse_callback(data: str) -> tuple[str, str] | None:
     token, t_type = rest.split(":", 1)
     token = token.strip()
     t_type = t_type.strip()
-    if not token or t_type not in ORDERED_T_TYPES:
+    if not token or t_type not in _callback_slots():
         return None
     return token, t_type
 
@@ -302,6 +332,9 @@ def handle_callback(
             _ack_callback(cq_id, token=bot_token, text="Données invalides")
             return "media_id ou commentaire manquant"
 
+    # Telegram exige answerCallbackQuery en ~30 s — Playwright IG peut prendre 1 min.
+    _ack_callback(cq_id, token=bot_token, text="Publication en cours…")
+
     ok, err = post_fn(media_id, comment_text)
 
     creator_username = ""
@@ -322,7 +355,6 @@ def handle_callback(
                 )
 
     if ok:
-        _ack_callback(cq_id, token=bot_token, text=f"Publié ({t_type})")
         if markup and msg_id is not None and msg_chat is not None:
             _edit_message_keyboard(
                 chat_id=str(msg_chat),
@@ -334,7 +366,16 @@ def handle_callback(
             f"post OK @{creator_username} {t_type} reel={media_id}"
         )
 
-    _ack_callback(cq_id, token=bot_token, text=f"Échec : {err[:80]}")
+    if msg_chat is not None:
+        _telegram_api(
+            "sendMessage",
+            {
+                "chat_id": str(msg_chat),
+                "text": f"❌ Publication {t_type} échouée : {err[:200]}",
+                "reply_to_message_id": msg_id,
+            },
+            token=bot_token,
+        )
     return f"post KO : {err}"
 
 

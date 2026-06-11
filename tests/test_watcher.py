@@ -6,19 +6,22 @@ import json
 import shutil
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
 
 from config import ORDERED_T_TYPES
 from watcher import (
     DAY_INTERVAL_S,
+    GRID_REELS,
     MAX_ACCOUNTS_PAUSE_S,
     NEW_POST_VIEW_THRESHOLD,
     NIGHT_INTERVAL_S,
     PRIME_INTERVAL_S,
     _dual_account_enabled,
+    _is_fresh_reel,
     _split_creator_batches,
+    _strip_pinned_reels,
     _watcher_eligible,
     check_new_post,
     get_poll_interval,
@@ -30,6 +33,12 @@ def _mock_comments_by_type() -> dict[str, str]:
     return {t: f"c-{t}" for t in ORDERED_T_TYPES}
 
 
+def _fresh_ts(*, days_ago: float = 0) -> int:
+    return int(
+        (datetime.now(timezone.utc) - timedelta(days=days_ago)).timestamp()
+    )
+
+
 def _reel(
     media_id: str,
     view_count: int,
@@ -39,6 +48,7 @@ def _reel(
     audio_id: str = "",
     product_type: str = "",
     owner_username: str = "",
+    taken_at: int | None = None,
 ) -> dict:
     out = {
         "media_id": media_id,
@@ -50,12 +60,25 @@ def _reel(
         "caption": caption,
         "audio_id": audio_id,
         "thumbnail_url": "",
+        "product_type": product_type or "clips",
+        "taken_at": _fresh_ts() if taken_at is None else taken_at,
     }
-    if product_type:
-        out["product_type"] = product_type
     if owner_username:
         out["owner_username"] = owner_username
     return out
+
+
+def _grid_new_head(
+    head_id: str,
+    last_id: str = "old",
+    *,
+    view_count: int = 500,
+    **head_kw: object,
+) -> list[dict]:
+    return [
+        _reel(head_id, view_count, **head_kw),
+        _reel(last_id, 100, taken_at=_fresh_ts(days_ago=1)),
+    ]
 
 
 class CheckNewPostTest(unittest.TestCase):
@@ -64,9 +87,12 @@ class CheckNewPostTest(unittest.TestCase):
 
     @patch("watcher.get_recent_reels")
     def test_new_post_detected(self, mock_reels: MagicMock) -> None:
-        mock_reels.return_value = [
-            _reel("111", 500, caption="Salut #street #mode", audio_id="music_xyz"),
-        ]
+        mock_reels.return_value = _grid_new_head(
+            "111",
+            "000",
+            caption="Salut #street #mode",
+            audio_id="music_xyz",
+        )
         creator = {
             "username": "someone",
             "platform": "instagram",
@@ -80,7 +106,11 @@ class CheckNewPostTest(unittest.TestCase):
         self.assertIn("street", out["hashtags"])
         self.assertEqual(out["audio_id"], "music_xyz")
         mock_reels.assert_called_once_with(
-            "someone", self.context, max_reels=4, spa_wait_ms=ANY
+            "someone",
+            self.context,
+            max_reels=GRID_REELS,
+            spa_wait_ms=ANY,
+            dom_only=False,
         )
 
     @patch("watcher.get_recent_reels")
@@ -129,8 +159,16 @@ class CheckNewPostTest(unittest.TestCase):
         with self.assertLogs("aitertainment", level="INFO") as logs:
             self.assertIsNone(check_new_post(creator, self.context))
         self.assertEqual(mock_reels.call_count, 2)
-        mock_reels.assert_any_call("u", self.context, max_reels=4, spa_wait_ms=ANY)
-        mock_reels.assert_any_call("u", self.context, max_reels=8, spa_wait_ms=ANY)
+        mock_reels.assert_any_call(
+            "u", self.context, max_reels=GRID_REELS, spa_wait_ms=ANY, dom_only=False
+        )
+        mock_reels.assert_any_call(
+            "u",
+            self.context,
+            max_reels=GRID_REELS + 4,
+            spa_wait_ms=ANY,
+            dom_only=False,
+        )
         self.assertTrue(
             any("aucun reel non épinglé trouvé" in msg for msg in logs.output)
         )
@@ -139,7 +177,11 @@ class CheckNewPostTest(unittest.TestCase):
     def test_pinned_retry_finds_non_pinned(self, mock_reels: MagicMock) -> None:
         mock_reels.side_effect = [
             [_reel("p1", 10, is_pinned=True), _reel("p2", 20, is_pinned=True)],
-            [_reel("p1", 10, is_pinned=True), _reel("fresh", 400)],
+            [
+                _reel("p1", 10, is_pinned=True),
+                _reel("fresh", 400),
+                _reel("old", 100, taken_at=_fresh_ts(days_ago=1)),
+            ],
         ]
         creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
         out = check_new_post(creator, self.context)
@@ -151,14 +193,16 @@ class CheckNewPostTest(unittest.TestCase):
     @patch("watcher.VIEW_FILTER_ENABLED", True)
     @patch("watcher.get_recent_reels")
     def test_high_views_returns_none(self, mock_reels: MagicMock) -> None:
-        mock_reels.return_value = [_reel("big", NEW_POST_VIEW_THRESHOLD + 1)]
+        mock_reels.return_value = _grid_new_head("big", "old", view_count=NEW_POST_VIEW_THRESHOLD + 1)
         creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
         self.assertIsNone(check_new_post(creator, self.context))
 
     @patch("watcher.VIEW_FILTER_ENABLED", False)
     @patch("watcher.get_recent_reels")
     def test_high_views_alerts_when_filter_disabled(self, mock_reels: MagicMock) -> None:
-        mock_reels.return_value = [_reel("big", NEW_POST_VIEW_THRESHOLD + 1)]
+        mock_reels.return_value = _grid_new_head(
+            "big", "old", view_count=NEW_POST_VIEW_THRESHOLD + 1
+        )
         creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
         out = check_new_post(creator, self.context)
         self.assertIsNotNone(out)
@@ -168,8 +212,9 @@ class CheckNewPostTest(unittest.TestCase):
     @patch("watcher.get_recent_reels")
     def test_skips_carousel_zero_views(self, mock_reels: MagicMock) -> None:
         mock_reels.return_value = [
-            _reel("carousel", 0),
+            _reel("carousel", 0, product_type="feed"),
             _reel("fresh", 400, caption="new #drop"),
+            _reel("old", 100, taken_at=_fresh_ts(days_ago=1)),
         ]
         creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
         out = check_new_post(creator, self.context)
@@ -180,7 +225,8 @@ class CheckNewPostTest(unittest.TestCase):
     @patch("watcher.get_recent_reels")
     def test_skips_reel_owned_by_other_account(self, mock_reels: MagicMock) -> None:
         mock_reels.return_value = [
-            _reel("stolen", 400, product_type="clips", owner_username="other_user"),
+            _reel("stolen", 400, owner_username="other_user"),
+            _reel("old", 100, taken_at=_fresh_ts(days_ago=1)),
         ]
         creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
         self.assertIsNone(check_new_post(creator, self.context))
@@ -188,8 +234,9 @@ class CheckNewPostTest(unittest.TestCase):
     @patch("watcher.get_recent_reels")
     def test_uses_next_reel_when_head_owned_by_collab(self, mock_reels: MagicMock) -> None:
         mock_reels.return_value = [
-            _reel("collab", 400, product_type="clips", owner_username="le.corbz"),
-            _reel("own", 300, product_type="clips", owner_username="bisou.boge"),
+            _reel("collab", 400, owner_username="le.corbz"),
+            _reel("own", 300, owner_username="bisou.boge"),
+            _reel("old", 100, owner_username="bisou.boge", taken_at=_fresh_ts(days_ago=1)),
         ]
         creator = {
             "username": "bisou.boge",
@@ -205,7 +252,8 @@ class CheckNewPostTest(unittest.TestCase):
     def test_skips_non_clips_product_type(self, mock_reels: MagicMock) -> None:
         mock_reels.return_value = [
             _reel("photo", 500, product_type="feed"),
-            _reel("fresh", 400, product_type="clips"),
+            _reel("fresh", 400),
+            _reel("old", 100, taken_at=_fresh_ts(days_ago=1)),
         ]
         creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
         out = check_new_post(creator, self.context)
@@ -214,16 +262,118 @@ class CheckNewPostTest(unittest.TestCase):
         self.assertEqual(out["video_id"], "fresh")
 
     @patch("watcher.get_recent_reels")
+    def test_stale_last_not_in_grid_alerts_if_head_fresh(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [
+            _reel("head", 400, taken_at=_fresh_ts(days_ago=1)),
+        ]
+        creator = {
+            "username": "u",
+            "platform": "instagram",
+            "last_post_id": "ghost",
+        }
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertFalse(out["bootstrap"])
+        self.assertEqual(out["video_id"], "head")
+
+    @patch("watcher.get_recent_reels")
+    def test_stale_last_not_in_grid_repairs_if_head_old(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [
+            _reel("head", 400, taken_at=_fresh_ts(days_ago=10)),
+        ]
+        creator = {
+            "username": "u",
+            "platform": "instagram",
+            "last_post_id": "ghost",
+        }
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertTrue(out["bootstrap"])
+        self.assertTrue(out["repair"])
+
+    @patch("watcher.get_recent_reels")
+    def test_old_head_repairs_without_alert(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [
+            _reel("old_head", 400, taken_at=_fresh_ts(days_ago=10)),
+            _reel("older", 100, taken_at=_fresh_ts(days_ago=11)),
+        ]
+        creator = {
+            "username": "u",
+            "platform": "instagram",
+            "last_post_id": "older",
+        }
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertTrue(out["repair"])
+        self.assertFalse(out.get("bootstrap") is False and out.get("repair") is False)
+
+    @patch("watcher.get_recent_reels")
+    def test_head_already_known_skips_alert(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = _grid_new_head("seen", "old")
+        creator = {
+            "username": "u",
+            "platform": "instagram",
+            "last_post_id": "old",
+            "known_reel_ids": ["seen", "old"],
+        }
+        self.assertIsNone(check_new_post(creator, self.context))
+
+    @patch("watcher.get_recent_reels")
+    def test_known_head_resyncs_stale_last_post_id(self, mock_reels: MagicMock) -> None:
+        """last_post_id sur un reel épinglé alors que la tête non épinglée est connue."""
+        mock_reels.return_value = [
+            _reel("current_head", 400, taken_at=_fresh_ts(days_ago=0)),
+            _reel("older", 100, taken_at=_fresh_ts(days_ago=2)),
+        ]
+        creator = {
+            "username": "u",
+            "platform": "instagram",
+            "last_post_id": "pinned_old",
+            "known_reel_ids": ["pinned_old", "current_head", "older"],
+        }
+        self.assertIsNone(check_new_post(creator, self.context))
+        self.assertEqual(creator["last_post_id"], "current_head")
+
+    @patch("watcher.get_recent_reels")
     def test_skips_pinned_uses_first_non_pinned(self, mock_reels: MagicMock) -> None:
         mock_reels.return_value = [
             _reel("pinned", 10, is_pinned=True),
             _reel("fresh", 400, caption="new #drop"),
+            _reel("old", 100, taken_at=_fresh_ts(days_ago=1)),
         ]
         creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
         out = check_new_post(creator, self.context)
         self.assertIsNotNone(out)
         assert out is not None
         self.assertEqual(out["video_id"], "fresh")
+
+    @patch("watcher.get_recent_reels")
+    def test_skips_mislabeled_pinned_head_by_taken_at(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [
+            _reel("stale_pin", 50, taken_at=_fresh_ts(days_ago=120)),
+            _reel("fresh", 400, taken_at=_fresh_ts(days_ago=0)),
+            _reel("old", 100, taken_at=_fresh_ts(days_ago=1)),
+        ]
+        creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out["video_id"], "fresh")
+
+
+class StripPinnedReelsTest(unittest.TestCase):
+    def test_flag_and_taken_at_heuristics(self) -> None:
+        reels = [
+            _reel("pin_flag", 10, is_pinned=True),
+            _reel("stale", 20, taken_at=100),
+            _reel("fresh", 30, taken_at=200),
+        ]
+        out = _strip_pinned_reels(reels, username="u", log_prefix="test")
+        self.assertEqual([r["media_id"] for r in out], ["fresh"])
+        self.assertFalse(out[0].get("is_pinned"))
 
 
 class GetPollIntervalTest(unittest.TestCase):
@@ -1171,9 +1321,12 @@ class TestWatcherOptimizations(unittest.TestCase):
     def test_dual_account_disabled_by_config(self) -> None:
         self.assertFalse(_dual_account_enabled())
 
+    @patch("scripts.instagram_browser.verify_reel_on_profile_grid", return_value=True)
     @patch("watcher.get_recent_reels_on_page")
-    def test_check_new_post_uses_reused_page(self, mock_on_page: MagicMock) -> None:
-        mock_on_page.return_value = [_reel("fresh", 400)]
+    def test_check_new_post_uses_reused_page(
+        self, mock_on_page: MagicMock, _mock_verify: MagicMock
+    ) -> None:
+        mock_on_page.return_value = _grid_new_head("fresh", "old")
         page = MagicMock()
         creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
         out = check_new_post(creator, MagicMock(), grid_page=page)

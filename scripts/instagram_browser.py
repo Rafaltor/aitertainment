@@ -3,24 +3,22 @@
 
 from __future__ import annotations
 
-import ast
-import base64
 import json
 import logging
+import os
 import random
 import re
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import requests
 from playwright.sync_api import BrowserContext, Page, Playwright, Response
 
 COOKIES_PATH = Path("data/instagram_cookies.json")
 _DEFAULT_SPA_WAIT_MS = 2500
-HEADLESS = True
+# IG_HEADLESS=0 → navigateur visible (debug / réduit l'empreinte automation).
+HEADLESS = os.environ.get("IG_HEADLESS", "1").strip() != "0"
 BASE_URL = "https://www.instagram.com"
 _VIEWPORT = {"width": 1920, "height": 1080}
 _REELS_GRID_COLUMNS = 5
@@ -29,12 +27,12 @@ _REELS_SCROLL_WAIT_MS = 2_000
 _REQUEST_TIMEOUT_MS = 15_000
 _PROFILE_GOTO_TIMEOUT_MS = 30_000
 VIRAL_COMMENTS_PATH = Path("data/viral_comments.json")
-TRAINING_COMMENTS_VIRAL_PATH = Path("data/training_comments_viral.json")
 COMMENTS_COLLECT_REELS_MAX = 3
 COMMENTS_PANEL_SCROLL_ROUNDS = 6
 MIN_COMMENT_COUNT_TO_SCRAPE = 20
 _FEED_REEL_STABLE_WAIT_MS = 500
 _FEED_AFTER_PANEL_CLOSE_MS = 1500
+_IG_WEB_APP_ID = "936619743392459"
 _GRAPHQL_METRIC_KEYS = (
     "view_count",
     "play_count",
@@ -43,19 +41,8 @@ _GRAPHQL_METRIC_KEYS = (
     "comment_count",
     "share_count",
 )
-LM_STUDIO_CHAT_URL = "http://localhost:1234/v1/chat/completions"
-LM_STUDIO_VISION_MODEL = "google/gemma-4-e4b"
 
 log = logging.getLogger(__name__)
-
-_VISION_FALLBACK: dict[str, Any] = {
-    "followers": 0,
-    "following": 0,
-    "posts_count": 0,
-    "full_name": "",
-    "biography": "",
-    "is_private": False,
-}
 
 _IG_RESERVED_USERNAMES = frozenset(
     {
@@ -287,7 +274,16 @@ def _instagram_page_blocked(page: Page) -> str | None:
         snippet = (page.inner_text("body", timeout=4_000) or "")[:3000].lower()
     except Exception:
         snippet = ""
-    if "log in" in snippet or "connectez-vous" in snippet or "se connecter" in snippet:
+    try:
+        # Ne déclarer "login" que si le DOM contient réellement le formulaire,
+        # pas sur la simple présence de "log in" dans du texte de page.
+        has_login_form = (
+            page.locator('input[name="username"]').count() > 0
+            and page.locator('input[name="password"]').count() > 0
+        )
+    except Exception:
+        has_login_form = False
+    if has_login_form:
         return "login"
     if "this account is private" in snippet or "compte est privé" in snippet:
         return "private"
@@ -300,7 +296,36 @@ def _instagram_page_blocked(page: Page) -> str | None:
 
 def session_ok(context: BrowserContext) -> bool:
     """True si les cookies Instagram permettent de naviguer (pas de mur login)."""
-    return _session_ok(context)
+    page = context.new_page()
+    try:
+        page.goto(
+            f"{BASE_URL}/",
+            timeout=_REQUEST_TIMEOUT_MS,
+            wait_until="domcontentloaded",
+        )
+        page.wait_for_timeout(800)
+        url = page.url or ""
+        if "/accounts/login" in url:
+            return False
+        user_in = page.locator('input[name="username"]')
+        pass_in = page.locator('input[name="password"]')
+        if user_in.count() > 0 and pass_in.count() > 0:
+            try:
+                if user_in.first.is_visible(timeout=1_500) and pass_in.first.is_visible(timeout=500):
+                    return False
+            except Exception:
+                pass
+        if page.locator('svg[aria-label="Accueil"]').count() > 0:
+            return True
+        if page.locator('svg[aria-label="Home"]').count() > 0:
+            return True
+        if page.locator('a[href*="/direct/inbox/"]').count() > 0:
+            return True
+        return "/accounts/login" not in url
+    except Exception:
+        return False
+    finally:
+        page.close()
 
 
 def open_reels_grid(
@@ -310,7 +335,11 @@ def open_reels_grid(
     timeout_ms: int = _REQUEST_TIMEOUT_MS,
     spa_wait_ms: int | None = None,
 ) -> bool:
-    """Ouvre ``/{username}/reels/`` (à réutiliser pour plusieurs reels)."""
+    """Ouvre le profil créateur ``/{username}/`` (session + csrftoken).
+
+    La grille Reels est ensuite lue via ``/api/v1/clips/user/`` ; la timeline
+    profil (carrousels) et l'onglet ``/reels/`` ne suffisent plus seuls.
+    """
     u = str(username or "").lstrip("@").strip()
     if not u:
         return False
@@ -318,7 +347,7 @@ def open_reels_grid(
     page.set_viewport_size(_VIEWPORT)
     try:
         page.goto(
-            f"{BASE_URL}/{u}/reels/",
+            f"{BASE_URL}/{u}/",
             timeout=timeout_ms,
             wait_until="domcontentloaded",
         )
@@ -326,11 +355,19 @@ def open_reels_grid(
         page.wait_for_timeout(wait_ms)
         blocked = _instagram_page_blocked(page)
         if blocked:
-            log.warning("grille @%s/reels/ : page bloquée (%s).", u, blocked)
+            log.warning("grille @%s : page bloquée (%s).", u, blocked)
+            return False
+        url = (page.url or "").lower()
+        if f"/{u.lower()}" not in url:
+            log.warning(
+                "grille @%s : URL inattendue (%s) — données grille ignorées.",
+                u,
+                page.url,
+            )
             return False
         return True
     except Exception as e:
-        log.warning("grille @%s/reels/ inaccessible (%s).", u, e)
+        log.warning("grille @%s inaccessible (%s).", u, e)
         return False
 
 
@@ -340,11 +377,13 @@ def return_to_reels_grid(page: Page, username: str) -> bool:
     if not u:
         return False
     try:
-        if f"/{u}/reels" in (page.url or ""):
+        url = page.url or ""
+        if f"/{u}/" in url and "/reel/" not in url.split(f"/{u}/")[-1][:20]:
             return True
         page.go_back(wait_until="domcontentloaded", timeout=15_000)
         page.wait_for_timeout(2000)
-        if f"/{u}/reels" in (page.url or ""):
+        url = page.url or ""
+        if f"/{u}/" in url:
             return True
     except Exception:
         pass
@@ -908,34 +947,6 @@ def _extract_reel_code_from_page(page: Page) -> str:
     return ""
 
 
-def _resolve_feed_reel_code(
-    page: Page,
-    metrics_by_code: dict[str, dict[str, Any]],
-    processed: set[str],
-) -> str:
-    """Reel affiché dans le fil — DOM uniquement (pas de repli GraphQL stale)."""
-    del metrics_by_code  # conservé pour compat appelants
-    code = _extract_reel_code_from_page(page)
-    if code and code not in processed:
-        return code
-    return ""
-
-
-def _close_comments_panel(page: Page) -> None:
-    """Ferme overlay commentaires pour ne pas lire le reel précédent."""
-    for _ in range(3):
-        try:
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(200)
-        except Exception:
-            pass
-    try:
-        page.mouse.click(80, _VIEWPORT["height"] // 2)
-        page.wait_for_timeout(150)
-    except Exception:
-        pass
-
-
 def _wait_for_feed_reel_change(
     page: Page,
     previous_code: str,
@@ -1133,69 +1144,6 @@ def engage_feed_reel_for_algo(
     return duration
 
 
-def _discover_reel_candidates_on_feed_page(
-    page: Page,
-    metrics_by_pk: dict[str, dict[str, Any]],
-    metrics_by_code: dict[str, dict[str, Any]],
-    *,
-    pool_size: int,
-    scroll_steps: int,
-    scroll_wait_ms: int = 1200,
-    logger: logging.Logger | None = None,
-) -> tuple[list[dict[str, Any]], int]:
-    """Scroll le fil et collecte des candidats reels (GraphQL uniquement, pas de commentaires).
-
-    Retourne ``(candidats, step_idx+1)``.
-    """
-    log_cb = logger or log
-    order: list[str] = []
-    seen: set[str] = set()
-
-    def _capture_codes() -> None:
-        for code in metrics_by_code:
-            mid = str(code or "").strip()
-            if not _is_valid_reel_code(mid) or mid in seen:
-                continue
-            seen.add(mid)
-            order.append(mid)
-
-    _focus_reels_feed_player(page)
-    _capture_codes()
-    target = max(1, pool_size)
-    steps = max(target, scroll_steps)
-    stagnant = 0
-    step_idx = 0
-    for step_idx in range(steps):
-        if len(order) >= target:
-            break
-        before = len(order)
-        _advance_reels_feed(page)
-        page.wait_for_timeout(scroll_wait_ms)
-        _capture_codes()
-        if len(order) == before:
-            stagnant += 1
-            if stagnant >= 8:
-                log_cb.info("Fil Reels : scroll stagnant après %d step(s).", step_idx + 1)
-                break
-        else:
-            stagnant = 0
-
-    out: list[dict[str, Any]] = []
-    for code in order:
-        bucket = _metrics_bucket_for_dom_media_id(code, metrics_by_pk, metrics_by_code)
-        metrics = _metrics_for_dom_media_id(code, metrics_by_pk, metrics_by_code)
-        out.append(
-            {
-                "media_id": code,
-                "view_count": metrics["view_count"],
-                "comment_count": metrics["comment_count"],
-                "caption": str(bucket.get("caption") or ""),
-                "username": _owner_username_from_bucket(bucket),
-            }
-        )
-    return out, step_idx + 1 if order else 0
-
-
 def _filter_reels_for_comment_scrape(
     candidates: list[dict[str, Any]],
     *,
@@ -1211,79 +1159,6 @@ def _filter_reels_for_comment_scrape(
     ]
     filtered.sort(key=lambda c: int(c.get("comment_count") or 0), reverse=True)
     return filtered[:max_reels]
-
-
-def discover_reels_from_feed(
-    context: BrowserContext,
-    *,
-    max_reels: int = 30,
-    scroll_steps: int = 40,
-    scroll_wait_ms: int = 1200,
-    logger: logging.Logger | None = None,
-) -> list[dict[str, Any]]:
-    """Parcourt le fil Reels aléatoire (``/reels/``) — pas les grilles profil."""
-    log_cb = logger or log
-    page = context.new_page()
-    metrics_by_pk, metrics_by_code = _attach_graphql_metrics_listener(page)
-
-    try:
-        page.goto(f"{BASE_URL}/reels/", timeout=_REQUEST_TIMEOUT_MS, wait_until="domcontentloaded")
-        page.set_viewport_size(_VIEWPORT)
-        page.wait_for_load_state("load")
-        page.wait_for_timeout(3000)
-
-        out, steps_done = _discover_reel_candidates_on_feed_page(
-            page,
-            metrics_by_pk,
-            metrics_by_code,
-            pool_size=max_reels,
-            scroll_steps=scroll_steps,
-            scroll_wait_ms=scroll_wait_ms,
-            logger=log_cb,
-        )
-        log_cb.info(
-            "Fil Reels : %d reel(s) découverts (%d step(s), %d codes GraphQL).",
-            len(out[:max_reels]),
-            steps_done,
-            len(metrics_by_code),
-        )
-        return out[:max_reels]
-    except Exception as e:
-        log_cb.warning("Fil Reels : erreur (%s).", e)
-        return []
-    finally:
-        page.close()
-
-
-def _probe_reel_max_comment_likes(
-    page: Page,
-    *,
-    scroll_wait_ms: int = 250,
-) -> tuple[int, int]:
-    """Lit les commentaires visibles sans scroll. Retourne ``(max_likes, nb_parsés)``."""
-    parsed, _ = scrape_reel_comments_panel(
-        page,
-        scroll_rounds=0,
-        scroll_wait_ms=scroll_wait_ms,
-    )
-    _close_comments_panel(page)
-    if not parsed:
-        return 0, 0
-    max_likes = max(int(c.get("like_count") or 0) for c in parsed)
-    return max_likes, len(parsed)
-
-
-def _next_reel(page: Page, wait_ms: int) -> None:
-    """Ferme le panneau commentaires et passe au reel suivant."""
-    try:
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(300)
-        page.mouse.click(80, _VIEWPORT["height"] // 2)
-        page.wait_for_timeout(300)
-        page.keyboard.press("ArrowDown")
-        page.wait_for_timeout(wait_ms)
-    except Exception:
-        pass
 
 
 def collect_viral_comments_from_feed(
@@ -1664,12 +1539,146 @@ def _list_reel_page_aria_labels(page: Page, limit: int = 40) -> list[str]:
         return []
 
 
+def _reel_comment_post_urls(media_id: str) -> list[str]:
+    """URLs post classique puis reel (la vue ``/reels/`` immersive n'a pas de vrai champ)."""
+    mid = str(media_id or "").strip()
+    return [f"{BASE_URL}/p/{mid}/", f"{BASE_URL}/reel/{mid}/"]
+
+
+def _fill_reel_comment_field(page: Page, text: str) -> bool:
+    """Remplit le champ commentaire (``/p/`` textarea ou contenteditable reel)."""
+    payload = str(text or "").strip()
+    if not payload:
+        return False
+
+    textarea_selectors = (
+        'textarea[placeholder*="commentaire" i]',
+        'textarea[placeholder*="comment" i]',
+        "form textarea",
+    )
+    for selector in textarea_selectors:
+        loc = page.locator(selector)
+        for idx in range(min(loc.count(), 3)):
+            target = loc.nth(idx)
+            try:
+                if not target.is_visible(timeout=1_500):
+                    continue
+                target.click(timeout=5_000)
+                target.press_sequentially(payload, delay=15, timeout=15_000)
+                return True
+            except Exception:
+                continue
+
+    candidates = [
+        page.get_by_placeholder(re.compile(r"ajouter.*commentaire", re.I)),
+        page.get_by_placeholder(re.compile(r"add.*comment", re.I)),
+        page.locator('div[contenteditable="true"][role="textbox"]'),
+        page.locator('div[contenteditable="true"]'),
+        page.get_by_role("textbox"),
+    ]
+    for loc in candidates:
+        if loc.count() == 0:
+            continue
+        try:
+            target = loc.first
+            if not target.is_visible(timeout=2_000):
+                continue
+            target.click(timeout=5_000)
+            target.press_sequentially(payload, delay=15, timeout=15_000)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _submit_reel_comment_field(page: Page) -> bool:
+    """Soumet le commentaire (Entrée sur textarea, sinon bouton Publier)."""
+    for selector in (
+        'textarea[placeholder*="commentaire" i]',
+        'textarea[placeholder*="comment" i]',
+        "form textarea",
+    ):
+        loc = page.locator(selector)
+        for idx in range(min(loc.count(), 3)):
+            target = loc.nth(idx)
+            try:
+                if not target.is_visible(timeout=1_000):
+                    continue
+                target.press("Enter", timeout=5_000)
+                page.wait_for_timeout(2_500)
+                return True
+            except Exception:
+                continue
+
+    for label in ("Publier", "Poster", "Post", "Publish"):
+        for selector in (
+            f'div[role="button"]:has-text("{label}")',
+            f'button:has-text("{label}")',
+        ):
+            loc = page.locator(selector)
+            if loc.count() == 0:
+                continue
+            try:
+                loc.first.click(timeout=4_000)
+                page.wait_for_timeout(2_500)
+                return True
+            except Exception:
+                continue
+
+    try:
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(2_500)
+        return True
+    except Exception:
+        return False
+
+
+def _verify_comment_published(page: Page, text: str, media_id: str) -> bool:
+    """Vérifie que le texte apparaît dans les commentaires après publication."""
+    snippet = str(text or "").strip()
+    mid = str(media_id or "").strip()
+    if not snippet or not mid:
+        return False
+
+    def _visible() -> bool:
+        try:
+            return bool(
+                page.evaluate(
+                    "(needle) => document.body.innerText.includes(needle)",
+                    snippet,
+                )
+            )
+        except Exception:
+            return False
+
+    if _visible():
+        return True
+
+    try:
+        page.goto(
+            f"{BASE_URL}/p/{mid}/",
+            timeout=_REQUEST_TIMEOUT_MS,
+            wait_until="domcontentloaded",
+        )
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(2_500)
+        click_reel_comment_button(page)
+        page.wait_for_timeout(2_000)
+    except Exception:
+        pass
+
+    return _visible()
+
+
 def post_reel_comment(
     media_id: str,
     comment_text: str,
     context: BrowserContext,
 ) -> tuple[bool, str]:
-    """Publie un commentaire sur ``/reel/{id}/`` (session connectée).
+    """Publie un commentaire sur un post/reel (session connectée).
+
+    Utilise ``/p/{id}/`` en priorité : la vue ``/reel/`` redirige souvent vers
+    ``/reels/`` immersive sans champ de saisie fonctionnel.
 
     Retourne ``(ok, message_erreur)``.
     """
@@ -1681,77 +1690,46 @@ def post_reel_comment(
         return False, "commentaire vide"
 
     page = context.new_page()
+    last_err = "champ commentaire introuvable"
     try:
-        page.goto(
-            f"{BASE_URL}/reel/{mid}/",
-            timeout=_REQUEST_TIMEOUT_MS,
-            wait_until="domcontentloaded",
-        )
-        page.wait_for_load_state("load")
-        page.wait_for_timeout(2000)
+        for url in _reel_comment_post_urls(mid):
+            page.goto(url, timeout=_REQUEST_TIMEOUT_MS, wait_until="domcontentloaded")
+            page.wait_for_load_state("load")
+            page.wait_for_timeout(2_500)
 
-        blocked = _instagram_page_blocked(page)
-        if blocked:
-            return False, f"page bloquée ({blocked})"
-
-        if not click_reel_comment_button(page):
-            return False, "bouton commentaire introuvable"
-
-        page.wait_for_timeout(1500)
-
-        filled = False
-        for selector in (
-            'textarea[placeholder*="commentaire" i]',
-            'textarea[placeholder*="comment" i]',
-            'textarea[aria-label*="commentaire" i]',
-            'textarea[aria-label*="comment" i]',
-            "form textarea",
-            'div[contenteditable="true"][role="textbox"]',
-            'div[contenteditable="true"]',
-        ):
-            loc = page.locator(selector)
-            if loc.count() == 0:
-                continue
-            try:
-                target = loc.first
-                if not target.is_visible(timeout=2_000):
-                    continue
-                target.click(timeout=5_000)
-                target.fill(text, timeout=8_000)
-                filled = True
-                break
-            except Exception:
+            blocked = _instagram_page_blocked(page)
+            if blocked:
+                last_err = f"page bloquée ({blocked})"
                 continue
 
-        if not filled:
-            try:
-                ph = page.get_by_placeholder(re.compile(r"comment", re.IGNORECASE))
-                if ph.count() > 0:
-                    ph.first.click(timeout=5_000)
-                    ph.first.fill(text, timeout=8_000)
-                    filled = True
-            except Exception:
-                pass
+            has_textarea = page.locator(
+                'textarea[placeholder*="commentaire" i], textarea[placeholder*="comment" i]'
+            ).count() > 0
+            if not has_textarea and not click_reel_comment_button(page):
+                labels = _list_reel_page_aria_labels(page)
+                last_err = f"bouton commentaire introuvable (labels={labels[:8]})"
+                continue
 
-        if not filled:
-            return False, "champ commentaire introuvable"
+            page.wait_for_timeout(1_500)
 
-        page.wait_for_timeout(400)
+            if not _fill_reel_comment_field(page, text):
+                labels = _list_reel_page_aria_labels(page)
+                last_err = f"champ commentaire introuvable (labels={labels[:8]})"
+                continue
 
-        for label in ("Publier", "Poster", "Post", "Publish"):
-            try:
-                page.get_by_role("button", name=label).first.click(timeout=4_000)
-                page.wait_for_timeout(1500)
+            page.wait_for_timeout(400)
+
+            if not _submit_reel_comment_field(page):
+                last_err = "soumission échouée (Entrée / Publier)"
+                continue
+
+            page.wait_for_timeout(1_500)
+            if _verify_comment_published(page, text, mid):
                 return True, ""
-            except Exception:
-                continue
 
-        try:
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(2000)
-            return True, ""
-        except Exception as e:
-            return False, f"soumission échouée ({e})"
+            last_err = "commentaire non visible après soumission (faux positif / modération)"
+
+        return False, last_err
     except Exception as e:
         return False, str(e)
     finally:
@@ -1821,65 +1799,6 @@ def click_reel_comment_button(page: Page) -> str | None:
         return str(clicked_label) if clicked_label else None
     except Exception:
         return None
-
-
-def _extract_comments_panel_text_heuristic(page: Page) -> str:
-    """Repli : plus grand bloc type liste de commentaires (layout /reel/ desktop)."""
-    try:
-        return str(
-            page.evaluate(
-                """() => {
-                    const noise = /Ne pas suggérer|Ajouter un commentaire|Masquer/i;
-                    let best = '';
-                    for (const ul of document.querySelectorAll('ul')) {
-                        const t = (ul.innerText || '').trim();
-                        if (t.length < 40 || noise.test(t)) continue;
-                        if (/Répondre|J.aime|like|sem\\b|j\\b|h\\b/i.test(t)
-                            && t.length > best.length) {
-                            best = t;
-                        }
-                    }
-                    return best;
-                }"""
-            )
-            or ""
-        )
-    except Exception:
-        return ""
-
-
-def scrape_reel_comments_panel(
-    page: Page,
-    *,
-    scroll_rounds: int = COMMENTS_PANEL_SCROLL_ROUNDS,
-    scroll_wait_ms: int = 700,
-) -> tuple[list[dict[str, Any]], str]:
-    """Ouvre si besoin et parse le panneau commentaires. Retourne ``(parsed, source)``."""
-    clicked = click_reel_comment_button(page)
-    page.wait_for_timeout(1200 if clicked else 400)
-    panel_text = extract_reel_comments_panel_text(
-        page,
-        scroll_rounds=scroll_rounds,
-        scroll_wait_ms=scroll_wait_ms,
-    )
-    source = "dialog" if clicked else "visible"
-    parsed = parse_comments_from_dom_text(str(panel_text or ""))
-    if not parsed:
-        panel_text = _extract_comments_panel_text_heuristic(page)
-        parsed = parse_comments_from_dom_text(str(panel_text or ""))
-        source = "heuristic"
-    if not parsed and not clicked:
-        clicked = click_reel_comment_button(page)
-        if clicked:
-            page.wait_for_timeout(1200)
-            panel_text = extract_reel_comments_panel_text(
-                page,
-                scroll_rounds=scroll_rounds,
-                scroll_wait_ms=scroll_wait_ms,
-            )
-            parsed = parse_comments_from_dom_text(str(panel_text or ""))
-            source = "dialog-retry"
-    return parsed, source
 
 
 def extract_reel_comments_panel_text(
@@ -2190,32 +2109,6 @@ def _parse_count_number(num_raw: str, *, has_suffix: bool) -> float:
     return float(num_raw)
 
 
-def _parse_compact_number(s: str) -> int:
-    """Alias pour les autres scrapers (reels, etc.)."""
-    return _parse_count(s)
-
-
-def _strip_model_json_fence(raw: str) -> str:
-    t = raw.strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```(?:json)?\s*", "", t, flags=re.I)
-        t = re.sub(r"\s*```\s*$", "", t)
-    return t.strip()
-
-
-def _parse_model_json(raw: str) -> Any | None:
-    text = _strip_model_json_fence(raw)
-    if not text:
-        return None
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        try:
-            return ast.literal_eval(text)
-        except (SyntaxError, ValueError):
-            return None
-
-
 def _empty_reel_metrics() -> dict[str, int]:
     return {
         "view_count": 0,
@@ -2357,12 +2250,20 @@ def _ingest_graphql_media_node(
     product_type = node.get("product_type")
     product_type_str = str(product_type).strip() if product_type is not None else ""
 
+    taken_at: int | None = None
+    for ts_key in ("taken_at", "taken_at_timestamp", "device_timestamp"):
+        ts_val = node.get(ts_key)
+        if isinstance(ts_val, (int, float)) and int(ts_val) > 1_000_000_000:
+            taken_at = int(ts_val)
+            break
+
     if (
         not patch
         and not caption
         and not has_pinned_field
         and not owner_username
         and not product_type_str
+        and taken_at is None
     ):
         return
 
@@ -2379,6 +2280,8 @@ def _ingest_graphql_media_node(
             _merge_pinned_into_bucket(bucket, is_pinned)
         if product_type_str:
             bucket["product_type"] = product_type_str
+        if taken_at is not None:
+            bucket["taken_at"] = taken_at
         if code:
             metrics_by_code[code] = dict(bucket)
     elif code:
@@ -2393,6 +2296,8 @@ def _ingest_graphql_media_node(
             _merge_pinned_into_bucket(bucket, is_pinned)
         if product_type_str:
             bucket["product_type"] = product_type_str
+        if taken_at is not None:
+            bucket["taken_at"] = taken_at
 
 
 def _walk_graphql_metrics(
@@ -2534,7 +2439,10 @@ def _attach_graphql_metrics_listener(
     metrics_by_code: dict[str, dict[str, Any]] = {}
 
     def on_response(response: Response) -> None:
-        if "graphql" not in response.url:
+        url = response.url or ""
+        # IG sert les données médias via /graphql/query OU /api/v1/ (clips/user,
+        # feed/user…) selon les rollouts — intercepter les deux.
+        if "graphql" not in url and "/api/v1/" not in url:
             return
         try:
             data = response.json()
@@ -2557,44 +2465,6 @@ def _attach_graphql_metrics_listener(
     page.on("response", on_response)
     setattr(page, _GRAPHQL_LISTENER_ATTR, on_response)
     return metrics_by_pk, metrics_by_code
-
-
-def _lm_studio_vision_text(screenshot_path: Path | str, prompt: str) -> str:
-    path = Path(screenshot_path)
-    if not path.is_file():
-        return ""
-    try:
-        with open(path, "rb") as f:
-            image_data = base64.b64encode(f.read()).decode("ascii")
-    except OSError:
-        return ""
-    payload = {
-        "model": LM_STUDIO_VISION_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{image_data}"},
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ],
-    }
-    try:
-        r = requests.post(
-            LM_STUDIO_CHAT_URL,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=120,
-        )
-        r.raise_for_status()
-        data = r.json()
-        return (data["choices"][0]["message"]["content"] or "").strip()
-    except Exception:
-        return ""
 
 
 _SUGGESTION_RESERVED_USERNAMES = frozenset(
@@ -2654,58 +2524,6 @@ def _attach_graphql_suggestions_listener(
 
     page.on("response", on_response)
     return suggested_usernames
-
-
-def _vision_int(value: Any) -> int:
-    if value is None:
-        return 0
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(round(value))
-    try:
-        return int(float(str(value).replace(",", "").replace(" ", "").replace("\u202f", "")))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _vision_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in ("true", "1", "yes", "oui")
-    return bool(value)
-
-
-_PROFILE_STATS_VISION_PROMPT = """Analyse ce screenshot d'un profil Instagram.
-Extrais exactement ces données en JSON :
-{
-  "followers": int,
-  "following": int,
-  "posts_count": int,
-  "full_name": string,
-  "biography": string,
-  "is_private": false
-}
-Réponds UNIQUEMENT avec le JSON, rien d'autre."""
-
-
-def extract_stats_from_screenshot(screenshot_path: Path | str) -> dict[str, Any]:
-    """Envoie le screenshot à LM Studio (vision) et retourne un dict de stats (fallback si échec)."""
-    out = dict(_VISION_FALLBACK)
-    raw_text = _lm_studio_vision_text(screenshot_path, _PROFILE_STATS_VISION_PROMPT)
-    parsed = _parse_model_json(raw_text)
-    if not isinstance(parsed, dict):
-        return dict(_VISION_FALLBACK)
-    out["followers"] = _vision_int(parsed.get("followers"))
-    out["following"] = _vision_int(parsed.get("following"))
-    out["posts_count"] = _vision_int(parsed.get("posts_count"))
-    out["full_name"] = str(parsed.get("full_name") or "").strip()
-    out["biography"] = str(parsed.get("biography") or "").strip()
-    out["is_private"] = _vision_bool(parsed.get("is_private"))
-    return out
 
 
 _GRAPHQL_LISTENER_ATTR = "_ait_graphql_response_handler"
@@ -2781,10 +2599,26 @@ def get_browser_context(
 ) -> BrowserContext:
     """Lance Chromium, injecte les cookies Instagram depuis ``cookies_path``."""
     cookies = load_instagram_cookies(cookies_path)
-    browser = playwright.chromium.launch(headless=HEADLESS)
+    browser = playwright.chromium.launch(
+        headless=HEADLESS,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+        ],
+    )
     context = browser.new_context(
         viewport=_VIEWPORT,
         locale="fr-FR",
+        user_agent=(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+    )
+    # Masque navigator.webdriver (détection automation la plus courante).
+    context.add_init_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
     )
     if cookies:
         context.add_cookies(cookies)
@@ -2822,42 +2656,6 @@ def _fill_instagram_login_form(page: Page, username: str, password: str) -> None
     page.wait_for_load_state("load", timeout=30_000)
 
 
-def login_instagram_context(
-    playwright: Playwright,
-    username: str,
-    password: str,
-    *,
-    save_cookies_path: Path | str | None = None,
-    headless: bool | None = None,
-) -> BrowserContext:
-    """Connexion web Instagram (headless) ; échoue si 2FA/challenge requis."""
-    u = str(username or "").strip()
-    pwd = str(password or "")
-    if not u or not pwd:
-        raise ValueError("username et password requis pour login_instagram_context")
-
-    launch_headless = HEADLESS if headless is None else headless
-    browser = playwright.chromium.launch(headless=launch_headless)
-    context = browser.new_context(viewport=_VIEWPORT, locale="fr-FR")
-    page = context.new_page()
-    try:
-        _fill_instagram_login_form(page, u, pwd)
-        page.wait_for_timeout(2500)
-        _dismiss_post_login_dialogs(page)
-
-        if not _session_ok(context):
-            raise RuntimeError(
-                f"Login Instagram échoué pour @{u} — 2FA/challenge probable. "
-                "Lancer : python watcher.py --login-ig2"
-            )
-        log.info("Login Instagram OK pour @%s", u)
-        if save_cookies_path:
-            save_instagram_cookies(context, save_cookies_path)
-    finally:
-        page.close()
-    return context
-
-
 def login_instagram_interactive(
     playwright: Playwright,
     username: str,
@@ -2886,7 +2684,7 @@ def login_instagram_interactive(
         deadline = time.time() + wait_after_submit_s
         while time.time() < deadline:
             _dismiss_post_login_dialogs(page)
-            if _session_ok(context):
+            if session_ok(context):
                 save_instagram_cookies(context, save_cookies_path)
                 log.info("Session @%s OK — cookies sauvegardés.", u)
                 return context
@@ -2926,40 +2724,6 @@ def ensure_watcher_browser_context(playwright: Playwright, *, slot: int) -> Brow
     )
 
 
-def _session_ok(context: BrowserContext) -> bool:
-    """True si la page d'accueil ne montre pas le formulaire de connexion."""
-    page = context.new_page()
-    try:
-        page.goto(
-            f"{BASE_URL}/",
-            timeout=_REQUEST_TIMEOUT_MS,
-            wait_until="domcontentloaded",
-        )
-        page.wait_for_timeout(800)
-        url = page.url or ""
-        if "/accounts/login" in url:
-            return False
-        user_in = page.locator('input[name="username"]')
-        pass_in = page.locator('input[name="password"]')
-        if user_in.count() > 0 and pass_in.count() > 0:
-            try:
-                if user_in.first.is_visible(timeout=1_500) and pass_in.first.is_visible(timeout=500):
-                    return False
-            except Exception:
-                pass
-        if page.locator('svg[aria-label="Accueil"]').count() > 0:
-            return True
-        if page.locator('svg[aria-label="Home"]').count() > 0:
-            return True
-        if page.locator('a[href*="/direct/inbox/"]').count() > 0:
-            return True
-        return "/accounts/login" not in url
-    except Exception:
-        return False
-    finally:
-        page.close()
-
-
 def test_session() -> bool:
     """Vérifie la session (cookies) sans argument : lance Playwright localement."""
     from playwright.sync_api import sync_playwright
@@ -2967,7 +2731,7 @@ def test_session() -> bool:
     with sync_playwright() as p:
         context = get_browser_context(p)
         try:
-            return _session_ok(context)
+            return session_ok(context)
         finally:
             br = context.browser
             if br:
@@ -3128,51 +2892,33 @@ def get_profile_data(username: str, context: BrowserContext) -> dict[str, Any] |
         page.close()
 
 
-def debug_profile(username: str, context: BrowserContext) -> None:
-    """Navigation debug : dump HTML + extraits de texte pouvant être des stats."""
-    page = context.new_page()
-    try:
-        page.goto(
-            f"{BASE_URL}/{username}/",
-            timeout=_REQUEST_TIMEOUT_MS,
-            wait_until="domcontentloaded",
-        )
-        page.wait_for_load_state("load", timeout=15_000)
-        page.wait_for_timeout(3000)
-        content = page.content()
-        Path("/tmp/instagram_debug.html").write_text(content, encoding="utf-8")
-        snippets = page.evaluate(
-            """() => {
-              const texts = [];
-              document.querySelectorAll('*').forEach(el => {
-                if (el.children.length === 0 && el.textContent.match(/\\d/)) {
-                  texts.push(el.textContent.trim());
-                }
-              });
-              return texts.filter(t => t.length < 20).slice(0, 50);
-            }"""
-        )
-        print("[debug_profile] HTML écrit : /tmp/instagram_debug.html")
-        print("[debug_profile] Extraits (max 50, len < 20) :")
-        if isinstance(snippets, list):
-            for i, t in enumerate(snippets):
-                print(f"  {i + 1}: {t!r}")
-        else:
-            print(f"  {snippets!r}")
-    finally:
-        page.close()
+def _collect_media_ids_from_grid(
+    page: Page, max_reels: int, *, include_p_links: bool | None = None
+) -> list[dict[str, str]]:
+    """Collecte media_id + thumbnail depuis la grille /reels/ (ordre DOM).
 
-
-def _collect_media_ids_from_grid(page: Page, max_reels: int) -> list[dict[str, str]]:
-    """Collecte media_id + thumbnail depuis la grille /reels/ (ordre DOM)."""
+    ``include_p_links`` : sur l'onglet ``/reels/`` tout est un Reel, donc on
+    accepte aussi les ancres ``/p/<code>`` (rollouts IG 2025+ unifiant les
+    URLs). Hors onglet reels (redirection profil racine), on reste strict sur
+    ``/reel/`` pour ne pas ramasser des photos. ``None`` = auto via l'URL.
+    """
+    if include_p_links is None:
+        # Profil créateur : reels et posts partagent souvent /p/ et /reel/.
+        include_p_links = True
     items = page.evaluate(
-        """(max) => {
+        """({max, includeP}) => {
           const seen = new Set();
           const rows = [];
-          document.querySelectorAll('a[href*="/reel/"]').forEach(a => {
+          const selector = includeP
+            ? 'a[href*="/reel/"], a[href*="/p/"]'
+            : 'a[href*="/reel/"]';
+          const pattern = includeP
+            ? /\\/(?:reel|p)\\/([^/?#]+)/
+            : /\\/reel\\/([^/?#]+)/;
+          document.querySelectorAll(selector).forEach(a => {
             if (rows.length >= max) return;
             const href = a.getAttribute("href") || "";
-            const m = href.match(/\\/reel\\/([^/?#]+)/);
+            const m = href.match(pattern);
             if (!m) return;
             const id = m[1];
             if (seen.has(id)) return;
@@ -3184,7 +2930,7 @@ def _collect_media_ids_from_grid(page: Page, max_reels: int) -> list[dict[str, s
           });
           return rows;
         }""",
-        max_reels,
+        {"max": max_reels, "includeP": bool(include_p_links)},
     )
     out: list[dict[str, str]] = []
     if not isinstance(items, list):
@@ -3204,18 +2950,84 @@ def _collect_media_ids_from_grid(page: Page, max_reels: int) -> list[dict[str, s
     return out
 
 
+def _code_has_rich_metrics(bucket: Any) -> bool:
+    """True si le bucket porte des données de reel réelles (pas un code nu)."""
+    if not isinstance(bucket, dict):
+        return False
+    if isinstance(bucket.get("taken_at"), (int, float)) and bucket["taken_at"] > 0:
+        return True
+    for key in ("view_count", "play_count", "like_count", "comment_count"):
+        if isinstance(bucket.get(key), (int, float)) and bucket[key] > 0:
+            return True
+    return False
+
+
+def _is_clips_media_bucket(bucket: Any) -> bool:
+    """True si le bucket décrit un Reel vidéo (exclut carrousels / posts photo)."""
+    if not isinstance(bucket, dict):
+        return False
+    product_type = str(bucket.get("product_type") or "").strip().lower()
+    if product_type == "clips":
+        return True
+    if product_type in ("carousel_container", "carousel", "feed", "sidecar", "igtv"):
+        return False
+    for key in ("view_count", "play_count", "ig_play_count"):
+        value = bucket.get(key)
+        if isinstance(value, (int, float)) and value > 0:
+            return True
+    return False
+
+
+def _count_rich_graphql_codes(metrics_by_code: dict[str, dict[str, Any]]) -> int:
+    """Nombre de codes porteurs de métriques (sert à temporiser l'attente)."""
+    return sum(1 for b in metrics_by_code.values() if _code_has_rich_metrics(b))
+
+
 def _grid_rows_from_graphql_codes(
     metrics_by_code: dict[str, dict[str, Any]],
     max_reels: int,
+    *,
+    expected_owner: str = "",
 ) -> list[dict[str, str]]:
-    """Repli quand la grille /reels/ n'expose plus les liens DOM (IG 2025+)."""
+    """Reels depuis l'interception GraphQL/REST, ordonnés par ``taken_at`` desc.
+
+    Source PRIMAIRE depuis le markup IG 2026 (le DOM ne porte plus les codes).
+    On ne garde que les buckets PORTEURS de métriques réelles — les codes nus
+    issus de petites réponses (suggestions, audio…) sont du bruit et écartés —
+    filtrés par propriétaire et product_type, puis triés du plus récent au plus
+    ancien pour que la tête de liste soit bien le dernier post.
+    """
+    expected = str(expected_owner or "").lstrip("@").strip().lower()
+    candidates: list[tuple[float, str]] = []
+    for code, bucket in metrics_by_code.items():
+        mid = str(code or "").strip()
+        if not mid or not _is_valid_reel_code(mid):
+            continue
+        if not _code_has_rich_metrics(bucket):
+            continue
+        b = bucket if isinstance(bucket, dict) else {}
+        owner = _owner_username_from_bucket(b)
+        if expected and owner != expected:
+            continue
+        product_type = str(b.get("product_type") or "").strip().lower()
+        if product_type and product_type != "clips":
+            continue
+        taken = b.get("taken_at")
+        sort_key = float(taken) if isinstance(taken, (int, float)) else 0.0
+        candidates.append((sort_key, mid))
+
+    # taken_at desc ; codes sans taken_at (sort_key=0) repoussés en fin de liste.
+    candidates.sort(key=lambda t: t[0], reverse=True)
+
     rows: list[dict[str, str]] = []
-    for code in metrics_by_code:
+    seen: set[str] = set()
+    for _, mid in candidates:
+        if mid in seen:
+            continue
+        seen.add(mid)
+        rows.append({"media_id": mid, "thumbnail_url": ""})
         if len(rows) >= max_reels:
             break
-        mid = str(code or "").strip()
-        if mid:
-            rows.append({"media_id": mid, "thumbnail_url": ""})
     return rows
 
 
@@ -3259,56 +3071,6 @@ def _scroll_reels_grid_until_loaded(
 
     page.wait_for_timeout(3000)
     return grid_rows
-
-
-def get_reel_caption(media_id: str, context: BrowserContext) -> str:
-    """Récupère la caption d'un Reel via interception GraphQL sur /reel/{id}/."""
-    mid = str(media_id or "").strip()
-    if not mid:
-        return ""
-
-    caption = ""
-
-    def capture(response: Response) -> None:
-        nonlocal caption
-        if "graphql" not in response.url or caption:
-            return
-        try:
-            text = response.text()
-            if mid not in text:
-                return
-            idx = text.find(mid)
-            if idx < 0:
-                return
-            window = text[idx : idx + 2000]
-            matches = re.findall(
-                r'"(?:caption_text|text)"\s*:\s*"((?:[^"\\]|\\.){5,500})"',
-                window,
-            )
-            for raw in matches:
-                decoded = _unescape_json_string_fragment(raw)
-                if len(decoded.split()) >= 3 and "Ne pas suggérer" not in decoded:
-                    caption = decoded
-                    break
-        except Exception:
-            pass
-
-    page = context.new_page()
-    try:
-        page.on("response", capture)
-        page.goto(
-            f"{BASE_URL}/reel/{mid}/",
-            timeout=_REQUEST_TIMEOUT_MS,
-            wait_until="domcontentloaded",
-        )
-        page.wait_for_load_state("load")
-        page.wait_for_timeout(3000)
-    except Exception:
-        pass
-    finally:
-        page.close()
-
-    return caption
 
 
 def get_reel_page_metadata(media_id: str, context: BrowserContext) -> dict[str, str]:
@@ -3368,17 +3130,208 @@ def get_reel_page_metadata(media_id: str, context: BrowserContext) -> dict[str, 
     }
 
 
+def _csrf_token_from_page_context(page: Page) -> str:
+    for cookie in page.context.cookies():
+        if cookie.get("name") == "csrftoken":
+            return str(cookie.get("value") or "")
+    return ""
+
+
+def _resolve_instagram_user_pk(page: Page, username: str) -> str | None:
+    """PK numérique du créateur via ``/api/v1/users/web_profile_info/``."""
+    u = str(username or "").lstrip("@").strip().lower()
+    if not u:
+        return None
+    try:
+        payload = page.evaluate(
+            """async ({ user, appId }) => {
+              const r = await fetch(
+                'https://www.instagram.com/api/v1/users/web_profile_info/?username='
+                  + encodeURIComponent(user),
+                {
+                  credentials: 'include',
+                  headers: {
+                    'X-IG-App-ID': appId,
+                    'X-Requested-With': 'XMLHttpRequest',
+                  },
+                }
+              );
+              if (!r.ok) return null;
+              const data = await r.json();
+              const userObj = data?.data?.user;
+              const pk = userObj?.id || userObj?.pk || '';
+              return pk ? String(pk) : null;
+            }""",
+            {"user": u, "appId": _IG_WEB_APP_ID},
+        )
+        pk = str(payload or "").strip()
+        return pk if pk.isdigit() else None
+    except Exception as e:
+        log.debug("pk @%s via web_profile_info : %s", u, e)
+        return None
+
+
+def _thumbnail_from_clips_media(media: dict[str, Any]) -> str:
+    image_versions = media.get("image_versions2")
+    if isinstance(image_versions, dict):
+        candidates = image_versions.get("candidates")
+        if isinstance(candidates, list) and candidates:
+            first = candidates[0]
+            if isinstance(first, dict):
+                return str(first.get("url") or "")
+    return ""
+
+
+def _reel_from_clips_api_media(
+    media: dict[str, Any],
+    *,
+    expected_owner: str,
+) -> dict[str, Any] | None:
+    """Convertit un nœud ``items[].media`` de ``/api/v1/clips/user/`` en reel watcher."""
+    if not isinstance(media, dict):
+        return None
+    code = str(media.get("code") or "").strip()
+    if not code or not _is_valid_reel_code(code):
+        return None
+    product_type = str(media.get("product_type") or "").strip().lower()
+    if product_type and product_type != "clips":
+        return None
+    user_obj = media.get("user") if isinstance(media.get("user"), dict) else {}
+    owner = str(user_obj.get("username") or expected_owner or "").lstrip("@").strip().lower()
+    expected = str(expected_owner or "").lstrip("@").strip().lower()
+    if expected and owner and owner != expected:
+        return None
+    metrics = _normalize_metric_bucket(media)
+    taken_at = media.get("taken_at")
+    return {
+        "media_id": code,
+        "thumbnail_url": _thumbnail_from_clips_media(media),
+        "view_count": metrics["view_count"],
+        "like_count": metrics["like_count"],
+        "comment_count": metrics["comment_count"],
+        "share_count": metrics["share_count"],
+        "reshare_count": 0,
+        "caption": _extract_caption_from_node(media),
+        "is_pinned": _is_pinned_from_clips_tab_ids(media.get("clips_tab_pinned_user_ids")),
+        "product_type": product_type or "clips",
+        "owner_username": owner or expected,
+        "taken_at": int(taken_at) if isinstance(taken_at, (int, float)) else None,
+        "row_source": "api_clips",
+    }
+
+
+def _fetch_creator_clips_from_api(
+    page: Page,
+    username: str,
+    *,
+    max_reels: int,
+) -> list[dict[str, Any]] | None:
+    """Grille Reels officielle via ``POST /api/v1/clips/user/`` (onglet Reels profil).
+
+    Indispensable pour les comptes dont la timeline profil ne mélange que des
+    carrousels (``user_timeline``) alors que les Reels vivent dans l'onglet
+    Reels séparé (ex. @marrant_club).
+    """
+    u = str(username or "").lstrip("@").strip()
+    if not u:
+        return None
+    pk = _resolve_instagram_user_pk(page, u)
+    if not pk:
+        log.debug("@%s : pk introuvable (web_profile_info).", u)
+        return None
+    csrf = _csrf_token_from_page_context(page)
+    if not csrf:
+        log.debug("@%s : csrftoken manquant pour /clips/user/.", u)
+        return None
+    page_size = min(50, max(12, max_reels + 4))
+    try:
+        raw = page.evaluate(
+            """async ({ pk, csrf, appId, pageSize }) => {
+              const r = await fetch('https://www.instagram.com/api/v1/clips/user/', {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                  'X-IG-App-ID': appId,
+                  'X-Requested-With': 'XMLHttpRequest',
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                  'X-CSRFToken': csrf,
+                },
+                body: new URLSearchParams({
+                  target_user_id: String(pk),
+                  page_size: String(pageSize),
+                }),
+              });
+              if (!r.ok) {
+                return { ok: false, status: r.status, body: '' };
+              }
+              return { ok: true, status: r.status, body: await r.text() };
+            }""",
+            {"pk": pk, "csrf": csrf, "appId": _IG_WEB_APP_ID, "pageSize": page_size},
+        )
+    except Exception as e:
+        log.debug("@%s : clips/user fetch error (%s)", u, e)
+        return None
+    if not isinstance(raw, dict) or not raw.get("ok"):
+        status = raw.get("status") if isinstance(raw, dict) else "?"
+        log.info("@%s : /api/v1/clips/user/ HTTP %s", u, status)
+        return None
+    try:
+        data = json.loads(str(raw.get("body") or ""))
+    except json.JSONDecodeError:
+        return None
+    if str(data.get("status") or "").lower() == "fail":
+        return None
+    items = data.get("items")
+    if not isinstance(items, list) or not items:
+        return None
+    reels: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        media = item.get("media")
+        if not isinstance(media, dict):
+            continue
+        reel = _reel_from_clips_api_media(media, expected_owner=u)
+        if reel:
+            reels.append(reel)
+    if not reels:
+        return None
+    # Ordre grille IG : épinglés en tête puis récents. Ne pas re-trier par
+    # taken_at — le watcher saute les épinglés et prend le premier restant.
+    out = reels[:max_reels]
+    log.info("@%s : %d reel(s) via /api/v1/clips/user/ (pk=%s).", u, len(out), pk)
+    return out
+
+
+def verify_reel_on_profile_grid(
+    page: Page,
+    media_id: str,
+    *,
+    max_reels: int = 8,
+) -> bool:
+    """True si ``media_id`` est visible dans la grille DOM actuelle (anti-cache GraphQL)."""
+    mid = str(media_id or "").strip()
+    if not mid:
+        return False
+    try:
+        rows = _collect_media_ids_from_grid(page, max_reels)
+    except Exception:
+        return False
+    return any(str(row.get("media_id") or "") == mid for row in rows)
+
+
 def get_recent_reels_on_page(
     page: Page,
     username: str,
     max_reels: int = 5,
     *,
     spa_wait_ms: int | None = None,
+    dom_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Reels récents en réutilisant une page Playwright (pool watcher parallèle).
 
-    Utilise ``open_reels_grid`` (détection login/privé + délai SPA) puis
-    interception GraphQL / grille DOM — même logique que ``get_recent_reels``.
+    Utilise ``open_reels_grid`` puis ``/api/v1/clips/user/`` en priorité ; repli
+    interception GraphQL / grille DOM si l'API ne répond pas.
     """
     out: list[dict[str, Any]] = []
     u = str(username or "").lstrip("@").strip()
@@ -3386,33 +3339,88 @@ def get_recent_reels_on_page(
         return out
     try:
         metrics_by_pk, metrics_by_code = _attach_graphql_metrics_listener(page)
+        metrics_by_pk.clear()
+        metrics_by_code.clear()
 
         if not open_reels_grid(page, u, spa_wait_ms=spa_wait_ms):
             return out
 
-        deadline = time.time() + 5
+        if not dom_only:
+            api_reels = _fetch_creator_clips_from_api(page, u, max_reels=max_reels)
+            if api_reels:
+                return api_reels
+
+        # Attendre des codes PORTEURS de métriques (view_count/taken_at), pas
+        # de simples codes nus : la grosse réponse clips (~100 Ko) arrive en
+        # dernier, après plusieurs petites réponses ne contenant que des codes.
+        # Sortir trop tôt donnait des reels à 0 vue / mauvais ordre. On sort dès
+        # que le gros payload est là (seuil atteint) OU que le nombre de codes
+        # riches s'est stabilisé (comptes à peu de reels), plafond 10 s.
+        deadline = time.time() + 10
+        target = min(max_reels, 6)
+        last_rich = 0
+        stable_since: float | None = None
         while time.time() < deadline:
-            if len(metrics_by_code) >= max_reels:
+            rich = _count_rich_graphql_codes(metrics_by_code)
+            if rich >= target:
                 break
-            page.wait_for_timeout(200)
+            if rich > 0 and rich == last_rich:
+                if stable_since is None:
+                    stable_since = time.time()
+                elif time.time() - stable_since > 1.5:
+                    break
+            else:
+                stable_since = None
+            last_rich = rich
+            page.wait_for_timeout(250)
 
-        grid_rows = _collect_media_ids_from_grid(page, max_reels)
+        # Source PRIMAIRE = GraphQL ordonné par taken_at desc. Depuis 2026 la
+        # grille DOM rend les tuiles en <a role="link"> sans code dans le href
+        # (navigation JS), donc le DOM ne fournit plus de media_id. On tente
+        # tout de même le DOM d'abord (comptes encore servis à l'ancienne).
+        dom_rows = _collect_media_ids_from_grid(page, max_reels)
+        if max_reels > 5 and dom_rows:
+            dom_rows = _scroll_reels_grid_until_loaded(page, max_reels, dom_rows)
 
-        if max_reels > 5:
-            grid_rows = _scroll_reels_grid_until_loaded(page, max_reels, grid_rows)
+        graphql_rows = _grid_rows_from_graphql_codes(
+            metrics_by_code, max_reels, expected_owner=u
+        )
 
-        if not grid_rows and metrics_by_code:
-            log.info(
-                "@%s : grille DOM vide — repli GraphQL (%d code(s)).",
-                u,
-                len(metrics_by_code),
+        owned_dom_clip_rows: list[dict[str, str]] = []
+        for row in dom_rows:
+            mid = str(row.get("media_id") or "")
+            bucket = _metrics_bucket_for_dom_media_id(
+                mid, metrics_by_pk, metrics_by_code
             )
-            grid_rows = _grid_rows_from_graphql_codes(metrics_by_code, max_reels)
+            owner = _owner_username_from_bucket(bucket)
+            if owner and owner != u.lower():
+                continue
+            if not _is_clips_media_bucket(bucket):
+                continue
+            owned_dom_clip_rows.append(row)
+
+        if owned_dom_clip_rows:
+            grid_rows = owned_dom_clip_rows
+            row_source = "dom"
+        elif graphql_rows and not dom_only:
+            log.info(
+                "@%s : grille DOM sans reel vidéo du créateur — source GraphQL "
+                "(%d reel(s) porteurs de métriques).",
+                u,
+                len(graphql_rows),
+            )
+            grid_rows = graphql_rows
+            row_source = "graphql"
+        else:
+            grid_rows = []
+            row_source = "none"
 
         if not grid_rows:
             log.warning(
-                "@%s : aucun reel dans la grille ni GraphQL (compte vide ou layout IG).",
+                "@%s : aucun reel exploitable (DOM sans code%s, GraphQL=%d).",
                 u,
+                ", dom_only" if dom_only else "",
+                len(graphql_rows),
             )
             return out
 
@@ -3435,11 +3443,12 @@ def get_recent_reels_on_page(
                     "reshare_count": 0,
                     "caption": caption,
                     "is_pinned": is_pinned,
-                    "product_type": str(entry.get("product_type") or ""),
+                    "product_type": str(entry.get("product_type") or "") or "clips",
                     "owner_username": _owner_username_from_bucket(entry),
+                    "taken_at": entry.get("taken_at"),
+                    "row_source": row_source,
                 }
             )
-        # caption vide : pas de get_reel_caption() ici (réservé à l'embedder).
     except Exception as e:
         log.warning("get_recent_reels_on_page @%s : %s", u, e)
         return out
@@ -3453,17 +3462,21 @@ def get_recent_reels(
     max_reels: int = 5,
     *,
     spa_wait_ms: int | None = None,
+    dom_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Reels récents : media_ids (DOM) + métriques (interception GraphQL).
 
-    Les captions manquantes ne sont pas récupérées ici (pas de visite
-    /reel/{id}/ — trop lent pour le scoring discovery). Utiliser
-    ``get_reel_caption()`` depuis l'embedder (1x/semaine).
+    Les captions manquantes restent vides ici (pas de visite /reel/{id}/ —
+    trop lent pour le scoring discovery). L'embedder complète si besoin.
     """
     page = context.new_page()
     try:
         return get_recent_reels_on_page(
-            page, username, max_reels=max_reels, spa_wait_ms=spa_wait_ms
+            page,
+            username,
+            max_reels=max_reels,
+            spa_wait_ms=spa_wait_ms,
+            dom_only=dom_only,
         )
     finally:
         page.close()
@@ -3500,248 +3513,3 @@ def get_suggested_accounts(
         return []
     finally:
         page.close()
-
-
-def _run_parse_comments_dom_self_tests() -> None:
-    sample = (
-        "alice\n"
-        "\xa0\n"
-        "2 j\n"
-        "Super sketch de fou rire\n"
-        "1\u202f234\xa0J\u2019aime\n"
-        "Répondre\n"
-        "bob\n"
-        "\xa0\n"
-        "1 sem\n"
-        "ok\n"
-        "12\xa0J'aime\n"
-        "Répondre\n"
-        "spam\n"
-        "\xa0\n"
-        "1 j\n"
-        "http://evil.com scam\n"
-        "99\xa0J'aime\n"
-        "Répondre\n"
-    )
-    parsed = parse_comments_from_dom_text(sample)
-    if len(parsed) != 1 or parsed[0]["like_count"] != 1234:
-        print(f"_parse_comments_dom : ÉCHEC → {parsed}", file=sys.stderr)
-        sys.exit(1)
-    print("_parse_comments_dom : OK")
-
-
-def _run_suggestions_graphql_self_tests() -> None:
-    sample = json.dumps(
-        {
-            "data": {
-                "user": {
-                    "username": "seed_one",
-                    "edge_suggested_users": {
-                        "edges": [
-                            {"node": {"username": "suggest_a"}},
-                            {"node": {"username": "suggest_b"}},
-                        ]
-                    },
-                }
-            }
-        }
-    )
-    suggested: list[str] = []
-    seen: set[str] = set()
-    _ingest_suggestion_usernames_from_graphql_text(sample, "seed_one", seen, suggested)
-    if suggested != ["suggest_a", "suggest_b"]:
-        print(f"_suggestions_graphql : ÉCHEC → {suggested}", file=sys.stderr)
-        sys.exit(1)
-    print("_suggestions_graphql : OK")
-
-
-def _run_profile_graphql_self_tests() -> None:
-    sample = json.dumps(
-        {
-            "data": {
-                "user": {
-                    "username": "recrutestagiaire",
-                    "full_name": "Test User",
-                    "biography": "Bio test",
-                    "follower_count": 48000,
-                    "following_count": 120,
-                    "media_count": 42,
-                    "is_private": False,
-                }
-            }
-        }
-    )
-    profile_data: dict[str, Any] = {}
-    _merge_profile_graphql_text(sample, "recrutestagiaire", profile_data)
-    _walk_profile_graphql(json.loads(sample), "recrutestagiaire", profile_data)
-    if profile_data.get("followers") != 48000 or profile_data.get("posts_count") != 42:
-        print(f"_profile_graphql : ÉCHEC → {profile_data}", file=sys.stderr)
-        sys.exit(1)
-    print("_profile_graphql : OK")
-
-
-def _run_reels_grid_scroll_self_tests() -> None:
-    if _reels_grid_rows_needed(20) != 4:
-        print("_reels_grid_rows : ÉCHEC (20 reels → 4 lignes)", file=sys.stderr)
-        sys.exit(1)
-    if _reels_grid_rows_needed(5) != 1:
-        print("_reels_grid_rows : ÉCHEC (5 reels → 1 ligne)", file=sys.stderr)
-        sys.exit(1)
-    print("_reels_grid_rows : OK (20 reels = 4×5)")
-
-
-def _run_graphql_metrics_self_tests() -> None:
-    """Vérifie l'association pk/code ↔ métriques (pas par index)."""
-    sample = json.dumps(
-        {
-            "items": [
-                {
-                    "pk": "3893326453836395926",
-                    "code": "DYcbkPMM1cR",
-                    "view_count": 87300,
-                    "like_count": 1063,
-                    "comment_count": 12,
-                    "caption": {"text": "Premier reel caption"},
-                },
-                {
-                    "pk": "3893326453836395927",
-                    "code": "DYaMNJqMckX",
-                    "play_count": 171000,
-                    "like_count": 748,
-                    "caption_text": "Deuxième via caption_text",
-                },
-            ]
-        }
-    )
-    by_pk: dict[str, dict[str, Any]] = {}
-    by_code: dict[str, dict[str, Any]] = {}
-    _ingest_metrics_from_graphql_text(sample, by_pk, by_code)
-    _walk_graphql_metrics(json.loads(sample), by_pk, by_code)
-
-    m1 = _metrics_for_dom_media_id("DYcbkPMM1cR", by_pk, by_code)
-    m2 = _metrics_for_dom_media_id("DYaMNJqMckX", by_pk, by_code)
-    c1 = str(by_code.get("DYcbkPMM1cR", {}).get("caption") or "")
-    c2 = str(by_code.get("DYaMNJqMckX", {}).get("caption") or "")
-    failed: list[str] = []
-    if m1["view_count"] != 87300 or m1["like_count"] != 1063:
-        failed.append(f"DYcbkPMM1cR → {m1}, attendu views=87300 likes=1063")
-    if m2["view_count"] != 171000 or m2["like_count"] != 748:
-        failed.append(f"DYaMNJqMckX → {m2}, attendu views=171000 likes=748")
-    if c1 != "Premier reel caption":
-        failed.append(f"DYcbkPMM1cR caption → {c1!r}")
-    if c2 != "Deuxième via caption_text":
-        failed.append(f"DYaMNJqMckX caption → {c2!r}")
-    if failed:
-        print("_graphql_metrics : ÉCHEC", file=sys.stderr)
-        for line in failed:
-            print(line, file=sys.stderr)
-        sys.exit(1)
-    print("_graphql_metrics : OK (2 reels par code court + captions)")
-
-
-def _run_graphql_pinned_self_tests() -> None:
-    """Vérifie clips_tab_pinned_user_ids → is_pinned par code court."""
-    sample = json.dumps(
-        {
-            "items": [
-                {
-                    "code": "DSDvH57CDnT",
-                    "view_count": 12000,
-                    "clips_tab_pinned_user_ids": ["17841400000000000"],
-                },
-                {
-                    "code": "UNPINNED01",
-                    "view_count": 5000,
-                    "clips_tab_pinned_user_ids": [],
-                },
-            ]
-        }
-    )
-    by_pk: dict[str, dict[str, Any]] = {}
-    by_code: dict[str, dict[str, Any]] = {}
-    _ingest_metrics_from_graphql_text(sample, by_pk, by_code)
-    _walk_graphql_metrics(json.loads(sample), by_pk, by_code)
-
-    failed: list[str] = []
-    if not by_code.get("DSDvH57CDnT", {}).get("is_pinned"):
-        failed.append("DSDvH57CDnT devrait être is_pinned=True")
-    if by_code.get("UNPINNED01", {}).get("is_pinned") is not False:
-        failed.append(f"UNPINNED01 → is_pinned={by_code.get('UNPINNED01', {}).get('is_pinned')!r}")
-    if failed:
-        print("_graphql_pinned : ÉCHEC", file=sys.stderr)
-        for line in failed:
-            print(line, file=sys.stderr)
-        sys.exit(1)
-    print("_graphql_pinned : OK (DSDvH57CDnT épinglé)")
-
-
-def _run_raikkonenaf_pinned_integration_test(context: BrowserContext) -> None:
-    """Test live : DSDvH57CDnT doit être is_pinned sur @raikkonenaf."""
-    reels = get_recent_reels("raikkonenaf", context, max_reels=20)
-    by_id = {str(r.get("media_id") or ""): r for r in reels}
-    target = "DSDvH57CDnT"
-    if target not in by_id:
-        print(
-            f"_raikkonenaf_pinned : ÉCHEC — {target} absent des {len(reels)} reels récupérés",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if not by_id[target].get("is_pinned"):
-        print(
-            f"_raikkonenaf_pinned : ÉCHEC — {target} is_pinned="
-            f"{by_id[target].get('is_pinned')!r}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    print(f"_raikkonenaf_pinned : OK ({target} is_pinned=True)")
-
-
-def _run_parse_count_self_tests() -> None:
-    """Tests rapides pour _parse_count (ex. ``73,7 k`` → 73700)."""
-    cases: list[tuple[str, int]] = [
-        ("73,7 k", 73_700),
-        ("1,2 M", 1_200_000),
-        ("974 k", 974_000),
-        ("27,7 k", 27_700),
-        ("304,4 k", 304_400),
-        ("1 234", 1_234),
-        ("29,3 k", 29_300),
-    ]
-    failed: list[str] = []
-    for raw, expected in cases:
-        got = _parse_count(raw)
-        if got != expected:
-            failed.append(f"  {raw!r} → {got}, attendu {expected}")
-    if failed:
-        print("_parse_count : ÉCHEC", file=sys.stderr)
-        for line in failed:
-            print(line, file=sys.stderr)
-        sys.exit(1)
-    print(f"_parse_count : OK ({len(cases)} cas)")
-
-
-if __name__ == "__main__":
-    _run_parse_count_self_tests()
-    _run_parse_comments_dom_self_tests()
-    _run_suggestions_graphql_self_tests()
-    _run_profile_graphql_self_tests()
-    _run_reels_grid_scroll_self_tests()
-    _run_graphql_metrics_self_tests()
-    _run_graphql_pinned_self_tests()
-
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as p:
-        context = get_browser_context(p)
-        try:
-            if not _session_ok(context):
-                print("Session Instagram invalide ou non connectée.", file=sys.stderr)
-                sys.exit(1)
-            _run_raikkonenaf_pinned_integration_test(context)
-            debug_profile("recrutestagiaire", context)
-            data = get_profile_data("recrutestagiaire", context)
-            print(json.dumps(data, ensure_ascii=False, indent=2))
-        finally:
-            br = context.browser
-            if br:
-                br.close()

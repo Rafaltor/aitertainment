@@ -51,9 +51,24 @@ WATCHER_NEW_POST_VIEW_THRESHOLD = int(
 )
 # Attente SPA après ouverture grille /reels/ (ms). Défaut watcher : 1200.
 WATCHER_SPA_WAIT_MS = int(os.environ.get("WATCHER_SPA_WAIT_MS", "1200"))
+# Nombre de reels lus sur la grille profil pour la détection (DOM).
+WATCHER_GRID_REELS = int(os.environ.get("WATCHER_GRID_REELS", "12"))
+# Alerte seulement si le reel en tête a été publié dans cette fenêtre (heures).
+WATCHER_NEW_REEL_MAX_AGE_HOURS = int(
+    os.environ.get("WATCHER_NEW_REEL_MAX_AGE_HOURS", "72")
+)
+# Watcher : transcript/vision désactivés par défaut (évite blocage cycle 5–15 min).
+WATCHER_SKIP_TRANSCRIPT = os.environ.get(
+    "WATCHER_SKIP_TRANSCRIPT", "true"
+).strip().lower() in ("1", "true", "yes")
+# Timeout Ollama par commentaire T-type (secondes).
+WATCHER_OLLAMA_TIMEOUT_S = int(os.environ.get("WATCHER_OLLAMA_TIMEOUT_S", "90"))
 # 2e compte IG pour le watcher (moitié de la watchlist). Cookies ou login .env.
 IG_USERNAME = os.environ.get("IG_USERNAME", "").strip()
 IG_PASSWORD = os.environ.get("IG_PASSWORD", "").strip()
+# 2e compte IG (watcher dual-account — moitié watchlist).
+IG2_USERNAME = os.environ.get("IG2_USERNAME", "").strip()
+IG2_PASSWORD = os.environ.get("IG2_PASSWORD", "").strip()
 WATCHER_IG2_COOKIES_PATH = _PROJECT_ROOT / os.environ.get(
     "WATCHER_IG2_COOKIES_PATH", "data/instagram_cookies_2.json"
 )

@@ -156,19 +156,5 @@ class EnrichReelTest(unittest.TestCase):
         mock_dl.assert_not_called()
 
 
-class FilterReelsForScrapeTest(unittest.TestCase):
-    def test_filter_by_comment_count_and_sort(self) -> None:
-        from scripts.instagram_browser import _filter_reels_for_comment_scrape
-
-        candidates = [
-            {"media_id": "a", "comment_count": 5},
-            {"media_id": "b", "comment_count": 100},
-            {"media_id": "c", "comment_count": 50},
-            {"media_id": "d", "comment_count": 0},
-        ]
-        out = _filter_reels_for_comment_scrape(candidates, max_reels=2, min_comment_count=20)
-        self.assertEqual([r["media_id"] for r in out], ["b", "c"])
-
-
 if __name__ == "__main__":
     unittest.main()
