@@ -5,7 +5,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from modules.generator_prompt import MAX_GENERATOR_OUTPUT_WORDS
+from modules.generator_prompt import (
+    MAX_GENERATOR_OUTPUT_WORDS_SHORT,
+    MAX_TRAINING_COMMENT_WORDS,
+    comment_length_bucket,
+)
 
 # Motifs promo / spam évidents (insensible à la casse).
 _PROMO_RE = re.compile(
@@ -41,7 +45,15 @@ _FR_ACCENT_RE = re.compile(r"[àâäéèêëïîôùûüç]", re.IGNORECASE)
 _EN_STRONG_RE = re.compile(
     r"\b(the|and|you|your|yours|this|that|those|these|bro|dude|literally|"
     r"when|what|how|why|she|her|his|they|them|just|about|would|could|should|"
-    r"don't|doesn't|didn't|i'm|it's|that's|you're|we're|english|speak)\b",
+    r"don't|doesn't|didn't|i'm|it's|that's|you're|we're|english|speak|same|"
+    r"time|tomorrow|today|yesterday|excited|before|after|wait|yeah|yes|haircut|"
+    r"hair|hard|af|new|nuevo|crow|verbal|maximized|sunu|iyi|yapiyolar)\b",
+    re.IGNORECASE,
+)
+_EN_WEAK_RE = re.compile(
+    r"\b(fun|funny|lol|lmao|lmfaoo|fyp|viral|comedy|meme|trending|video|repost|"
+    r"share|same|time|excited|before|after|haircut|bee|toe|ven|beethoven|tb|"
+    r"ooo|eeee|befive|feethoven)\b",
     re.IGNORECASE,
 )
 _FR_HINT_WORDS = frozenset(
@@ -53,6 +65,8 @@ _FR_HINT_WORDS = frozenset(
         "meme", "c'est", "cest", "j'ai", "jai", "t'es", "tes", "n'ai", "qu'",
         "la", "le", "du", "de", "je", "tu", "il", "elle", "on", "nous", "vous",
         "ils", "elles", "mon", "ton", "son", "notre", "votre", "leur",
+        "oui", "ouais", "ah", "bon", "bien", "vo", "vf", "traduction", "directe",
+        "incroyable", "fort", "trop", "phrase", "debut", "début", "debut",
     }
 )
 _HAS_MENTION_RE = re.compile(r"@\w")
@@ -116,12 +130,17 @@ class CommentQuality:
         return self.reasons[0] if self.reasons else None
 
 
-def assess_comment_quality(text: str) -> CommentQuality:
+def assess_comment_quality(
+    text: str,
+    *,
+    length_bucket: str | None = None,
+) -> CommentQuality:
     """Évalue si un commentaire convient à l'entraînement générateur/classifier.
 
-    Règles (alignées sur ``MAX_GENERATOR_OUTPUT_WORDS`` / usage Instagram réel) :
+    Longueur : court ≤10 mots, développé jusqu'à ``MAX_TRAINING_COMMENT_WORDS``.
+    Le rejet ``too_long`` dépend du bucket (court vs développé).
 
-    * vide, trop court (< 3 car.), trop long (> 5 mots)
+    * vide, trop court (< 3 car.), trop long (au-delà du plafond du bucket)
     * emoji seul, spam emoji (répétition ou ratio élevé)
     * sans lettre/chiffre (ponctuation seule)
     * promo / lien, spam hashtags (≥ 3), répétition de caractères
@@ -136,7 +155,14 @@ def assess_comment_quality(text: str) -> CommentQuality:
     else:
         if len(stripped) < 3:
             reasons.append(REJECT_TOO_SHORT)
-        if len(stripped.split()) > MAX_GENERATOR_OUTPUT_WORDS:
+        bucket = length_bucket or comment_length_bucket(stripped)
+        word_count = len(stripped.split())
+        max_words = (
+            MAX_TRAINING_COMMENT_WORDS
+            if bucket == "long"
+            else MAX_GENERATOR_OUTPUT_WORDS_SHORT
+        )
+        if word_count > max_words:
             reasons.append(REJECT_TOO_LONG)
         if _EMOJI_ONLY_RE.fullmatch(stripped):
             reasons.append(REJECT_EMOJI_ONLY)
@@ -167,38 +193,53 @@ def assess_comment_quality(text: str) -> CommentQuality:
     )
 
 
+def _french_hint_hits(text: str) -> int:
+    words = re.findall(r"[\w']+", str(text or "").lower())
+    return sum(1 for w in words if w in _FR_HINT_WORDS)
+
+
 def is_french_comment(text: str) -> bool:
-    """Heuristique FR : accents, mots FR, rejet anglais évident."""
+    """Heuristique FR : accents, mots FR, rejet anglais évident (corpus humour FR)."""
     s = str(text or "").strip()
     if not s:
         return False
-    # Réactions emoji — neutres, très fréquentes sur reels FR
+    if len(s) < 3:
+        return False
+    # Emoji seul : pas de signal linguistique → exclu du pool viral / training
     if _EMOJI_ONLY_RE.fullmatch(s) or (
         _EMOJI_RE.search(s) and not re.findall(r"[\w']+", s.lower())
     ):
-        return len(s) >= 2
-    if len(s) < 3:
         return False
     if _FR_ACCENT_RE.search(s):
         return True
-    if _EN_STRONG_RE.search(s):
-        words = re.findall(r"[\w']+", s.lower())
-        fr_hits = sum(1 for w in words if w in _FR_HINT_WORDS)
-        if fr_hits == 0:
-            return False
     words = re.findall(r"[\w']+", s.lower())
     if not words:
         return False
-    fr_hits = sum(1 for w in words if w in _FR_HINT_WORDS)
-    en_hits = len(_EN_STRONG_RE.findall(s))
-    if en_hits >= 2 and fr_hits == 0:
+    fr_hits = _french_hint_hits(s)
+    if _EN_STRONG_RE.search(s) and fr_hits == 0:
+        return False
+    if _EN_WEAK_RE.search(s) and fr_hits == 0 and not _FR_ACCENT_RE.search(s):
+        return False
+    en_hits = len(_EN_STRONG_RE.findall(s)) + len(_EN_WEAK_RE.findall(s))
+    if en_hits >= 1 and fr_hits == 0:
+        return False
+    if en_hits >= 2 and fr_hits <= 1:
         return False
     if en_hits > fr_hits and len(words) >= 3:
         return False
-    # Phrase ASCII longue sans indice FR → probablement EN
+    if len(words) <= 8 and fr_hits == 0 and not _FR_ACCENT_RE.search(s):
+        return False
     if len(words) >= 5 and fr_hits == 0 and not _FR_ACCENT_RE.search(s):
         return False
-    return True
+    return fr_hits >= 1 or _FR_ACCENT_RE.search(s) is not None
+
+
+def is_french_reel_caption(caption: str) -> bool:
+    """Caption GraphQL : skip reels clairement anglophones (#funny #fyp sans FR)."""
+    cap = str(caption or "").strip()
+    if not cap:
+        return True
+    return is_french_comment(cap)
 
 
 def is_incomplete_comment(text: str) -> bool:
@@ -213,6 +254,21 @@ def is_incomplete_comment(text: str) -> bool:
     if len(tail) == 1 and tail.isalpha():
         return True
     return tail in _INCOMPLETE_TAIL
+
+
+def is_rambly_comment(text: str, *, max_sentences: int = 2) -> bool:
+    """Pavé ou digression : trop de phrases ou emphase excessive."""
+    s = str(text or "").strip()
+    if not s:
+        return False
+    sentences = [p for p in re.split(r"[.!?…]+", s) if p.strip()]
+    if len(sentences) > max_sentences:
+        return True
+    if s.count("!") >= 3:
+        return True
+    if len(s.split()) > 45:
+        return True
+    return False
 
 
 def is_repetitive_comment(text: str) -> bool:
@@ -255,6 +311,7 @@ __all__ = [
     "assess_comment_quality",
     "is_french_comment",
     "is_incomplete_comment",
+    "is_rambly_comment",
     "is_repetitive_comment",
     "strip_emojis",
 ]

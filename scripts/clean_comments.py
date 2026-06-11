@@ -2,6 +2,7 @@
 """Nettoie les pools de commentaires viral et/ou training.
 
 **viral** (``viral_comments.json``, avant labélisation) :
+  - transcript ET description visuelle requis
   - français uniquement, créateur connu
   - enrichit ``niches``, ``t_type_profile`` depuis watchlist / database
 
@@ -50,25 +51,76 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def strip_emojis_viral_pool(
+    path: Path,
+    *,
+    dry_run: bool,
+    backup: bool = False,
+) -> tuple[int, int, int, int]:
+    """Retire les emojis du champ ``text`` dans ``viral_comments.json``.
+
+    Retourne ``(initial, kept, stripped, dropped_empty)``.
+    """
+    entries, _ = load_viral_comments_file(path)
+    initial = len(entries)
+    kept: list[dict[str, Any]] = []
+    stripped_count = 0
+    dropped_empty = 0
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        original = str(entry.get("text") or "")
+        cleaned = strip_emojis(original)
+        if not cleaned:
+            dropped_empty += 1
+            continue
+        row = dict(entry)
+        if cleaned != original.strip():
+            stripped_count += 1
+            row["text"] = cleaned
+            row["emoji_stripped"] = True
+        else:
+            row["text"] = cleaned
+        kept.append(row)
+
+    if not dry_run:
+        if backup:
+            backup_path = path.with_suffix(
+                path.suffix + f".bak.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            )
+            shutil.copy2(path, backup_path)
+            _LOG.info("Backup viral : %s", backup_path.name)
+        save_viral_comments_file(
+            kept, path, merge=False, allow_shrink=True
+        )
+    return initial, len(kept), stripped_count, dropped_empty
+
+
 def clean_viral_pool(
     path: Path,
     *,
     dry_run: bool,
     backup: bool = False,
     force: bool = False,
-) -> tuple[int, int, int, int]:
-    """Retourne ``(initial, kept, dropped_en, dropped_unknown)``."""
+) -> tuple[int, int, int, int, int]:
+    """Retourne ``(initial, kept, dropped_en, dropped_unknown, dropped_no_enrichment)``."""
     entries, _ = load_viral_comments_file(path)
     initial = len(entries)
     idx = build_creator_index()
     kept: list[dict[str, Any]] = []
-    dropped_en = dropped_unknown = 0
+    dropped_en = dropped_unknown = dropped_no_enrichment = 0
 
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         text = str(entry.get("text") or "").strip()
         user = str(entry.get("username") or "").lstrip("@").strip().lower()
+        transcript = str(entry.get("transcript") or "").strip()
+        visual = str(entry.get("visual_description") or "").strip()
+        if not transcript or not visual:
+            dropped_no_enrichment += 1
+            continue
         if not text or not user or user == "unknown":
             dropped_unknown += 1
             continue
@@ -93,7 +145,7 @@ def clean_viral_pool(
         save_viral_comments_file(
             kept, path, merge=False, allow_shrink=force
         )
-    return initial, len(kept), dropped_en, dropped_unknown
+    return initial, len(kept), dropped_en, dropped_unknown, dropped_no_enrichment
 
 
 def _load_training_entries(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
@@ -196,6 +248,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Autorise clean viral même si >50%% des entrées seraient supprimées.",
     )
+    parser.add_argument(
+        "--strip-emojis-viral",
+        action="store_true",
+        help="Retire les emojis du texte dans viral_comments.json (sans autres filtres).",
+    )
     args = parser.parse_args(argv)
     do_backup = args.backup or not args.no_backup
 
@@ -203,8 +260,34 @@ def main(argv: list[str] | None = None) -> int:
 
     run_viral = bool(args.viral)
     run_training = bool(args.training)
-    if not run_viral and not run_training:
-        parser.error("Indiquez --viral et/ou --training (plus de mode par défaut).")
+    run_strip_viral = bool(args.strip_emojis_viral)
+    if not run_viral and not run_training and not run_strip_viral:
+        parser.error(
+            "Indiquez --viral, --training et/ou --strip-emojis-viral "
+            "(plus de mode par défaut)."
+        )
+
+    if run_strip_viral:
+        viral_path = args.viral_path
+        if not viral_path.exists() and not args.dry_run:
+            _LOG.error("Fichier viral introuvable : %s", viral_path)
+            return 1
+        if viral_path.exists():
+            i, k, stripped, dropped = strip_emojis_viral_pool(
+                viral_path,
+                dry_run=args.dry_run,
+                backup=do_backup and not args.dry_run,
+            )
+            _LOG.info(
+                "Viral emojis %s : %d → %d gardés (%d strip, %d vides après strip)",
+                viral_path.name,
+                i,
+                k,
+                stripped,
+                dropped,
+            )
+        else:
+            _LOG.info("Viral : fichier absent — skip.")
 
     if run_viral:
         viral_path = args.viral_path
@@ -212,17 +295,18 @@ def main(argv: list[str] | None = None) -> int:
             _LOG.error("Fichier viral introuvable : %s", viral_path)
             return 1
         if viral_path.exists():
-            i, k, en, unk = clean_viral_pool(
+            i, k, en, unk, no_enrich = clean_viral_pool(
                 viral_path,
                 dry_run=args.dry_run,
                 backup=do_backup and not args.dry_run,
                 force=args.force,
             )
             _LOG.info(
-                "Viral %s : %d → %d gardés (%d EN, %d sans créateur)",
+                "Viral %s : %d → %d gardés (%d sans enrichissement, %d EN, %d sans créateur)",
                 viral_path.name,
                 i,
                 k,
+                no_enrich,
                 en,
                 unk,
             )

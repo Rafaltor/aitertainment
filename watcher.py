@@ -37,9 +37,10 @@ Ce fichier expose :
       ``python watcher.py --mock``).
 
 Lancement :
-    python watcher.py            # boucle réelle (Instagram + Ollama + Telegram)
-    python watcher.py --mock     # un cycle, post & génération synthétiques,
-                                 # pas d'appel Instagram/Telegram
+    python watcher.py                  # boucle réelle (Instagram + Ollama + Telegram)
+    python watcher.py --sync-last-posts  # aligne last_post_id sur le reel actuel
+    python watcher.py --mock           # un cycle, post & génération synthétiques,
+                                       # pas d'appel Instagram/Telegram
 """
 
 from __future__ import annotations
@@ -52,7 +53,10 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -64,13 +68,20 @@ import requests
 from config import VALID_T_TYPES
 from modules.atomic_json import atomic_write_json
 from telegram_notify import setup_watcher_logger
-from playwright.sync_api import BrowserContext, sync_playwright
+from playwright.sync_api import BrowserContext, Page, Playwright, sync_playwright
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from scripts.instagram_browser import get_browser_context, get_recent_reels
+from scripts.instagram_browser import (
+    ensure_watcher_browser_context,
+    get_browser_context,
+    get_recent_reels,
+    get_recent_reels_on_page,
+    login_instagram_interactive,
+    session_ok,
+)
 
 _HASHTAG_RE = re.compile(r"#(\w+)")
 
@@ -78,7 +89,10 @@ DEFAULT_WATCHLIST_PATH = _PROJECT_ROOT / "data" / "watchlist.json"
 VECTOR_STORE_PATH = Path("data/vector_store.json")
 
 VALID_PLATFORMS = frozenset({"instagram", "tiktok"})
-NEW_POST_VIEW_THRESHOLD = 2000  # vues < seuil = post récent
+NEW_POST_VIEW_THRESHOLD = config.WATCHER_NEW_POST_VIEW_THRESHOLD
+VIEW_FILTER_ENABLED = config.WATCHER_VIEW_FILTER_ENABLED
+SPA_WAIT_MS = config.WATCHER_SPA_WAIT_MS
+SKIP_T_TYPES = config.WATCHER_SKIP_T_TYPES
 REEL_PRODUCT_TYPE = "clips"  # product_type Instagram pour les Reels vidéo
 
 VISION_MODEL = os.environ.get(
@@ -119,23 +133,34 @@ def _sync_post_metadata_from_reel_page(
     expected_username: str,
     browser_context: BrowserContext,
 ) -> bool:
-    """Aligne caption + @ Instagram depuis ``/reel/{id}/`` (évite le mélange grille).
+    """Aligne caption depuis ``/reel/{id}/`` ; le @ vient de la grille profil.
 
-    Retourne ``False`` si le propriétaire détecté ne correspond pas au créateur
-    surveillé (pas de notif / génération sur ce cycle).
+    La page ``/reel/`` renvoie souvent un faux @ (crédit audio, suggestions).
+    On ne bloque que si la **grille** avait déjà signalé un autre propriétaire.
     """
     from scripts.instagram_browser import get_reel_page_metadata
 
+    log = logging.getLogger("aitertainment.watcher")
     media_id = str(post.get("video_id") or "").strip()
     expected = str(expected_username or "").lstrip("@").strip().lower()
     if not media_id or not expected:
+        return False
+
+    grid_owner = str(post.get("grid_owner") or "").lstrip("@").strip().lower()
+    if grid_owner and grid_owner != expected:
+        log.warning(
+            "@%s reel %s : propriétaire grille=@%s — skip (mauvais compte).",
+            expected,
+            media_id,
+            grid_owner,
+        )
         return False
 
     grid_caption = str(post.get("caption") or "").strip()
     try:
         meta = get_reel_page_metadata(media_id, browser_context)
     except Exception as e:
-        _LOGGER.warning(
+        log.warning(
             "@%s reel %s : métadonnées reel échouées (%s) — repli grille.",
             expected,
             media_id,
@@ -145,15 +170,14 @@ def _sync_post_metadata_from_reel_page(
         post["url"] = f"https://www.instagram.com/reel/{media_id}/"
         return True
 
-    owner = str(meta.get("owner_username") or "").strip().lower()
-    if owner and owner != expected:
-        _LOGGER.warning(
-            "@%s reel %s : propriétaire reel=@%s — skip (mauvais compte).",
+    page_owner = str(meta.get("owner_username") or "").strip().lower()
+    if page_owner and page_owner != expected:
+        log.info(
+            "@%s reel %s : @%s sur /reel/ ignoré (crédit audio / DOM) — confiance grille.",
             expected,
             media_id,
-            owner,
+            page_owner,
         )
-        return False
 
     caption = str(meta.get("caption") or "").strip() or grid_caption
     if grid_caption and caption and caption != grid_caption:
@@ -165,7 +189,7 @@ def _sync_post_metadata_from_reel_page(
             caption[:80],
         )
 
-    post["username"] = owner or expected
+    post["username"] = grid_owner or expected
     post["caption"] = caption
     post["hashtags"] = _hashtags_from_caption(caption)
     post["url"] = f"https://www.instagram.com/reel/{media_id}/"
@@ -184,48 +208,88 @@ def _filter_video_reels(reels: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return filtered
 
 
-def check_new_post(
-    creator: dict[str, Any], context: BrowserContext
-) -> dict[str, Any] | None:
-    """Détecte un nouveau Reel via Playwright (hors épinglés).
-
-    - **Bootstrap** (``last_post_id`` absent) : mémorise le Reel le plus récent
-      sans condition de vues — point de départ pour la surveillance.
-    - **Surveillance** (``last_post_id`` connu) : alerte seulement si le Reel
-      en tête change *et* a des vues sous le seuil dynamique (post frais).
-    """
+def _creator_username_platform(
+    creator: dict[str, Any],
+) -> tuple[str, str] | None:
+    """Retourne ``(username, platform)`` ou ``None`` si entrée invalide."""
     if not isinstance(creator, dict):
-        _LOGGER.warning("check_new_post : creator doit être un dict, reçu %s", type(creator).__name__)
+        _LOGGER.warning(
+            "creator doit être un dict, reçu %s", type(creator).__name__
+        )
         return None
-
     username = str(creator.get("username") or "").lstrip("@").strip()
     if not username:
-        _LOGGER.warning("check_new_post : 'username' manquant dans creator")
+        _LOGGER.warning("'username' manquant dans creator")
         return None
+    platform = str(creator.get("platform", "") or "").strip().lower() or "instagram"
+    return username, platform
 
-    platform = str(creator.get("platform", "") or "").strip().lower()
-    if platform and platform != "instagram":
+
+def _fetch_recent_reels(
+    username: str,
+    context: BrowserContext,
+    *,
+    max_reels: int,
+    grid_page: Page | None = None,
+) -> list[dict[str, Any]]:
+    if grid_page is not None:
+        return get_recent_reels_on_page(
+            grid_page,
+            username,
+            max_reels=max_reels,
+            spa_wait_ms=SPA_WAIT_MS,
+        )
+    return get_recent_reels(
+        username,
+        context,
+        max_reels=max_reels,
+        spa_wait_ms=SPA_WAIT_MS,
+    )
+
+
+def _fetch_non_pinned_video_reels(
+    creator: dict[str, Any],
+    context: BrowserContext,
+    *,
+    log_prefix: str = "check_new_post",
+    grid_page: Page | None = None,
+) -> list[dict[str, Any]] | None:
+    """Reels vidéo non épinglés en tête de grille (ordre Instagram)."""
+    parsed = _creator_username_platform(creator)
+    if parsed is None:
+        return None
+    username, platform = parsed
+    if platform != "instagram":
         _LOGGER.warning(
-            "check_new_post @%s : plateforme %r non supportée (skip)",
+            "%s @%s : plateforme %r non supportée (skip)",
+            log_prefix,
             username,
             platform,
         )
         return None
 
     try:
-        reels = get_recent_reels(username, context, max_reels=4)
+        reels = _fetch_recent_reels(
+            username, context, max_reels=4, grid_page=grid_page
+        )
     except Exception as e:
-        _LOGGER.warning("check_new_post @%s : erreur (%s)", username, e)
+        _LOGGER.warning("%s @%s : erreur (%s)", log_prefix, username, e)
         return None
 
     if not reels:
-        _LOGGER.warning("check_new_post @%s : aucun reel récupéré (session IG ?)", username)
+        _LOGGER.warning(
+            "%s @%s : aucun reel récupéré "
+            "(session IG, compte privé/inexistant, ou rate-limit — voir logs grille).",
+            log_prefix,
+            username,
+        )
         return None
 
     reels = _filter_video_reels(reels)
     if not reels:
         _LOGGER.debug(
-            "check_new_post @%s : aucun reel vidéo après filtre carousel/photo",
+            "%s @%s : aucun reel vidéo après filtre carousel/photo",
+            log_prefix,
             username,
         )
         return None
@@ -233,29 +297,114 @@ def check_new_post(
     non_pinned = [r for r in reels if not r.get("is_pinned", False)]
     if not non_pinned:
         try:
-            reels = get_recent_reels(username, context, max_reels=8)
+            reels = _fetch_recent_reels(
+                username, context, max_reels=8, grid_page=grid_page
+            )
         except Exception as e:
-            _LOGGER.warning("check_new_post @%s : erreur retry (%s)", username, e)
+            _LOGGER.warning("%s @%s : erreur retry (%s)", log_prefix, username, e)
             return None
         reels = _filter_video_reels(reels)
         non_pinned = [r for r in reels if not r.get("is_pinned", False)]
 
     if not non_pinned:
-        _LOGGER.info("check_new_post @%s : aucun reel non épinglé trouvé", username)
+        _LOGGER.info("%s @%s : aucun reel non épinglé trouvé", log_prefix, username)
+        return None
+
+    expected = username.lower()
+    owned: list[dict[str, Any]] = []
+    skipped_owners: list[str] = []
+    for reel in non_pinned:
+        grid_owner = str(reel.get("owner_username") or "").lstrip("@").strip().lower()
+        if grid_owner and grid_owner != expected:
+            skipped_owners.append(grid_owner)
+            continue
+        owned.append(reel)
+
+    if skipped_owners:
+        _LOGGER.info(
+            "%s @%s : %d reel(s) ignoré(s) (autre @ : %s)",
+            log_prefix,
+            username,
+            len(skipped_owners),
+            ", ".join(f"@{o}" for o in skipped_owners[:3]),
+        )
+
+    if not owned:
+        _LOGGER.warning(
+            "%s @%s : aucun reel du créateur dans la grille — ignoré.",
+            log_prefix,
+            username,
+        )
+        return None
+
+    return owned
+
+
+def sync_creator_last_post_id(
+    creator: dict[str, Any],
+    context: BrowserContext,
+    *,
+    grid_page: Page | None = None,
+) -> bool:
+    """Aligne ``last_post_id`` sur le Reel le plus récent (sans notif).
+
+    Retourne ``True`` si la watchlist a été modifiée pour ce créateur.
+    """
+    parsed = _creator_username_platform(creator)
+    if parsed is None:
+        return False
+    username, _ = parsed
+
+    non_pinned = _fetch_non_pinned_video_reels(
+        creator, context, log_prefix="sync_last_post", grid_page=grid_page
+    )
+    if not non_pinned:
+        return False
+
+    media_id = str(non_pinned[0].get("media_id") or "")
+    if not media_id:
+        return False
+
+    old = str(creator.get("last_post_id") or "") or None
+    creator["last_post_id"] = media_id
+    if old == media_id:
+        _LOGGER.info("@%s : last_post_id déjà à jour (%s)", username, media_id)
+        return False
+
+    _LOGGER.info(
+        "@%s : last_post_id %s -> %s",
+        username,
+        old or "(null)",
+        media_id,
+    )
+    return True
+
+
+def check_new_post(
+    creator: dict[str, Any],
+    context: BrowserContext,
+    *,
+    grid_page: Page | None = None,
+) -> dict[str, Any] | None:
+    """Détecte un nouveau Reel via Playwright (hors épinglés).
+
+    - **Bootstrap** (``last_post_id`` absent) : mémorise le Reel le plus récent
+      sans condition de vues — point de départ pour la surveillance.
+    - **Surveillance** (``last_post_id`` connu) : alerte si le Reel en tête change.
+      Filtre vues optionnel (``WATCHER_VIEW_FILTER_ENABLED``) pour ignorer les posts
+      déjà viraux quand le polling est lent.
+    """
+    parsed = _creator_username_platform(creator)
+    if parsed is None:
+        return None
+    username, _ = parsed
+
+    non_pinned = _fetch_non_pinned_video_reels(creator, context, grid_page=grid_page)
+    if not non_pinned:
         return None
 
     first = non_pinned[0]
     first_views = int(first.get("view_count") or 0)
-
-    grid_owner = str(first.get("owner_username") or "").lstrip("@").strip().lower()
-    if grid_owner and grid_owner != username.lower():
-        _LOGGER.warning(
-            "check_new_post @%s : reel en tête appartient à @%s — ignoré.",
-            username,
-            grid_owner,
-        )
-        return None
-
     media_id = str(first.get("media_id") or "")
     if not media_id:
         return None
@@ -277,6 +426,7 @@ def check_new_post(
         return {
             "video_id": media_id,
             "username": username,
+            "grid_owner": str(first.get("owner_username") or ""),
             "caption": caption,
             "hashtags": hashtags,
             "audio_id": str(first.get("audio_id") or ""),
@@ -285,33 +435,49 @@ def check_new_post(
             "bootstrap": True,
         }
 
-    views_list = [int(r["view_count"]) for r in non_pinned if int(r.get("view_count") or 0) > 0]
-    if len(views_list) >= 2:
-        avg_views = sum(views_list[1:]) / len(views_list[1:])
-        threshold = max(NEW_POST_VIEW_THRESHOLD, avg_views * 0.05)
-    else:
-        threshold = float(NEW_POST_VIEW_THRESHOLD)
+    threshold: float | None = None
+    if VIEW_FILTER_ENABLED:
+        views_list = [
+            int(r["view_count"])
+            for r in non_pinned
+            if int(r.get("view_count") or 0) > 0
+        ]
+        if len(views_list) >= 2:
+            avg_views = sum(views_list[1:]) / len(views_list[1:])
+            threshold = max(NEW_POST_VIEW_THRESHOLD, avg_views * 0.05)
+        else:
+            threshold = float(NEW_POST_VIEW_THRESHOLD)
 
-    if first_views >= threshold:
-        _LOGGER.debug(
-            "check_new_post @%s : pas de nouveau post (%d vues >= seuil %.0f)",
+        if first_views >= threshold:
+            _LOGGER.info(
+                "check_new_post @%s : reel %s ignoré (%d vues >= seuil %.0f, filtre actif)",
+                username,
+                media_id,
+                first_views,
+                threshold,
+            )
+            return None
+
+    if threshold is not None:
+        _LOGGER.info(
+            "check_new_post @%s : nouveau post détecté %s (%d vues < seuil %.0f)",
             username,
+            media_id,
             first_views,
             threshold,
         )
-        return None
-
-    _LOGGER.info(
-        "check_new_post @%s : nouveau post détecté %s (%d vues < seuil %.0f)",
-        username,
-        media_id,
-        first_views,
-        threshold,
-    )
+    else:
+        _LOGGER.info(
+            "check_new_post @%s : nouveau post détecté %s (%d vues)",
+            username,
+            media_id,
+            first_views,
+        )
 
     return {
         "video_id": media_id,
         "username": username,
+        "grid_owner": str(first.get("owner_username") or ""),
         "caption": caption,
         "hashtags": hashtags,
         "audio_id": str(first.get("audio_id") or ""),
@@ -529,6 +695,13 @@ SLEEP_BETWEEN_CREATORS_S = config.WATCHER_SLEEP_BETWEEN_CREATORS_S
 MAX_ACCOUNTS_PAUSE_S = config.WATCHER_ACCOUNTS_PAUSE_S
 
 
+def _maybe_accounts_pause(*, mock: bool = False) -> None:
+    """Pause longue anti-flag après N comptes ; no-op si ``WATCHER_ACCOUNTS_PAUSE_S`` ≤ 0."""
+    if mock or MAX_ACCOUNTS_PAUSE_S <= 0:
+        return
+    time.sleep(MAX_ACCOUNTS_PAUSE_S)
+
+
 def get_poll_interval(now: datetime | None = None) -> int:
     """Intervalle de polling (secondes) selon l'heure **locale**.
 
@@ -734,22 +907,6 @@ def _transcribe_reel(
             shutil.rmtree(work_dir, ignore_errors=True)
 
 
-def _build_classification_from_t_type(t_type: str) -> dict[str, Any]:
-    """Classification synthétique depuis ``t_type`` (Discovery a déjà tranché).
-
-    En phase Watcher, on ne reclassifie pas : on injecte directement le
-    ``t_type`` figé en Discovery dans ``generate_comments`` sous forme de dict
-    minimal compatible.
-    """
-    return {
-        "type": t_type,
-        "confidence": 0.95,
-        "patterns": [],
-        "tone": f"Registre figé en Discovery ({t_type}).",
-        "brand_risk": "low" if t_type in ("T1", "T2", "T4") else "medium",
-    }
-
-
 def _fuse_transcript_visual_for_watcher(
     transcript: str, visual_description: str, caption: str
 ) -> str:
@@ -795,19 +952,17 @@ Réponds uniquement la fusion, pas d'explication."""
 def _generate_for_post(
     context: dict[str, Any],
     vector_store: dict[str, dict[str, Any]] | None = None,
-) -> list[str]:
-    """Produit 3 commentaires depuis le ``context`` (pas de ``comments_sample``).
+) -> dict[str, str]:
+    """Produit un commentaire par T-type depuis le ``context``.
 
-    Le contexte vidéo (caption, hashtags, audio_id) est passé directement à
-    ``generate_comments`` via le paramètre ``video_context``. Le ``t_type``
-    du créateur (sa **personnalité de commentateur**, validée humainement
-    en Discovery) sert à la fois à choisir le template T-type et à
-    renseigner ``t_type_profile`` dans le prompt — pas de classification
-    online en phase Watcher (post frais, distribution non stabilisée).
+    Le contexte vidéo (caption, hashtags, audio_id) est passé à
+    ``generate_comments_per_category``. Le ``t_type`` du créateur doit être
+    valide (Discovery) pour déclencher la génération, mais chaque catégorie
+    T1…T5 reçoit son propre ``t_type_profile`` dans le prompt.
 
-    Renvoie ``[]`` si ``t_type`` est invalide (hors ``VALID_T_TYPES``).
+    Renvoie ``{}`` si ``t_type`` est invalide (hors ``VALID_T_TYPES``).
     """
-    from modules.classifier import generate_comments  # import local : Ollama
+    from modules.classifier import generate_comments_per_category  # import local
 
     log = logging.getLogger("aitertainment.watcher")
     vector_store = vector_store or {}
@@ -818,9 +973,8 @@ def _generate_for_post(
     niches: list[str] = list(niches_raw) if isinstance(niches_raw, list) else []
 
     if t_type not in VALID_T_TYPES:
-        return []
+        return {}
 
-    classification = _build_classification_from_t_type(t_type)
     username = str(context.get("username") or "").lstrip("@").strip().lower()
     vs_entry = vector_store.get(username, {})
     named_axes = vs_entry.get("named_axes") or {}
@@ -829,7 +983,6 @@ def _generate_for_post(
 
     gen_kwargs: dict[str, Any] = {
         "niches": niches,
-        "t_type_profile": t_type,
         "video_context": {
             "caption": context.get("caption"),
             "hashtags": context.get("hashtags"),
@@ -860,17 +1013,13 @@ def _generate_for_post(
             username or "?",
         )
 
-    return generate_comments(
-        classification,
-        [],  # pas de comments_sample en phase Watcher (post frais)
-        **gen_kwargs,
-    )
+    return generate_comments_per_category(**gen_kwargs)
 
 
 def notify_new_post(
     creator: dict[str, Any],
     post: dict[str, Any],
-    comments: list[str],
+    comments: list[str] | dict[str, str],
 ) -> bool:
     """Envoie une notif Telegram pour un nouveau post détecté.
 
@@ -891,14 +1040,23 @@ def notify_new_post(
     if not url and reel_id:
         url = f"https://www.instagram.com/reel/{reel_id}/"
 
-    padded = (list(comments) + ["—", "—", "—"])[:3]
-    c1, c2, c3 = padded
-    comments_block = (
-        f"📝 *Commentaires suggérés :*\n"
-        f"1. {_telegram_md_escape(c1)}\n"
-        f"2. {_telegram_md_escape(c2)}\n"
-        f"3. {_telegram_md_escape(c3)}"
-    )
+    if isinstance(comments, dict):
+        from config import ORDERED_T_TYPES
+
+        lines = [
+            f"*{_telegram_md_escape(t)}* : {_telegram_md_escape(comments.get(t, '—'))}"
+            for t in ORDERED_T_TYPES
+        ]
+        comments_block = "📝 *Commentaires par catégorie :*\n" + "\n".join(lines)
+    else:
+        padded = (list(comments) + ["—", "—", "—"])[:3]
+        c1, c2, c3 = padded
+        comments_block = (
+            f"📝 *Commentaires suggérés :*\n"
+            f"1. {_telegram_md_escape(c1)}\n"
+            f"2. {_telegram_md_escape(c2)}\n"
+            f"3. {_telegram_md_escape(c3)}"
+        )
 
     text = (
         f"📢 *Nouveau post détecté*\n\n"
@@ -937,13 +1095,237 @@ def _mock_post(creator: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _mock_generate(context: dict[str, Any]) -> list[str]:
-    return [
-        f"[mock] commentaire 1 — {context.get('t_type')} / "
-        f"{(context.get('niches') or ['?'])[0]}",
-        "[mock] commentaire 2 — registre figé en Discovery",
-        "[mock] commentaire 3 — placeholder Watcher",
+def _mock_generate(context: dict[str, Any]) -> dict[str, str]:
+    from config import ORDERED_T_TYPES
+
+    niche = (context.get("niches") or ["?"])[0]
+    return {
+        t: f"[mock] {t} — {niche}"
+        for t in ORDERED_T_TYPES
+    }
+
+
+@dataclass
+class _WatcherIgWorker:
+    """Playwright isolé par thread (1 compte IG + 1 page réutilisée)."""
+
+    label: str
+    playwright: Playwright
+    context: BrowserContext
+    page: Page
+
+
+def _dual_account_enabled() -> bool:
+    if not config.WATCHER_DUAL_ACCOUNT:
+        return False
+    return Path(config.WATCHER_IG2_COOKIES_PATH).is_file()
+
+
+def login_watcher_ig2(*, wait_after_submit_s: float = 300) -> None:
+    """Connexion interactive du 2e compte IG (2FA) → ``instagram_cookies_2.json``."""
+    setup_watcher_logger()
+    log = logging.getLogger("aitertainment.watcher")
+
+    if not config.IG_USERNAME or not config.IG_PASSWORD:
+        log.error(
+            "IG_USERNAME et IG_PASSWORD requis dans .env pour --login-ig2."
+        )
+        raise SystemExit(1)
+
+    cookies_path = Path(config.WATCHER_IG2_COOKIES_PATH)
+    log.info(
+        "=== Login interactif 2e compte @%s → %s ===",
+        config.IG_USERNAME,
+        cookies_path,
+    )
+    log.info(
+        "Exécuter sur le Mac Mini avec écran (fenêtre Chromium va s'ouvrir)."
+    )
+
+    playwright_instance = sync_playwright().start()
+    try:
+        login_instagram_interactive(
+            playwright_instance,
+            config.IG_USERNAME,
+            config.IG_PASSWORD,
+            save_cookies_path=cookies_path,
+            wait_after_submit_s=wait_after_submit_s,
+        )
+        log.info("Login 2e compte terminé — redémarrer le watcher.")
+    except Exception as e:
+        log.error("Login 2e compte échoué : %s", e)
+        raise SystemExit(1) from e
+    finally:
+        playwright_instance.stop()
+
+
+def _start_watcher_worker(slot: int, log: logging.Logger) -> _WatcherIgWorker:
+    """Démarre Playwright dans le thread courant (mono-compte / diagnose)."""
+    pw = sync_playwright().start()
+    try:
+        context = ensure_watcher_browser_context(pw, slot=slot)
+    except Exception:
+        pw.stop()
+        raise
+    if not session_ok(context):
+        context.close()
+        br = context.browser
+        if br:
+            br.close()
+        pw.stop()
+        raise RuntimeError(f"Session Instagram slot {slot} invalide.")
+    page = context.new_page()
+    label = f"ig{slot + 1}"
+    log.info("Worker %s prêt (slot %d).", label, slot)
+    return _WatcherIgWorker(label=label, playwright=pw, context=context, page=page)
+
+
+def _run_dual_slot_batch(
+    slot: int,
+    batch: list[tuple[int, dict[str, Any]]],
+    *,
+    creators: list[dict[str, Any]],
+    mock: bool,
+    log: logging.Logger,
+    vector_store: dict[str, dict[str, Any]],
+    watchlist_path: str | Path | None,
+    watchlist_lock: threading.Lock,
+) -> int:
+    """Moitié de watchlist : Playwright sync doit vivre entièrement dans ce thread."""
+    label = f"ig{slot + 1}"
+    pw = sync_playwright().start()
+    context: BrowserContext | None = None
+    page: Page | None = None
+    try:
+        context = ensure_watcher_browser_context(pw, slot=slot)
+        if not session_ok(context):
+            raise RuntimeError(f"Session Instagram slot {slot} invalide.")
+        page = context.new_page()
+        log.info("Worker %s prêt (slot %d, %d créateurs).", label, slot, len(batch))
+        return _run_creator_batch(
+            batch,
+            creators=creators,
+            mock=mock,
+            log=log,
+            vector_store=vector_store,
+            worker=None,
+            browser_context=context,
+            grid_page=page,
+            watchlist_path=watchlist_path,
+            watchlist_lock=watchlist_lock,
+        )
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
+        if context is not None:
+            try:
+                context.close()
+                br = context.browser
+                if br:
+                    br.close()
+            except Exception:
+                pass
+        pw.stop()
+
+
+def _sync_dual_slot_batch(
+    slot: int,
+    batch: list[tuple[int, dict[str, Any]]],
+    *,
+    creators: list[dict[str, Any]],
+    log: logging.Logger,
+    watchlist_path: str | Path | None,
+    watchlist_lock: threading.Lock,
+    counters: dict[str, int],
+) -> None:
+    """Sync last_post_id pour une moitié de watchlist (thread dédié)."""
+    label = f"ig{slot + 1}"
+    pw = sync_playwright().start()
+    context: BrowserContext | None = None
+    page: Page | None = None
+
+    def _sync_one(creator: dict[str, Any]) -> None:
+        username = str(creator.get("username") or "?")
+        try:
+            if sync_creator_last_post_id(creator, context, grid_page=page):
+                with watchlist_lock:
+                    counters["updated"] += 1
+                    save_watchlist(creators, watchlist_path)
+        except Exception as e:
+            with watchlist_lock:
+                counters["failed"] += 1
+            log.exception("@%s [%s] : sync last_post_id échouée (%s)", username, label, e)
+
+    try:
+        context = ensure_watcher_browser_context(pw, slot=slot)
+        if not session_ok(context):
+            raise RuntimeError(f"Session Instagram slot {slot} invalide.")
+        page = context.new_page()
+        log.info("Worker %s prêt (slot %d, sync %d créateurs).", label, slot, len(batch))
+        for pos, (_idx, creator) in enumerate(batch):
+            _sync_one(creator)
+            if (
+                pos < len(batch) - 1
+                and SLEEP_BETWEEN_CREATORS_S > 0
+            ):
+                time.sleep(SLEEP_BETWEEN_CREATORS_S)
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
+        if context is not None:
+            try:
+                context.close()
+                br = context.browser
+                if br:
+                    br.close()
+            except Exception:
+                pass
+        pw.stop()
+
+
+def _stop_watcher_worker(worker: _WatcherIgWorker | None) -> None:
+    if worker is None:
+        return
+    try:
+        worker.page.close()
+    except Exception:
+        pass
+    try:
+        worker.context.close()
+        br = worker.context.browser
+        if br:
+            br.close()
+    except Exception:
+        pass
+    try:
+        worker.playwright.stop()
+    except Exception:
+        pass
+
+
+def _watcher_eligible(creator: dict[str, Any]) -> bool:
+    """True si le créateur doit être surveillé ce cycle."""
+    t_type = creator.get("t_type")
+    if t_type is None:
+        return False
+    return str(t_type).strip().upper() not in SKIP_T_TYPES
+
+
+def _split_creator_batches(
+    creators: list[dict[str, Any]],
+) -> tuple[list[tuple[int, dict[str, Any]]], list[tuple[int, dict[str, Any]]]]:
+    """Répartit les créateurs éligibles en deux moitiés (indices watchlist)."""
+    indexed = [
+        (i, c) for i, c in enumerate(creators) if _watcher_eligible(c)
     ]
+    mid = (len(indexed) + 1) // 2
+    return indexed[:mid], indexed[mid:]
 
 
 def _process_creator(
@@ -953,6 +1335,7 @@ def _process_creator(
     log: logging.Logger,
     vector_store: dict[str, dict[str, Any]] | None = None,
     browser_context: BrowserContext | None = None,
+    grid_page: Page | None = None,
 ) -> tuple[bool, bool]:
     """Traite un créateur.
 
@@ -971,14 +1354,19 @@ def _process_creator(
         log.info("@%s : t_type absent (Discovery requis), skip.", username)
         return False, False
 
-    did_check = not mock  # le mock ne consomme rien côté Instagram
+    if str(t_type).strip().upper() in SKIP_T_TYPES:
+        return False, False
+
+    did_check = not mock
     if mock:
         post: dict[str, Any] | None = _mock_post(creator)
     elif browser_context is None:
         log.warning("@%s : context Playwright manquant — skip.", username)
         return False, False
     else:
-        post = check_new_post(creator, browser_context)
+        post = check_new_post(
+            creator, browser_context, grid_page=grid_page
+        )
 
     if post is None:
         return False, did_check
@@ -1046,7 +1434,7 @@ def _process_creator(
         "video_context": video_context,
     }
 
-    comments: list[str] = []
+    comments: dict[str, str] = {}
     try:
         comments = (
             _mock_generate(gen_context)
@@ -1055,7 +1443,7 @@ def _process_creator(
         )
     except Exception as e:
         log.exception("@%s : génération de commentaires échouée (%s)", username, e)
-        comments = []
+        comments = {}
 
     if not comments:
         log.info("@%s : pas de commentaires générés (erreur ou t_type invalide).", username)
@@ -1076,6 +1464,289 @@ def _process_creator(
     return True, did_check
 
 
+def _run_creator_batch(
+    batch: list[tuple[int, dict[str, Any]]],
+    *,
+    creators: list[dict[str, Any]],
+    mock: bool,
+    log: logging.Logger,
+    vector_store: dict[str, dict[str, Any]],
+    worker: _WatcherIgWorker | None,
+    browser_context: BrowserContext | None,
+    grid_page: Page | None,
+    watchlist_path: str | Path | None,
+    watchlist_lock: threading.Lock,
+) -> int:
+    """Traite une moitié de watchlist ; retourne le nb de checks Instagram."""
+    checks = 0
+    for pos, (idx, creator) in enumerate(batch):
+        try:
+            changed, did_check = _process_creator(
+                creator,
+                mock=mock,
+                log=log,
+                vector_store=vector_store,
+                browser_context=browser_context,
+                grid_page=grid_page,
+            )
+        except Exception as e:
+            log.exception(
+                "@%s [%s] : erreur non gérée (%s)",
+                creator.get("username", "?"),
+                worker.label if worker else "main",
+                e,
+            )
+            changed, did_check = False, False
+
+        if changed and not mock:
+            with watchlist_lock:
+                try:
+                    save_watchlist(creators, watchlist_path)
+                except Exception as e:
+                    log.exception("Sauvegarde watchlist échouée : %s", e)
+
+        if did_check:
+            checks += 1
+
+        if (
+            pos < len(batch) - 1
+            and not mock
+            and SLEEP_BETWEEN_CREATORS_S > 0
+        ):
+            time.sleep(SLEEP_BETWEEN_CREATORS_S)
+    return checks
+
+
+def _run_cycle(
+    creators: list[dict[str, Any]],
+    *,
+    mock: bool,
+    log: logging.Logger,
+    vector_store: dict[str, dict[str, Any]],
+    dual_account: bool,
+    browser_context: BrowserContext | None,
+    grid_page: Page | None,
+    watchlist_path: str | Path | None,
+) -> int:
+    """Un cycle complet ; retourne le nb de checks Instagram."""
+    watchlist_lock = threading.Lock()
+    accounts_checked = 0
+
+    if dual_account and not mock:
+        batch_a, batch_b = _split_creator_batches(creators)
+        log.info(
+            "Cycle dual-account : ig1 → %d créateurs, ig2 → %d créateurs.",
+            len(batch_a),
+            len(batch_b),
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(
+                    _run_dual_slot_batch,
+                    0,
+                    batch_a,
+                    creators=creators,
+                    mock=mock,
+                    log=log,
+                    vector_store=vector_store,
+                    watchlist_path=watchlist_path,
+                    watchlist_lock=watchlist_lock,
+                ),
+                pool.submit(
+                    _run_dual_slot_batch,
+                    1,
+                    batch_b,
+                    creators=creators,
+                    mock=mock,
+                    log=log,
+                    vector_store=vector_store,
+                    watchlist_path=watchlist_path,
+                    watchlist_lock=watchlist_lock,
+                ),
+            ]
+            for fut in as_completed(futures):
+                accounts_checked += fut.result()
+        return accounts_checked
+
+    indexed = [(i, c) for i, c in enumerate(creators) if _watcher_eligible(c)]
+    for pos, (_idx, creator) in enumerate(indexed):
+        try:
+            changed, did_check = _process_creator(
+                creator,
+                mock=mock,
+                log=log,
+                vector_store=vector_store,
+                browser_context=browser_context,
+                grid_page=grid_page,
+            )
+        except Exception as e:
+            log.exception(
+                "@%s : erreur non gérée pendant le traitement (%s)",
+                creator.get("username", "?"),
+                e,
+            )
+            changed, did_check = False, False
+
+        if changed and not mock:
+            try:
+                save_watchlist(creators, watchlist_path)
+            except Exception as e:
+                log.exception("Sauvegarde watchlist échouée : %s", e)
+
+        if did_check:
+            accounts_checked += 1
+            if (
+                not mock
+                and MAX_ACCOUNTS_PAUSE_S > 0
+                and accounts_checked >= config.MAX_ACCOUNTS_PER_SESSION
+            ):
+                log.info(
+                    "Seuil de %d comptes vérifiés atteint — pause %ds anti-flag.",
+                    config.MAX_ACCOUNTS_PER_SESSION,
+                    MAX_ACCOUNTS_PAUSE_S,
+                )
+                _maybe_accounts_pause()
+                accounts_checked = 0
+
+        if (
+            pos < len(indexed) - 1
+            and not mock
+            and SLEEP_BETWEEN_CREATORS_S > 0
+        ):
+            time.sleep(SLEEP_BETWEEN_CREATORS_S)
+    return accounts_checked
+
+
+def sync_watchlist_last_posts(
+    *,
+    watchlist_path: str | Path | None = None,
+) -> None:
+    """Repasse tous les créateurs Instagram et met à jour ``last_post_id``.
+
+    À lancer avant ``run_watcher`` après une pause, un changement de session IG,
+    ou pour éviter des fausses alertes sur d'anciens posts. Pas de Telegram ni
+    génération de commentaires.
+    """
+    setup_watcher_logger()
+    log = logging.getLogger("aitertainment.watcher")
+    log.info("=== Sync last_post_id (watchlist) ===")
+
+    try:
+        creators = load_watchlist_synced(watchlist_path)
+    except WatchlistError as e:
+        log.error("Watchlist illisible : %s — abandon.", e)
+        return
+
+    if not creators:
+        log.warning("Watchlist vide — rien à synchroniser.")
+        return
+
+    dual_account = _dual_account_enabled()
+    if config.WATCHER_DUAL_ACCOUNT and not dual_account:
+        log.warning(
+            "WATCHER_DUAL_ACCOUNT=true mais %s absent — sync mono-compte. "
+            "Lancer : python watcher.py --login-ig2",
+            config.WATCHER_IG2_COOKIES_PATH,
+        )
+
+    playwright_instance = None
+    context: BrowserContext | None = None
+    grid_page: Page | None = None
+    if not dual_account:
+        playwright_instance = sync_playwright().start()
+        context = get_browser_context(playwright_instance)
+        if not session_ok(context):
+            log.error(
+                "Session Instagram invalide ou expirée — "
+                "régénérer data/instagram_cookies.json puis relancer."
+            )
+            context.close()
+            br = context.browser
+            if br:
+                br.close()
+            playwright_instance.stop()
+            return
+        grid_page = context.new_page()
+
+    counters = {"updated": 0, "failed": 0}
+    watchlist_lock = threading.Lock()
+
+    try:
+        if dual_account:
+            batch_a, batch_b = _split_creator_batches(creators)
+            log.info(
+                "Sync dual-account : ig1 → %d créateurs, ig2 → %d créateurs.",
+                len(batch_a),
+                len(batch_b),
+            )
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futs = [
+                    pool.submit(
+                        _sync_dual_slot_batch,
+                        0,
+                        batch_a,
+                        creators=creators,
+                        log=log,
+                        watchlist_path=watchlist_path,
+                        watchlist_lock=watchlist_lock,
+                        counters=counters,
+                    ),
+                    pool.submit(
+                        _sync_dual_slot_batch,
+                        1,
+                        batch_b,
+                        creators=creators,
+                        log=log,
+                        watchlist_path=watchlist_path,
+                        watchlist_lock=watchlist_lock,
+                        counters=counters,
+                    ),
+                ]
+                for fut in as_completed(futs):
+                    fut.result()
+        else:
+            assert context is not None
+
+            def _sync_one(creator: dict[str, Any]) -> None:
+                username = str(creator.get("username") or "?")
+                try:
+                    if sync_creator_last_post_id(creator, context, grid_page=grid_page):
+                        counters["updated"] += 1
+                        save_watchlist(creators, watchlist_path)
+                except Exception as e:
+                    counters["failed"] += 1
+                    log.exception("@%s : sync last_post_id échouée (%s)", username, e)
+
+            indexed = [c for c in creators if _watcher_eligible(c)]
+            for pos, creator in enumerate(indexed):
+                _sync_one(creator)
+                if (
+                    pos < len(indexed) - 1
+                    and SLEEP_BETWEEN_CREATORS_S > 0
+                ):
+                    time.sleep(SLEEP_BETWEEN_CREATORS_S)
+    finally:
+        if grid_page is not None:
+            try:
+                grid_page.close()
+            except Exception:
+                pass
+        if context is not None:
+            context.close()
+            br = context.browser
+            if br:
+                br.close()
+        if playwright_instance is not None:
+            playwright_instance.stop()
+
+    log.info(
+        "Sync terminée : %d créateur(s), %d mis à jour, %d erreur(s).",
+        len(creators),
+        counters["updated"],
+        counters["failed"],
+    )
+
+
 def run_watcher(
     *,
     watchlist_path: str | Path | None = None,
@@ -1085,9 +1756,9 @@ def run_watcher(
     """Boucle principale du Watcher.
 
     - Charge ``watchlist.json``.
-    - Pour chaque créateur : ``check_new_post`` → si nouveau post, génère 3
-      commentaires + notifie Telegram + met à jour ``last_post_id``.
-    - 3 s entre chaque créateur (anti-détection).
+    - Pour chaque créateur : ``check_new_post`` → si nouveau post, génération
+      par T-type + Telegram + ``last_post_id``.
+    - Délai configurable entre créateurs (``WATCHER_SLEEP_BETWEEN_CREATORS_S``).
     - À la fin du cycle, sleep ``get_poll_interval()`` puis boucle.
     - ``mock=True`` : un post synthétique par créateur, pas de Telegram, pas
       d'écriture sur ``watchlist.json``, ``max_cycles=1`` par défaut.
@@ -1110,11 +1781,59 @@ def run_watcher(
     log.info("vector_store chargé : %d comptes", len(vector_store))
     last_vector_store_reload = datetime.utcnow()
 
+    dual_account = False
     playwright_instance = None
     context: BrowserContext | None = None
+    grid_page: Page | None = None
+
     if not mock:
-        playwright_instance = sync_playwright().start()
-        context = get_browser_context(playwright_instance)
+        dual_account = _dual_account_enabled()
+        if config.WATCHER_DUAL_ACCOUNT and not dual_account:
+            log.warning(
+                "WATCHER_DUAL_ACCOUNT=true mais %s absent — mono-compte. "
+                "Lancer : python watcher.py --login-ig2",
+                config.WATCHER_IG2_COOKIES_PATH,
+            )
+        try:
+            creators_preview = load_watchlist_synced(watchlist_path)
+            skipped_t = sum(
+                1
+                for c in creators_preview
+                if c.get("t_type") is not None
+                and str(c.get("t_type")).strip().upper() in SKIP_T_TYPES
+            )
+            eligible = sum(1 for c in creators_preview if _watcher_eligible(c))
+        except WatchlistError:
+            skipped_t = 0
+            eligible = 0
+        if SKIP_T_TYPES:
+            log.info(
+                "T-types exclus : %s — %d compte(s) ignoré(s), %d surveillé(s).",
+                ", ".join(sorted(SKIP_T_TYPES)),
+                skipped_t,
+                eligible,
+            )
+        log.info(
+            "Optimisations : sleep=%ds, spa=%dms, dual_account=%s.",
+            SLEEP_BETWEEN_CREATORS_S,
+            SPA_WAIT_MS,
+            dual_account,
+        )
+        if not dual_account:
+            playwright_instance = sync_playwright().start()
+            context = get_browser_context(playwright_instance)
+            if not session_ok(context):
+                log.error(
+                    "Session Instagram invalide ou expirée — "
+                    "régénérer data/instagram_cookies.json puis relancer."
+                )
+                context.close()
+                br = context.browser
+                if br:
+                    br.close()
+                playwright_instance.stop()
+                return
+            grid_page = context.new_page()
 
     try:
         while True:
@@ -1135,42 +1854,16 @@ def run_watcher(
             if not creators:
                 log.warning("Watchlist vide — rien à surveiller ce cycle.")
 
-            for i, creator in enumerate(creators):
-                try:
-                    changed, did_check = _process_creator(
-                        creator,
-                        mock=mock,
-                        log=log,
-                        vector_store=vector_store,
-                        browser_context=context,
-                    )
-                except Exception as e:
-                    log.exception(
-                        "@%s : erreur non gérée pendant le traitement (%s)",
-                        creator.get("username", "?"),
-                        e,
-                    )
-                    changed, did_check = False, False
-
-                if changed and not mock:
-                    try:
-                        save_watchlist(creators, watchlist_path)
-                    except Exception as e:
-                        log.exception("Sauvegarde watchlist échouée : %s", e)
-
-                if did_check:
-                    accounts_since_pause += 1
-                    if accounts_since_pause >= config.MAX_ACCOUNTS_PER_SESSION:
-                        log.info(
-                            "Seuil de %d comptes vérifiés atteint — pause %ds anti-flag.",
-                            config.MAX_ACCOUNTS_PER_SESSION,
-                            MAX_ACCOUNTS_PAUSE_S,
-                        )
-                        time.sleep(0 if mock else MAX_ACCOUNTS_PAUSE_S)
-                        accounts_since_pause = 0
-
-                if i < len(creators) - 1:
-                    time.sleep(0 if mock else SLEEP_BETWEEN_CREATORS_S)
+            accounts_since_pause += _run_cycle(
+                creators,
+                mock=mock,
+                log=log,
+                vector_store=vector_store,
+                dual_account=dual_account,
+                browser_context=context,
+                grid_page=grid_page,
+                watchlist_path=watchlist_path,
+            )
 
             if max_cycles is not None and cycle >= max_cycles:
                 log.info("max_cycles=%d atteint, arrêt.", max_cycles)
@@ -1182,6 +1875,11 @@ def run_watcher(
     except KeyboardInterrupt:
         log.info("Watcher arrêté (Ctrl+C).")
     finally:
+        if grid_page is not None:
+            try:
+                grid_page.close()
+            except Exception:
+                pass
         if context is not None:
             context.close()
             br = context.browser
@@ -1189,6 +1887,119 @@ def run_watcher(
                 br.close()
         if playwright_instance is not None:
             playwright_instance.stop()
+
+
+def diagnose_watchlist(
+    *,
+    watchlist_path: str | Path | None = None,
+) -> dict[str, int]:
+    """Un passage watchlist : compte pourquoi chaque créateur n'alerte pas."""
+    log = setup_watcher_logger()
+    creators = load_watchlist_synced(path=watchlist_path)
+    stats = {
+        "checked": 0,
+        "unchanged": 0,
+        "would_alert": 0,
+        "filtered_views": 0,
+        "no_reels": 0,
+        "skipped": 0,
+    }
+
+    log.info(
+        "=== Diagnostic watchlist (%d créateur(s), filtre vues=%s) ===",
+        len(creators),
+        "on" if VIEW_FILTER_ENABLED else "off",
+    )
+
+    worker: _WatcherIgWorker | None = None
+    playwright_instance = None
+    context: BrowserContext | None = None
+    grid_page: Page | None = None
+    try:
+        try:
+            worker = _start_watcher_worker(0, log)
+        except Exception:
+            playwright_instance = sync_playwright().start()
+            context = get_browser_context(playwright_instance)
+            if not session_ok(context):
+                log.error("Session Instagram invalide — diagnostic interrompu.")
+                return stats
+            grid_page = context.new_page()
+
+        ig_context = worker.context if worker else context
+        page = worker.page if worker else grid_page
+        assert ig_context is not None
+
+        for creator in creators:
+            username = str(creator.get("username") or "?")
+            if creator.get("t_type") is None or not _watcher_eligible(creator):
+                stats["skipped"] += 1
+                continue
+
+            stats["checked"] += 1
+            non_pinned = _fetch_non_pinned_video_reels(
+                creator, ig_context, log_prefix="diagnose", grid_page=page
+            )
+            if not non_pinned:
+                stats["no_reels"] += 1
+                continue
+
+            first = non_pinned[0]
+            media_id = str(first.get("media_id") or "")
+            first_views = int(first.get("view_count") or 0)
+            last_post_id = str(creator.get("last_post_id") or "")
+
+            if last_post_id and media_id == last_post_id:
+                stats["unchanged"] += 1
+                continue
+
+            post = check_new_post(creator, ig_context, grid_page=page)
+            if post is None:
+                stats["filtered_views"] += 1
+                log.info(
+                    "@%s : head=%s last=%s (%d vues) — pas d'alerte",
+                    username,
+                    media_id,
+                    last_post_id or "(null)",
+                    first_views,
+                )
+            else:
+                stats["would_alert"] += 1
+                log.info(
+                    "@%s : ALERTERAIT reel=%s (%d vues, bootstrap=%s)",
+                    username,
+                    media_id,
+                    first_views,
+                    post.get("bootstrap"),
+                )
+
+            time.sleep(SLEEP_BETWEEN_CREATORS_S)
+    finally:
+        _stop_watcher_worker(worker)
+        if grid_page is not None:
+            try:
+                grid_page.close()
+            except Exception:
+                pass
+        if context is not None:
+            context.close()
+            br = context.browser
+            if br:
+                br.close()
+        if playwright_instance is not None:
+            playwright_instance.stop()
+
+    log.info(
+        "Diagnostic terminé : %d vérifiés, %d inchangés, %d alerteraient, "
+        "%d filtrés vues, %d sans reel, %d skip (t_type).",
+        stats["checked"],
+        stats["unchanged"],
+        stats["would_alert"],
+        stats["filtered_views"],
+        stats["no_reels"],
+        stats["skipped"],
+    )
+    return stats
 
 
 def _main_cli() -> None:
@@ -1208,7 +2019,41 @@ def _main_cli() -> None:
         action="store_true",
         help="Effectue un seul cycle puis quitte (utile pour cron / debug).",
     )
+    parser.add_argument(
+        "--sync-last-posts",
+        action="store_true",
+        help="Met à jour last_post_id pour tous les créateurs (sans watcher), "
+             "puis quitte. À lancer avant la surveillance temps réel.",
+    )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Un passage watchlist : log pourquoi chaque créateur alerterait ou non.",
+    )
+    parser.add_argument(
+        "--login-ig2",
+        action="store_true",
+        help="Login interactif 2e compte IG (2FA) → data/instagram_cookies_2.json.",
+    )
     args = parser.parse_args()
+
+    if args.login_ig2:
+        if args.mock:
+            parser.error("--login-ig2 est incompatible avec --mock")
+        login_watcher_ig2()
+        return
+
+    if args.sync_last_posts:
+        if args.mock:
+            parser.error("--sync-last-posts est incompatible avec --mock")
+        sync_watchlist_last_posts()
+        return
+
+    if args.diagnose:
+        if args.mock:
+            parser.error("--diagnose est incompatible avec --mock")
+        diagnose_watchlist()
+        return
 
     run_watcher(
         mock=args.mock,
@@ -1221,6 +2066,8 @@ __all__ = [
     "VALID_T_TYPES",
     "VALID_PLATFORMS",
     "NEW_POST_VIEW_THRESHOLD",
+    "VIEW_FILTER_ENABLED",
+    "diagnose_watchlist",
     "PRIME_INTERVAL_S",
     "DAY_INTERVAL_S",
     "NIGHT_INTERVAL_S",
@@ -1234,6 +2081,9 @@ __all__ = [
     "load_vector_store",
     "notify_new_post",
     "run_watcher",
+    "sync_creator_last_post_id",
+    "sync_watchlist_last_posts",
+    "login_watcher_ig2",
     "VECTOR_STORE_PATH",
 ]
 

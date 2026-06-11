@@ -1,9 +1,11 @@
 """label_comments.py — labellisation T-type du pool viral.
 
 Lit ``viral_comments.json`` (non labellisé), appelle Qwen3-35B via LM Studio
-(``LABEL_LLM_*``) pour T-type + ``video_context`` en un seul appel,
-écrit ``training_comments_viral.json`` et retire du pool viral les entrées
-déjà labellisées (vase communicant).
+(``LABEL_LLM_*``) pour le T-type du commentaire uniquement.
+``transcript`` et ``visual_description`` restent séparés (pas de fusion).
+écrit ``training_comments_viral.json``. Le pool viral n'est **pas** modifié
+pendant la labélisation (reprise safe après Ctrl+C). Purge optionnelle via
+``--purge-viral`` ou ``--purge-only``.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import json
 import logging
 import os
 import re
+import signal
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,7 +26,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in __import__("sys").path:
     __import__("sys").path.insert(0, str(_PROJECT_ROOT))
 
-from config import LABEL_LLM_MODEL, LABEL_LLM_URL, VALID_T_TYPES
+from config import LABEL_LLM_MAX_TOKENS, LABEL_LLM_MODEL, LABEL_LLM_URL, VALID_T_TYPES
 from database import load_db, merge_profile_pipeline, save_db
 from modules.named_axes import NAMED_AXES
 from modules.pipeline_state import build_pipeline_patch, comment_dedup_key
@@ -35,32 +38,76 @@ WATCHLIST_PATH = Path("data/watchlist.json")
 DATABASE_PATH = Path("data/database.json")
 VECTOR_STORE_PATH = Path("data/vector_store.json")
 
-SYSTEM_PROMPT = """Tu es un expert en analyse de commentaires Instagram français.
+SYSTEM_PROMPT = """Tu classifies des commentaires Instagram français selon le TYPE D'ÉMOTION COLLECTIVE de la section commentaires.
 
-Tu reçois pour chaque commentaire :
-- Le texte du commentaire
-- Les niches du contenu  
-- Le profil du créateur (T-type dominant, axes de style)
-- La caption du reel
-- Le transcript audio (ce qui est dit dans la vidéo)
-- La description visuelle (ce qu'on voit dans la vidéo)
+Retourne UNIQUEMENT un JSON : {"t_type": "T2b"}
 
-Tu dois retourner UNIQUEMENT un JSON valide avec exactement ces deux clés :
-{
-  "t_type": "T1|T2|T2b|T3a|T3b|T4|T5",
-  "video_context": "Description fusionnée et chronologique de la vidéo en 2-4 phrases, qui intègre l'audio ET le visuel. Ex: 'Sketch parodique où le personnage central, ressemblant à un dirigeant politique, débat avec un commentateur dans une rue parisienne entouré de gardes du corps masqués. Le ton est ironique, avec des dialogues percutants.'"
-}
+=== Principe ===
+Le T-type ne dépend pas seulement du commentaire isolé, mais de la RELATION entre le commentaire, le créateur et sa communauté.
+Un même texte peut être T1 (compliment sincère) ou T3b (ironie invisible) selon le créateur.
+Le contexte créateur (t_type dominant, profil) t'est fourni — utilise-le.
 
-T-types :
-T1 = spam, bot, commentaire sans valeur
-T2 = engagement basique court (lol, mdr, top)
-T2b = engagement émotionnel fort (je suis mort, trop drôle sérieux)
-T3a = question ou curiosité  
-T3b = partage d'expérience personnelle
-T4 = référence communautaire, inside joke, mention d'amis
-T5 = contenu généré (suite, collab, repost demandé)
+=== Définitions ===
 
-Réponds UNIQUEMENT le JSON. Pas d'explication, pas de markdown."""
+T1 = ADMIRATION SINCÈRE
+Compliment direct au créateur respecté pour son travail. Bienveillant, parasocial.
+Indices : "tu m'inspires", "incroyable ce que tu fais", "respect", "merci pour ce contenu"
+Le ton est sincère, sans ironie, sans humour tribal.
+
+T2 = HUMOUR TRIBAL BASIQUE
+Vanne ou réaction sur le langage interne de la niche. Pas forcément drôle, mais dans le code de la communauté.
+Indices : références à des codes de la niche, vannes attendues, réactions courtes typées du milieu.
+Exemples : "speed run vers la mort", "encore un classique", "Jpp 😭" si tribal
+
+T2b = HUMOUR TRIBAL RÉUSSI (punchline)
+Comme T2 mais avec une vraie punchline qui fonctionne. Vanne mémorable, jeu de mots, réplique percutante.
+Le commentaire fait rire au-delà du cercle d'initiés. Souvent fort en likes.
+Exemples : "C'était dur de prononcer espiègle non?? 😂😂", punchlines précises sur un détail de la vidéo
+
+T3a = HAINE FRONTALE
+Moquerie ou critique assumée du créateur. Le créateur sait qu'il a des haters.
+Indices : insultes directes, critique frontale du créateur lui-même (pas du contenu), méchanceté ouverte.
+Exemples : "il est nul", "j'en peux plus de ses vidéos", "le pire créateur de TikTok"
+
+T3b = SECOND DEGRÉ INVISIBLE (le jackpot)
+Faux compliment qui dit l'inverse de ce qu'il semble dire. Le créateur ne capte pas l'ironie car manque de second degré sur lui-même.
+Indices : ironie déguisée en admiration, "respect" suspect, compliment exagéré qui sonne faux.
+Exemples : "respect quand même il assume 👏", "Je l'ai forgé cet algorithme", "J'ai vu la version 1er degré sur TikTok 😂"
+ATTENTION : si le créateur est respecté et le compliment est sincère → T1, pas T3b.
+
+T4 = IDENTITÉ RITUALISÉE
+Phrase-code récurrente de la communauté. Se reconnaît au fait que
+PLUSIEURS personnes écrivent des variantes du même format dans les commentaires.
+Indices : mème-texte répété en variations ("X ans et Y m'a boycotté"),
+citations rituelles, expressions figées propres à cette communauté,
+marqueurs d'appartenance tribale.
+Exemples :
+  "26 ans et je suis sous côté" (variante du format "âge + situation drôle")
+  "Le genou il sent bon le genou" (phrase absurde récurrente de la communauté)
+  "On est tous pareils" (phrase d'appartenance)
+Différence avec T2 : T2 = vanne occasionnelle. T4 = format répété en chaîne par plusieurs personnes.
+Différence avec T2b : T2b = punchline unique bien construite. T4 = mème-texte communautaire.
+
+T5 = HAINE SUR PROVOCATEUR CONSCIENT
+Haine envers un créateur qui CULTIVE volontairement la haine comme carburant.
+La distinction avec T3a : ici le créateur exploite la haine comme stratégie de croissance.
+Si tu vois un commentaire de haine sur un créateur connu pour provoquer → T5.
+Si le créateur ne cherche pas la haine mais en reçoit → T3a.
+
+=== Règles de désambiguïsation ===
+
+T1 vs T3b : si le créateur est respecté (t_type_profile=T1) et le compliment paraît naturel → T1.
+            Si le créateur est en décalage (lifestyle, claim douteux, posture) et le compliment paraît exagéré → T3b.
+
+T2 vs T2b : T2b = punchline qui marche au-delà du cercle. T2 = vanne attendue, dans les codes.
+            Si tu lis le commentaire et tu souris → T2b. Si c'est juste un code communautaire → T2.
+
+T3a vs T5 : si t_type_profile du créateur = T5 (provocateur conscient) → T5.
+            Sinon → T3a.
+
+T4 vs T2 : T4 = phrase rituelle, identité tribale exprimée. T2 = vanne occasionnelle dans le code.
+
+Pas d'explication, pas de markdown."""
 _LOG = logging.getLogger("aitertainment.label_comments")
 _TOKEN_RE = re.compile(r"\S+")
 # Ordre long → court pour ne pas couper T2b / T3b en T2 / T3.
@@ -75,6 +122,23 @@ _REASONING_ANALYSIS_MARKERS = (
     "analyze the comment",
     "analyse du commentaire",
     "analyse le commentaire",
+)
+_TTYPE_LAST_RE = re.compile(r"\b(T5|T2b|T3b|T3a|T4|T2|T1)\b")
+_JSON_TTYPE_FIELD_RE = re.compile(
+    r'"t_type"\s*:\s*"(T5|T2b|T3b|T3a|T4|T2|T1)"',
+    re.IGNORECASE,
+)
+_PREFILL_ASSISTANT = '{"t_type": "'
+_PREFILL_COMPLETION_RE = re.compile(
+    r'^(T5|T2b|T3b|T3a|T4|T2|T1)"',
+    re.IGNORECASE,
+)
+_TTYPE_ENUM_LIST_RE = re.compile(
+    r"\((?:T1|T2|T2b|T3a|T3b|T4|T5)(?:\s*,\s*(?:T1|T2|T2b|T3a|T3b|T4|T5))+\)"
+)
+_REASONING_JSON_TTYPE_RE = re.compile(
+    r'\{"t_type"\s*:\s*"(T5|T2b|T3b|T3a|T4|T2|T1)"\}',
+    re.IGNORECASE,
 )
 
 
@@ -413,6 +477,11 @@ def _extract_t_type_from_reasoning(reasoning: str, comment_text: str = "") -> st
     """Extrait le label depuis le CoT sans confondre avec la liste des définitions."""
     if not reasoning or not str(reasoning).strip():
         return None
+
+    json_field = _extract_json_ttype_field(reasoning)
+    if json_field:
+        return json_field
+
     tail = _reasoning_analysis_tail(str(reasoning), comment_text)
 
     for line in reversed(tail.splitlines()):
@@ -493,11 +562,87 @@ def _extract_json_block(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _parse_label_fuse_response(content: str) -> tuple[str | None, str]:
-    """Extrait ``(t_type, video_context)`` depuis la réponse LLM."""
+def _extract_json_ttype_field(text: str) -> str | None:
+    """Extrait le champ JSON ``t_type`` (dernière occurrence = verdict final)."""
+    matches = _JSON_TTYPE_FIELD_RE.findall(str(text or ""))
+    if not matches:
+        return None
+    label = matches[-1]
+    return label if label in VALID_TTYPES else None
+
+
+def _looks_like_prefill_completion(content: str) -> bool:
+    """True si le texte ressemble à la suite du prefill ``{"t_type": "T2b"}``."""
+    stripped = str(content or "").strip()
+    if not stripped:
+        return False
+    if stripped.startswith("{"):
+        return False
+    return bool(_PREFILL_COMPLETION_RE.match(stripped))
+
+
+def _parse_prefill_t_type(content: str) -> str | None:
+    """Parse la complétion après prefill assistant ``{"t_type": "``."""
+    content = str(content or "").strip()
+    if not content or not _looks_like_prefill_completion(content):
+        return None
+    match = _PREFILL_COMPLETION_RE.match(content)
+    if match:
+        label = match.group(1)
+        return label if label in VALID_TTYPES else None
+    return _extract_json_ttype_field(content)
+
+
+def _strip_ttype_enumerations(text: str) -> str:
+    """Retire les listes (T1, T2, T2b, …, T5) qui polluent l'extraction."""
+    return _TTYPE_ENUM_LIST_RE.sub("", str(text or ""))
+
+
+def _extract_last_ttype_token(text: str) -> str | None:
+    """Dernière occurrence T-type hors listes d'énumération (T1, T2, …, T5)."""
+    raw = _strip_ttype_enumerations(str(text or ""))
+    if not raw.strip():
+        return None
+
+    matches = _TTYPE_LAST_RE.findall(raw)
+    if not matches:
+        return None
+    label = matches[-1]
+    return label if label in VALID_TTYPES else None
+
+
+def _build_label_user_prompt(
+    text: str,
+    niches: list[str],
+    creator_context: dict[str, Any] | None,
+    *,
+    caption: str = "",
+    transcript: str = "",
+    visual_description: str = "",
+) -> str:
+    base = _build_user_prompt(text, niches, creator_context)
+    lines = [
+        base,
+        "",
+        "=== Contenu de la vidéo (audio + visuel) ===",
+        f"Transcript audio: {_truncate_field(transcript, 800)}",
+        f"Description visuelle: {_truncate_field(visual_description, 600)}",
+        "",
+        'Retourne UNIQUEMENT {"t_type": "T2b"} (un seul label).',
+    ]
+    return "\n".join(lines)
+
+
+def _parse_label_response(content: str) -> str | None:
+    """Extrait le T-type depuis la réponse LLM."""
     content = (content or "").strip()
     if not content:
-        return None, ""
+        return None
+
+    if _looks_like_prefill_completion(content):
+        prefill = _parse_prefill_t_type(content)
+        if prefill:
+            return prefill
 
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", content, re.DOTALL | re.IGNORECASE)
     if fenced:
@@ -505,23 +650,107 @@ def _parse_label_fuse_response(content: str) -> tuple[str | None, str]:
 
     data = _extract_json_block(content)
     if not data:
-        ttype_m = re.search(r"\b(T1|T2b|T2|T3a|T3b|T4|T5)\b", content)
-        if ttype_m and ttype_m.group(1) in VALID_TTYPES:
-            return ttype_m.group(1), ""
-        return None, ""
+        return _extract_last_ttype_token(content)
 
     t_type_raw = data.get("t_type")
     t_type = str(t_type_raw or "").strip()
     if t_type not in VALID_TTYPES:
         t_type = _extract_t_type_from_content(str(t_type_raw or "")) or ""
-    video_context = str(data.get("video_context") or "").strip()
+        if not t_type:
+            t_type = _extract_last_ttype_token(content) or ""
     if t_type in VALID_TTYPES:
-        return t_type, video_context
+        return t_type
 
-    ttype_m = re.search(r"\b(T1|T2b|T2|T3a|T3b|T4|T5)\b", content)
-    if ttype_m and ttype_m.group(1) in VALID_TTYPES:
-        return ttype_m.group(1), ""
-    return None, ""
+    return _extract_last_ttype_token(content)
+
+
+def _label_llm_request(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+    model: str | None = None,
+    url: str | None = None,
+    comment_text: str = "",
+) -> str | None:
+    api_url = (url or LABEL_LLM_URL or "").strip().rstrip("/")
+    api_model = (model or LABEL_LLM_MODEL or "").strip()
+    if not api_url or not api_model:
+        _LOG.warning("label LLM : LABEL_LLM_URL ou LABEL_LLM_MODEL absent.")
+        return None
+
+    try:
+        resp = requests.post(
+            f"{api_url}/chat/completions",
+            json={
+                "model": api_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                    # Prefill : force Qwen3 à répondre en JSON direct (évite le CoT tronqué).
+                    {"role": "assistant", "content": _PREFILL_ASSISTANT},
+                ],
+                "max_tokens": 32,
+                "temperature": 0.1,
+            },
+            timeout=90,
+        )
+        resp.raise_for_status()
+        message = resp.json()["choices"][0]["message"]
+        content = str(message.get("content") or "").strip()
+        if content:
+            t_type = _parse_prefill_t_type(content)
+            if t_type is None:
+                t_type = _parse_label_response(_PREFILL_ASSISTANT + content)
+            if t_type:
+                return t_type
+
+        reasoning = str(message.get("reasoning_content") or "").strip()
+        if reasoning:
+            # Qwen3 a ignoré le prefill : chercher le dernier JSON verdict dans le CoT.
+            json_matches = _REASONING_JSON_TTYPE_RE.findall(reasoning)
+            if json_matches:
+                label = json_matches[-1]
+                if label in VALID_TTYPES:
+                    return label
+            t_type = _extract_t_type_from_reasoning(reasoning, comment_text)
+            if t_type:
+                return t_type
+
+        return None
+    except Exception as exc:
+        _LOG.warning("label LLM : appel échoué (%s).", exc)
+        return None
+
+
+def classify_comment_t_type(
+    text: str,
+    niches: list[str],
+    creator_context: dict[str, Any] | None,
+    *,
+    caption: str = "",
+    transcript: str = "",
+    visual_description: str = "",
+    model: str | None = None,
+    url: str | None = None,
+) -> str | None:
+    """Classification T-type via LLM uniquement."""
+    user_prompt = _build_label_user_prompt(
+        text,
+        niches,
+        creator_context,
+        caption=caption,
+        transcript=transcript,
+        visual_description=visual_description,
+    )
+    return _label_llm_request(
+        system_prompt=SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        max_tokens=LABEL_LLM_MAX_TOKENS,
+        model=model,
+        url=url,
+        comment_text=text,
+    )
 
 
 def label_and_fuse(
@@ -535,59 +764,18 @@ def label_and_fuse(
     model: str | None = None,
     url: str | None = None,
 ) -> tuple[str | None, str]:
-    """Labélise le commentaire et fusionne transcript + visuel en ``video_context``."""
-    ctx = creator_context or {}
-    user_prompt = f"""Commentaire à classifier : {text}
-
-Niches du contenu : {', '.join(niches) if niches else 'humour'}
-
-Profil créateur :
-- T-type dominant : {ctx.get('t_type_profile') or '(inconnu)'}
-- Axes : {ctx.get('named_axes', {})}
-
-Caption du reel : {caption[:300] if caption else '(vide)'}
-
-Transcript audio : {transcript[:1000] if transcript else '(non disponible)'}
-
-Description visuelle : {visual_description[:600] if visual_description else '(non disponible)'}
-
-Retourne le JSON."""
-
-    api_url = (url or LABEL_LLM_URL or "").strip().rstrip("/")
-    api_model = (model or LABEL_LLM_MODEL or "").strip()
-    if not api_url or not api_model:
-        _LOG.warning("label_and_fuse : LABEL_LLM_URL ou LABEL_LLM_MODEL absent.")
-        return None, ""
-
-    try:
-        resp = requests.post(
-            f"{api_url}/chat/completions",
-            json={
-                "model": api_model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "max_tokens": 2000,
-                "temperature": 0.2,
-            },
-            timeout=120,
-        )
-        resp.raise_for_status()
-        message = resp.json()["choices"][0]["message"]
-        content = str(message.get("content") or "").strip()
-        if not content:
-            content = str(message.get("reasoning_content") or "").strip()
-        t_type, video_context = _parse_label_fuse_response(content)
-        if t_type is None and content:
-            _LOG.warning(
-                "label_and_fuse : réponse illisible (extrait=%r).",
-                content.replace("\n", " ")[:120],
-            )
-        return t_type, video_context
-    except Exception as exc:
-        _LOG.warning("label_and_fuse : appel LLM échoué (%s).", exc)
-        return None, ""
+    """Rétro-compat : classification T-type LLM (pas de fusion video_context)."""
+    t_type = classify_comment_t_type(
+        text,
+        niches,
+        creator_context,
+        caption=caption,
+        transcript=transcript,
+        visual_description=visual_description,
+        model=model,
+        url=url,
+    )
+    return t_type, ""
 
 
 def build_training_entry(
@@ -596,7 +784,6 @@ def build_training_entry(
     creators: dict[str, dict[str, Any]],
     *,
     label_source: str = "llm",
-    video_context: str = "",
 ) -> dict[str, Any]:
     """Construit une entrée ``training_comments_viral.json`` depuis le brut."""
     username = str(raw_entry.get("username") or "").lstrip("@").strip()
@@ -621,7 +808,6 @@ def build_training_entry(
         "audio_id": raw_entry.get("audio_id", ""),
         "transcript": raw_entry.get("transcript", ""),
         "visual_description": raw_entry.get("visual_description", ""),
-        "video_context": video_context,
         "collected_at": raw_entry.get("collected_at", ""),
         "labelled_at": _utc_now_iso(),
         "llm_model": str(raw_entry.get("llm_model") or LABEL_LLM_MODEL),
@@ -673,6 +859,38 @@ def save_viral_comments(
     )
 
 
+def restore_viral_from_autobak_if_needed(
+    viral_path: Path | str | None = None,
+    *,
+    training_path: Path | str | None = None,
+) -> int:
+    """Si le pool viral est vide alors que training l'est aussi, restaure ``.autobak``."""
+    p = _resolve_path(Path(viral_path) if viral_path is not None else VIRAL_COMMENTS_PATH)
+    if load_viral_comments(p):
+        return 0
+    training_entries, _ = load_training_comments(training_path)
+    autobak = p.with_suffix(p.suffix + ".autobak")
+    if not autobak.exists():
+        return 0
+    backup = load_viral_comments(autobak)
+    if len(backup) < 50:
+        return 0
+    if training_entries:
+        _LOG.warning(
+            "Pool viral vide mais %d entrée(s) en training — restauration depuis %s.",
+            len(training_entries),
+            autobak.name,
+        )
+    else:
+        _LOG.warning(
+            "Pool viral vide — restauration auto depuis %s (%d entrée(s)).",
+            autobak.name,
+            len(backup),
+        )
+    save_viral_comments(backup, p, allow_shrink=True)
+    return len(backup)
+
+
 def purge_labeled_from_viral_pool(
     *,
     viral_path: Path | str | None = None,
@@ -680,12 +898,19 @@ def purge_labeled_from_viral_pool(
 ) -> tuple[int, int]:
     """Retire du pool viral les entrées déjà présentes dans le training.
 
-    Retourne ``(removed_count, remaining_count)``.
+    Retourne ``(removed_count, remaining_count)``. Refuse d'écrire un viral vide
+    si le training ne contient pas au moins autant d'entrées labellisées.
     """
-    viral_entries = load_viral_comments(viral_path)
-    _, labeled_keys = load_training_comments(training_path)
+    from scripts.instagram_browser import load_viral_comments_file
+
+    p = _resolve_path(Path(viral_path) if viral_path is not None else VIRAL_COMMENTS_PATH)
+    viral_entries, _ = load_viral_comments_file(p)
+    training_entries, labeled_keys = load_training_comments(training_path)
     if not labeled_keys:
         return 0, len(viral_entries)
+    if not viral_entries:
+        _LOG.warning("Purge ignorée : pool viral déjà vide sur disque.")
+        return 0, 0
 
     remaining: list[dict[str, Any]] = []
     for entry in viral_entries:
@@ -700,11 +925,18 @@ def purge_labeled_from_viral_pool(
 
     removed = len(viral_entries) - len(remaining)
     if removed:
+        if len(remaining) == 0 and len(training_entries) < len(viral_entries):
+            _LOG.error(
+                "Purge refusée : training=%d < viral=%d — le pool viral reste intact.",
+                len(training_entries),
+                len(viral_entries),
+            )
+            return 0, len(viral_entries)
         save_viral_comments(
             remaining,
             viral_path,
             allow_shrink=True,
-            allow_empty=True,
+            allow_empty=len(remaining) == 0 and len(training_entries) >= len(viral_entries),
         )
     return removed, len(remaining)
 
@@ -820,6 +1052,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Retire du pool viral les entrées déjà labellisées, sans appeler le LLM.",
     )
+    parser.add_argument(
+        "--save-every",
+        type=int,
+        default=25,
+        help="Checkpoint : sauvegarde training + purge viral tous les N succès (0 = fin uniquement).",
+    )
+    parser.add_argument(
+        "--purge-viral",
+        action="store_true",
+        help="En fin de run uniquement : retire du viral ce qui est en training.",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -852,6 +1095,12 @@ def main(argv: list[str] | None = None) -> int:
             viral_path,
         )
         return 0
+
+    restored = restore_viral_from_autobak_if_needed(
+        viral_path, training_path=training_path
+    )
+    if restored:
+        _LOG.info("Pool viral restauré : %d entrée(s) depuis .autobak.", restored)
 
     raw_entries = load_viral_comments(viral_path)
     training_entries, existing_keys = load_training_comments(training_path)
@@ -924,60 +1173,108 @@ def main(argv: list[str] | None = None) -> int:
     }
     added = 0
     failed = 0
+    since_last_save = 0
+    save_every = max(0, int(args.save_every or 0))
 
-    for raw_entry in pending:
-        text = str(raw_entry.get("text") or "")
-        niches = list(raw_entry.get("niches") or ["humour"])
-        username = str(raw_entry.get("username") or "").lstrip("@").strip()
-        username_key = username.lower()
+    interrupted = False
 
-        creator = creators.get(username_key, {})
-        creator_context = build_creator_context_for_label(
-            raw_entry,
-            creator,
-            vector_store.get(username_key),
+    def _checkpoint() -> None:
+        save_training_comments(list(training_by_key.values()), training_path)
+        _LOG.info(
+            "Checkpoint : %d en training (pool viral inchangé — reprise safe).",
+            len(training_by_key),
         )
 
-        t_type, video_context = label_and_fuse(
-            text,
-            niches,
-            creator_context,
-            caption=str(raw_entry.get("caption") or ""),
-            transcript=str(raw_entry.get("transcript") or ""),
-            visual_description=str(raw_entry.get("visual_description") or ""),
-        )
+    def _on_sigint(_signum: int, _frame: object) -> None:
+        nonlocal interrupted
+        interrupted = True
+        raise KeyboardInterrupt
 
-        if t_type is None:
-            _LOG.warning(
-                "@%s commentaire non classifié, skip — %s",
-                username,
-                _truncate_field(text, 80),
+    signal.signal(signal.SIGINT, _on_sigint)
+
+    try:
+        for raw_entry in pending:
+            text = str(raw_entry.get("text") or "")
+            niches = list(raw_entry.get("niches") or ["humour"])
+            username = str(raw_entry.get("username") or "").lstrip("@").strip()
+            username_key = username.lower()
+
+            creator = creators.get(username_key, {})
+            creator_context = build_creator_context_for_label(
+                raw_entry,
+                creator,
+                vector_store.get(username_key),
             )
-            failed += 1
-            continue
 
-        entry = build_training_entry(
-            raw_entry,
-            t_type,
-            creators,
-            label_source="llm",
-            video_context=video_context,
+            t_type = classify_comment_t_type(
+                text,
+                niches,
+                creator_context,
+                caption=str(raw_entry.get("caption") or ""),
+                transcript=str(raw_entry.get("transcript") or ""),
+                visual_description=str(raw_entry.get("visual_description") or ""),
+            )
+
+            if t_type is None:
+                _LOG.warning(
+                    "@%s commentaire non classifié, skip — %s",
+                    username,
+                    _truncate_field(text, 80),
+                )
+                failed += 1
+                continue
+
+            entry = build_training_entry(
+                raw_entry,
+                t_type,
+                creators,
+                label_source="llm",
+            )
+            key = dedup_key(str(entry["media_id"]), str(entry["text"]))
+            training_by_key[key] = entry
+            added += 1
+            since_last_save += 1
+            preview = text[:40]
+            _LOG.info("✓ [%s] (llm) %s...", t_type, preview)
+            if save_every > 0 and since_last_save >= save_every:
+                _checkpoint()
+                since_last_save = 0
+
+    except KeyboardInterrupt:
+        interrupted = True
+        _LOG.warning(
+            "Interruption (Ctrl+C) — sauvegarde training en cours, pool viral intact."
         )
-        key = dedup_key(str(entry["media_id"]), str(entry["text"]))
-        training_by_key[key] = entry
-        added += 1
-        preview = text[:40]
-        _LOG.info("✓ [%s] (llm) %s...", t_type, preview)
 
     save_training_comments(list(training_by_key.values()), training_path)
-    removed, remaining = purge_labeled_from_viral_pool(
-        viral_path=viral_path,
-        training_path=training_path,
-    )
     _sync_label_pipeline_to_database(training_by_key)
+
+    removed = remaining = 0
+    if interrupted:
+        _LOG.info(
+            "=== Interrompu : %d ajouté(s) cette session (%d échecs) → %s (total %d). "
+            "Relancez label_comments : les entrées déjà en training seront ignorées. ===",
+            added,
+            failed,
+            training_path,
+            len(training_by_key),
+        )
+        return 130
+
+    if args.purge_viral:
+        removed, remaining = purge_labeled_from_viral_pool(
+            viral_path=viral_path,
+            training_path=training_path,
+        )
+
     _LOG.info(
-        "=== Labélisation : %d nouveaux via LLM (%d échecs) → %s "
-        "(total %d) ; pool viral : %d retiré(s), %d restant(s) ===",
+        "=== Labélisation : %d nouveaux (%d échecs) → %s (total %d)"
+        + (
+            " ; pool viral : %d retiré(s), %d restant(s)"
+            if args.purge_viral
+            else " ; pool viral inchangé (utilisez --purge-viral pour nettoyer)"
+        )
+        + " ===",
         added,
         failed,
         training_path,

@@ -4,10 +4,12 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
+from config import ORDERED_T_TYPES
 from modules.classifier import (
     FORBIDDEN_GENERATOR_WORDS,
     ClassificationError,
     generate_comments,
+    generate_comments_per_category,
 )
 
 
@@ -44,11 +46,16 @@ class GenerateAlpacaFinetunedTest(unittest.TestCase):
         self.assertEqual(body["model"], "aitertainment-generator")
         self.assertIn("### Instruction:", body["prompt"])
         self.assertIn("T-type commentateur: T2b", body["prompt"])
+        self.assertIn("Longueur cible: court", body["prompt"])
         self.assertTrue(body["prompt"].endswith("### Response:\n"))
         opts = body["options"]
-        self.assertEqual(opts["repeat_penalty"], 1.15)
-        self.assertEqual(opts["num_predict"], 28)
-        self.assertEqual(opts["temperature"], 0.7)
+        self.assertEqual(opts["repeat_penalty"], 1.2)
+        self.assertEqual(opts["num_predict"], 24)
+        long_body = mock_post.call_args_list[1].kwargs["json_body"]
+        self.assertIn("Longueur cible: développé", long_body["prompt"])
+        self.assertEqual(long_body["options"]["num_predict"], 72)
+        self.assertEqual(opts["temperature"], 0.65)
+        self.assertEqual(long_body["options"]["temperature"], 0.5)
 
     @patch("modules.classifier.config.OLLAMA_GENERATOR_MODEL", "aitertainment-generator")
     @patch("modules.classifier._http_post")
@@ -103,6 +110,33 @@ class GenerateAlpacaFinetunedTest(unittest.TestCase):
     def test_missing_finetuned_model_raises(self) -> None:
         with self.assertRaises(ClassificationError):
             generate_comments({"type": "T2"}, [], niches=["humour"])
+
+
+class GeneratePerCategoryTest(unittest.TestCase):
+    @patch("modules.classifier.config.OLLAMA_GENERATOR_MODEL", "aitertainment-generator")
+    @patch("modules.classifier._http_post")
+    def test_one_comment_per_t_type(self, mock_post: MagicMock) -> None:
+        mock_post.side_effect = [
+            _ollama_json_response("admiration"),
+            _ollama_json_response("vanne"),
+            _ollama_json_response("punchline longue"),
+            _ollama_json_response("haine"),
+            _ollama_json_response("ironie"),
+            _ollama_json_response("mème"),
+            _ollama_json_response("ratio"),
+        ]
+        out = generate_comments_per_category(
+            niches=["humour"],
+            video_context={"caption": "test", "hashtags": ["humour"]},
+        )
+        self.assertEqual(set(out.keys()), set(ORDERED_T_TYPES))
+        self.assertEqual(out["T1"], "admiration")
+        self.assertEqual(mock_post.call_count, len(ORDERED_T_TYPES))
+        prompts = [
+            call.kwargs["json_body"]["prompt"] for call in mock_post.call_args_list
+        ]
+        for t_type, prompt in zip(ORDERED_T_TYPES, prompts):
+            self.assertIn(f"T-type commentateur: {t_type}", prompt)
 
 
 class ForbiddenWordsInfraTest(unittest.TestCase):

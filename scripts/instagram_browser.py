@@ -19,6 +19,7 @@ import requests
 from playwright.sync_api import BrowserContext, Page, Playwright, Response
 
 COOKIES_PATH = Path("data/instagram_cookies.json")
+_DEFAULT_SPA_WAIT_MS = 2500
 HEADLESS = True
 BASE_URL = "https://www.instagram.com"
 _VIEWPORT = {"width": 1920, "height": 1080}
@@ -302,11 +303,18 @@ def session_ok(context: BrowserContext) -> bool:
     return _session_ok(context)
 
 
-def open_reels_grid(page: Page, username: str, *, timeout_ms: int = _REQUEST_TIMEOUT_MS) -> bool:
+def open_reels_grid(
+    page: Page,
+    username: str,
+    *,
+    timeout_ms: int = _REQUEST_TIMEOUT_MS,
+    spa_wait_ms: int | None = None,
+) -> bool:
     """Ouvre ``/{username}/reels/`` (à réutiliser pour plusieurs reels)."""
     u = str(username or "").lstrip("@").strip()
     if not u:
         return False
+    wait_ms = _DEFAULT_SPA_WAIT_MS if spa_wait_ms is None else max(0, int(spa_wait_ms))
     page.set_viewport_size(_VIEWPORT)
     try:
         page.goto(
@@ -315,7 +323,7 @@ def open_reels_grid(page: Page, username: str, *, timeout_ms: int = _REQUEST_TIM
             wait_until="domcontentloaded",
         )
         page.wait_for_load_state("load")
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(wait_ms)
         blocked = _instagram_page_blocked(page)
         if blocked:
             log.warning("grille @%s/reels/ : page bloquée (%s).", u, blocked)
@@ -469,11 +477,21 @@ def save_viral_comments_file(
 
         if len(final) == 0 and not allow_empty:
             log.warning(
-                "Refus d'écrire %s vide (%d entrée(s) sur disque) — fichier inchangé.",
+                "Refus d'écrire %s vide (%d entrée(s) sur disque) — fichier inchangé. "
+                "Fermez l'onglet éditeur sur ce fichier (autosave = []). "
+                "Restaurez %s.autobak si besoin.",
+                p.name,
+                len(on_disk),
+                p.name,
+            )
+            return
+
+        if len(final) == 0 and allow_empty and len(on_disk) >= 50:
+            log.warning(
+                "Écriture %s vide autorisée explicitement (avant : %d entrée(s)).",
                 p.name,
                 len(on_disk),
             )
-            return
 
         if len(on_disk) >= 50:
             autobak = p.with_suffix(p.suffix + ".autobak")
@@ -639,7 +657,7 @@ def collect_viral_comments(
     panneau commentaires avec un scroll profond, ne retient que les commentaires
     dont ``like_count >= min_likes``.
     """
-    from modules.comment_quality import is_french_comment
+    from modules.comment_quality import is_french_comment, is_french_reel_caption
     from modules.creator_registry import build_creator_index, resolve_creator_fields
 
     log_cb = logger or log
@@ -1068,6 +1086,53 @@ def _advance_reels_feed(page: Page) -> None:
     page.wait_for_timeout(200)
 
 
+def should_boost_french_reel_on_feed(caption: str, *, french_only: bool = True) -> bool:
+    """Caption non vide et clairement FR → engagement long sur le fil (signal algo)."""
+    if not french_only:
+        return False
+    from modules.comment_quality import is_french_comment
+
+    cap = str(caption or "").strip()
+    if not cap:
+        return False
+    return is_french_comment(cap)
+
+
+def feed_watch_duration_s(
+    watch_min_s: float,
+    *,
+    watch_jitter_s: float = 5.0,
+    rng: random.Random | None = None,
+) -> float:
+    """Durée d'engagement fil (respecte ``watch_min_s``, pas de plancher artificiel)."""
+    base = max(0.0, float(watch_min_s))
+    jitter = min(float(watch_jitter_s), max(0.5, base * 0.25))
+    r = rng or random
+    return max(0.5, base + r.uniform(-jitter, jitter))
+
+
+def engage_feed_reel_for_algo(
+    page: Page,
+    watch_min_s: float,
+    *,
+    watch_jitter_s: float = 5.0,
+    logger: logging.Logger | None = None,
+) -> float:
+    """Reste sur le reel affiché (lecteur focus) pour influencer le fil."""
+    log_cb = logger or log
+    duration = feed_watch_duration_s(watch_min_s, watch_jitter_s=watch_jitter_s)
+    _focus_reels_feed_player(page)
+    log_cb.info("Fil Reels : engagement algo %.1fs sur le reel affiché.", duration)
+    deadline = time.time() + duration
+    while time.time() < deadline:
+        remaining = deadline - time.time()
+        chunk_ms = min(2500, max(200, int(remaining * 1000)))
+        page.wait_for_timeout(chunk_ms)
+        if random.random() < 0.2:
+            _focus_reels_feed_player(page)
+    return duration
+
+
 def _discover_reel_candidates_on_feed_page(
     page: Page,
     metrics_by_pk: dict[str, dict[str, Any]],
@@ -1226,7 +1291,7 @@ def collect_viral_comments_from_feed(
     *,
     min_likes: int = 1000,
     max_reels: int = 30,
-    scroll_steps: int = 40,
+    scroll_steps: int = 80,
     scroll_wait_ms: int = 800,
     scroll_rounds: int = 8,
     panel_scroll_wait_ms: int = 400,
@@ -1235,14 +1300,16 @@ def collect_viral_comments_from_feed(
     between_reels_min_s: float = 90,
     between_reels_max_s: float = 180,
     french_only: bool = True,
+    fr_reel_watch_s: float = 60.0,
+    feed_en_skip_ms: int = 600,
     fresh_feed: bool = False,
     creator_index: dict[str, dict[str, Any]] | None = None,
     skip_transcript: bool = False,
     skip_visual: bool = False,
     logger: logging.Logger | None = None,
 ) -> dict[str, int]:
-    """Découverte passive sur /reels/, puis scrape commentaires via grille profil."""
-    from modules.comment_quality import is_french_comment
+    """Découverte passive sur /reels/, puis scrape commentaires via grille ``/@user/reels/``."""
+    from modules.comment_quality import is_french_comment, is_french_reel_caption
     from modules.creator_registry import build_creator_index, resolve_creator_fields
 
     log_cb = logger or log
@@ -1252,8 +1319,11 @@ def collect_viral_comments_from_feed(
         "reels_visited": 0,
         "kept": 0,
         "skipped_english": 0,
+        "skipped_english_reel": 0,
         "skipped_no_creator": 0,
         "skipped_low_engagement": 0,
+        "french_reels_watched": 0,
+        "feed_watch_s": 0,
     }
     idx = creator_index if creator_index is not None else build_creator_index()
     out_path = Path(output_path) if output_path is not None else VIRAL_COMMENTS_PATH
@@ -1265,8 +1335,8 @@ def collect_viral_comments_from_feed(
     metrics_by_pk, metrics_by_code = _attach_graphql_metrics_listener(feed_page)
     candidates: dict[str, dict[str, Any]] = {}
     stagnant = 0
-    pool_target = max(max_reels * 2, max_reels)
-    max_steps = max(max_reels * 3, scroll_steps)
+    pool_target = max(max_reels * 3, scroll_steps)
+    max_steps = max(1, int(scroll_steps))
 
     try:
         if fresh_feed:
@@ -1283,32 +1353,55 @@ def collect_viral_comments_from_feed(
         feed_page.mouse.click(_VIEWPORT["width"] // 2, _VIEWPORT["height"] // 2)
         feed_page.wait_for_timeout(400)
 
+        log_cb.info(
+            "Fil Reels phase 1 : %d scrolls (engagement FR=%ds, skip EN=%dms).",
+            max_steps,
+            int(fr_reel_watch_s),
+            feed_en_skip_ms,
+        )
         for step_idx in range(max_steps):
-            if len(candidates) >= pool_target:
-                break
-
             code = _extract_reel_code_from_page(feed_page)
-            if not code or not _is_valid_reel_code(code) or code in candidates:
+            if not code or not _is_valid_reel_code(code):
                 stagnant += 1
-                if stagnant >= 8:
+                if stagnant >= 10:
                     log_cb.info("Fil Reels : scroll stagnant après %d step(s).", step_idx + 1)
                     break
                 _advance_reels_feed(feed_page)
-                feed_page.wait_for_timeout(scroll_wait_ms)
+                feed_page.wait_for_timeout(feed_en_skip_ms)
                 continue
 
-            stagnant = 0
-            bucket = _metrics_bucket_for_dom_media_id(
-                code, metrics_by_pk, metrics_by_code
-            )
-            metrics = _metrics_for_dom_media_id(code, metrics_by_pk, metrics_by_code)
-            candidates[code] = {
-                "media_id": code,
-                "username": _owner_username_from_bucket(bucket),
-                "comment_count": int(metrics.get("comment_count") or 0),
-                "view_count": int(metrics.get("view_count") or 0),
-                "caption": str(bucket.get("caption") or ""),
-            }
+            if code not in candidates and len(candidates) < pool_target:
+                stagnant = 0
+                bucket = _metrics_bucket_for_dom_media_id(
+                    code, metrics_by_pk, metrics_by_code
+                )
+                metrics = _metrics_for_dom_media_id(
+                    code, metrics_by_pk, metrics_by_code
+                )
+                caption = str(bucket.get("caption") or "")
+                candidates[code] = {
+                    "media_id": code,
+                    "username": _owner_username_from_bucket(bucket),
+                    "comment_count": int(metrics.get("comment_count") or 0),
+                    "view_count": int(metrics.get("view_count") or 0),
+                    "caption": caption,
+                }
+            else:
+                bucket = _metrics_bucket_for_dom_media_id(
+                    code, metrics_by_pk, metrics_by_code
+                )
+                caption = str(bucket.get("caption") or "")
+
+            if should_boost_french_reel_on_feed(caption, french_only=french_only):
+                stats["french_reels_watched"] += 1
+                watched = engage_feed_reel_for_algo(
+                    feed_page,
+                    fr_reel_watch_s,
+                    logger=log_cb,
+                )
+                stats["feed_watch_s"] += int(watched)
+            else:
+                feed_page.wait_for_timeout(feed_en_skip_ms)
 
             _advance_reels_feed(feed_page)
             feed_page.wait_for_timeout(scroll_wait_ms)
@@ -1316,31 +1409,50 @@ def collect_viral_comments_from_feed(
     finally:
         feed_page.close()
 
+    log_cb.info(
+        "Fil Reels phase 1 terminée : %d candidat(s), %d reel(s) FR regardé(s) (~%ds).",
+        len(candidates),
+        stats["french_reels_watched"],
+        stats["feed_watch_s"],
+    )
+
     # —— Phase 2 : filtre local ——
-    to_scrape = [
-        c
-        for c in candidates.values()
-        if c.get("username")
-        and len(str(c["username"])) >= 4
-        and str(c["username"]).lower() not in _IG_RESERVED_USERNAMES
-        and int(c.get("comment_count") or 0) >= MIN_COMMENT_COUNT_TO_SCRAPE
-    ]
+    to_scrape: list[dict[str, Any]] = []
+    for c in candidates.values():
+        if not c.get("username") or len(str(c["username"])) < 4:
+            continue
+        if str(c["username"]).lower() in _IG_RESERVED_USERNAMES:
+            continue
+        if int(c.get("comment_count") or 0) < MIN_COMMENT_COUNT_TO_SCRAPE:
+            continue
+        if french_only and not is_french_reel_caption(str(c.get("caption") or "")):
+            stats["skipped_english_reel"] += 1
+            log_cb.debug(
+                "Fil Reels %s @%s : caption non-FR — skip reel (%s).",
+                c.get("media_id"),
+                c.get("username"),
+                str(c.get("caption") or "")[:80],
+            )
+            continue
+        to_scrape.append(c)
     to_scrape.sort(key=lambda c: int(c.get("comment_count") or 0), reverse=True)
     to_scrape = to_scrape[:max_reels]
     log_cb.info(
-        "Phase 1 : %d découverts → Phase 2 : %d retenus (comment_count >= %d).",
+        "Phase 1 : %d découverts → Phase 2 : %d retenus "
+        "(comment_count >= %d, reels caption EN skippés=%d).",
         len(candidates),
         len(to_scrape),
         MIN_COMMENT_COUNT_TO_SCRAPE,
+        stats["skipped_english_reel"],
     )
 
     if not to_scrape:
         log_cb.info("Fil Reels : aucun reel à scraper après filtrage.")
         return stats
 
-    # —— Phase 3 : scrape via grille profil ——
-    profile_page = context.new_page()
-    profile_page.set_viewport_size(_VIEWPORT)
+    # —— Phase 3 : scrape via grille /@user/reels/ (pas /reel/{id}/ direct) ——
+    grid_page = context.new_page()
+    grid_page.set_viewport_size(_VIEWPORT)
 
     try:
         for visit_idx, reel in enumerate(to_scrape, start=1):
@@ -1350,53 +1462,56 @@ def collect_viral_comments_from_feed(
             caption = str(reel.get("caption") or "")
             stats["reels_visited"] += 1
             creator_meta = resolve_creator_fields(username, index=idx)
+            grid_ok = False
 
             try:
-                profile_page.goto(
-                    f"{BASE_URL}/{username}/",
-                    wait_until="domcontentloaded",
-                    timeout=_PROFILE_GOTO_TIMEOUT_MS,
-                )
-            except Exception:
-                log_cb.warning("Profil @%s : timeout goto — skip.", username)
-                if visit_idx < len(to_scrape):
-                    polite_sleep(min_s=between_reels_min_s, max_s=between_reels_max_s)
-                continue
-
-            try:
-                profile_page.wait_for_load_state("load")
-                profile_page.wait_for_timeout(2500)
-
-                link = profile_page.locator(f'a[href*="/reel/{media_id}/"], a[href*="/p/{media_id}/"]')
-                if link.count() == 0:
-                    profile_page.mouse.wheel(0, 2000)
-                    profile_page.wait_for_timeout(1500)
-                    link = profile_page.locator(
-                        f'a[href*="/reel/{media_id}/"], a[href*="/p/{media_id}/"]'
-                    )
-                if link.count() == 0:
+                grid_ok = open_reels_grid(grid_page, username)
+                if not grid_ok:
                     log_cb.warning(
-                        "reel %s introuvable dans grille @%s — skip.",
+                        "Fil Reels @%s : grille /reels/ inaccessible — skip reel %s.",
+                        username,
+                        media_id,
+                    )
+                    stats["skipped_no_creator"] += 1
+                    continue
+
+                loaded = navigate_to_reel_page(
+                    grid_page,
+                    media_id,
+                    username,
+                    reels_grid_loaded=True,
+                )
+                if not loaded:
+                    log_cb.warning(
+                        "Fil Reels %s introuvable dans grille @%s/reels/ — skip.",
                         media_id,
                         username,
                     )
                     stats["skipped_no_creator"] += 1
                     continue
 
-                link.first.click(timeout=8000)
-                profile_page.wait_for_load_state("load")
-                profile_page.wait_for_timeout(2500)
+                clicked = click_reel_comment_button(grid_page)
+                if not clicked:
+                    log_cb.warning(
+                        "Fil Reels %s @%s : bouton commentaire absent.",
+                        media_id,
+                        username,
+                    )
+                    if grid_ok:
+                        return_to_reels_grid(grid_page, username)
+                    continue
 
+                grid_page.wait_for_timeout(2000)
                 panel_text = extract_reel_comments_panel_text(
-                    profile_page,
+                    grid_page,
                     scroll_rounds=scroll_rounds,
                     scroll_wait_ms=panel_scroll_wait_ms,
                 )
                 if len(str(panel_text or "").strip()) < 40:
-                    click_reel_comment_button(profile_page)
-                    profile_page.wait_for_timeout(1500)
+                    click_reel_comment_button(grid_page)
+                    grid_page.wait_for_timeout(1500)
                     panel_text = extract_reel_comments_panel_text(
-                        profile_page,
+                        grid_page,
                         scroll_rounds=scroll_rounds,
                         scroll_wait_ms=panel_scroll_wait_ms,
                     )
@@ -1508,16 +1623,16 @@ def collect_viral_comments_from_feed(
                     stats["collected"],
                 )
 
-                profile_page.keyboard.press("Escape")
-                profile_page.wait_for_timeout(500)
             except Exception as e:
-                log_cb.warning("Profil @%s reel %s : erreur (%s).", username, media_id, e)
-                continue
+                log_cb.warning("Fil Reels @%s reel %s : erreur (%s).", username, media_id, e)
+            finally:
+                if grid_ok:
+                    return_to_reels_grid(grid_page, username)
 
             if visit_idx < len(to_scrape):
                 polite_sleep(min_s=between_reels_min_s, max_s=between_reels_max_s)
     finally:
-        profile_page.close()
+        grid_page.close()
 
     if stats["collected"] and new_since_save == 0:
         save_viral_comments_file(entries, out_path)
@@ -2339,7 +2454,14 @@ def _attach_graphql_metrics_listener(
         _walk_graphql_metrics(data, metrics_by_pk, metrics_by_code)
         _ingest_metrics_from_graphql_text(json.dumps(data), metrics_by_pk, metrics_by_code)
 
+    previous = getattr(page, _GRAPHQL_LISTENER_ATTR, None)
+    if previous is not None:
+        try:
+            page.remove_listener("response", previous)
+        except Exception:
+            pass
     page.on("response", on_response)
+    setattr(page, _GRAPHQL_LISTENER_ATTR, on_response)
     return metrics_by_pk, metrics_by_code
 
 
@@ -2492,6 +2614,26 @@ def extract_stats_from_screenshot(screenshot_path: Path | str) -> dict[str, Any]
     return out
 
 
+_GRAPHQL_LISTENER_ATTR = "_ait_graphql_response_handler"
+
+
+def load_instagram_cookies(path: Path | str | None = None) -> list[dict[str, Any]]:
+    """Charge et normalise les cookies Instagram depuis ``path`` (défaut : ``COOKIES_PATH``)."""
+    p = Path(path) if path is not None else COOKIES_PATH
+    if not p.is_file():
+        raise FileNotFoundError(f"Fichier cookies introuvable : {p.resolve()}")
+    return _normalize_playwright_cookies(json.loads(p.read_text(encoding="utf-8")))
+
+
+def save_instagram_cookies(context: BrowserContext, path: Path | str) -> None:
+    """Persiste les cookies Playwright au format ``{"cookies": [...]}``."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"cookies": context.cookies()}
+    p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    log.info("Cookies Instagram sauvegardés → %s", p.resolve())
+
+
 def _normalize_playwright_cookies(raw: Any) -> list[dict[str, Any]]:
     if isinstance(raw, dict) and "cookies" in raw:
         raw = raw["cookies"]
@@ -2512,6 +2654,8 @@ def _normalize_playwright_cookies(raw: Any) -> list[dict[str, Any]]:
             "path": str(c.get("path") or "/"),
         }
         exp = c.get("expires")
+        if exp is None:
+            exp = c.get("expirationDate")
         if exp is not None and exp != 0 and exp != -1:
             try:
                 entry["expires"] = int(float(exp))
@@ -2536,14 +2680,13 @@ def _normalize_playwright_cookies(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
-def get_browser_context(playwright: Playwright) -> BrowserContext:
-    """Lance Chromium, injecte les cookies Instagram depuis ``COOKIES_PATH``."""
-    if not COOKIES_PATH.is_file():
-        raise FileNotFoundError(f"Fichier cookies introuvable : {COOKIES_PATH.resolve()}")
-
-    cookies = _normalize_playwright_cookies(
-        json.loads(COOKIES_PATH.read_text(encoding="utf-8"))
-    )
+def get_browser_context(
+    playwright: Playwright,
+    *,
+    cookies_path: Path | str | None = None,
+) -> BrowserContext:
+    """Lance Chromium, injecte les cookies Instagram depuis ``cookies_path``."""
+    cookies = load_instagram_cookies(cookies_path)
     browser = playwright.chromium.launch(headless=HEADLESS)
     context = browser.new_context(
         viewport=_VIEWPORT,
@@ -2552,6 +2695,141 @@ def get_browser_context(playwright: Playwright) -> BrowserContext:
     if cookies:
         context.add_cookies(cookies)
     return context
+
+
+def _dismiss_post_login_dialogs(page: Page) -> None:
+    """Ferme les popups « enregistrer infos » / notifications après login."""
+    for label in (
+        "Plus tard",
+        "Not Now",
+        "Pas maintenant",
+        "Not now",
+        "Plus tard",
+    ):
+        try:
+            btn = page.get_by_role("button", name=label)
+            if btn.count() > 0 and btn.first.is_visible(timeout=800):
+                btn.first.click(timeout=2_000)
+                page.wait_for_timeout(600)
+        except Exception:
+            pass
+
+
+def _fill_instagram_login_form(page: Page, username: str, password: str) -> None:
+    page.goto(
+        f"{BASE_URL}/accounts/login/",
+        timeout=_REQUEST_TIMEOUT_MS,
+        wait_until="domcontentloaded",
+    )
+    page.wait_for_timeout(1200)
+    page.locator('input[name="username"]').first.fill(username, timeout=10_000)
+    page.locator('input[name="password"]').first.fill(password, timeout=10_000)
+    page.locator('button[type="submit"]').first.click(timeout=10_000)
+    page.wait_for_load_state("load", timeout=30_000)
+
+
+def login_instagram_context(
+    playwright: Playwright,
+    username: str,
+    password: str,
+    *,
+    save_cookies_path: Path | str | None = None,
+    headless: bool | None = None,
+) -> BrowserContext:
+    """Connexion web Instagram (headless) ; échoue si 2FA/challenge requis."""
+    u = str(username or "").strip()
+    pwd = str(password or "")
+    if not u or not pwd:
+        raise ValueError("username et password requis pour login_instagram_context")
+
+    launch_headless = HEADLESS if headless is None else headless
+    browser = playwright.chromium.launch(headless=launch_headless)
+    context = browser.new_context(viewport=_VIEWPORT, locale="fr-FR")
+    page = context.new_page()
+    try:
+        _fill_instagram_login_form(page, u, pwd)
+        page.wait_for_timeout(2500)
+        _dismiss_post_login_dialogs(page)
+
+        if not _session_ok(context):
+            raise RuntimeError(
+                f"Login Instagram échoué pour @{u} — 2FA/challenge probable. "
+                "Lancer : python watcher.py --login-ig2"
+            )
+        log.info("Login Instagram OK pour @%s", u)
+        if save_cookies_path:
+            save_instagram_cookies(context, save_cookies_path)
+    finally:
+        page.close()
+    return context
+
+
+def login_instagram_interactive(
+    playwright: Playwright,
+    username: str,
+    password: str,
+    *,
+    save_cookies_path: Path | str,
+    wait_after_submit_s: float = 300,
+) -> BrowserContext:
+    """Connexion avec navigateur visible : l'utilisateur complète 2FA/challenge à la main."""
+    u = str(username or "").strip()
+    pwd = str(password or "")
+    if not u or not pwd:
+        raise ValueError("username et password requis pour login_instagram_interactive")
+
+    browser = playwright.chromium.launch(headless=False)
+    context = browser.new_context(viewport=_VIEWPORT, locale="fr-FR")
+    page = context.new_page()
+    try:
+        log.info(
+            "Ouverture navigateur pour @%s — compléter 2FA/challenge si demandé "
+            "(timeout %ds).",
+            u,
+            int(wait_after_submit_s),
+        )
+        _fill_instagram_login_form(page, u, pwd)
+        deadline = time.time() + wait_after_submit_s
+        while time.time() < deadline:
+            _dismiss_post_login_dialogs(page)
+            if _session_ok(context):
+                save_instagram_cookies(context, save_cookies_path)
+                log.info("Session @%s OK — cookies sauvegardés.", u)
+                return context
+            page.wait_for_timeout(2_000)
+
+        raise TimeoutError(
+            f"Login interactif expiré pour @{u} après {int(wait_after_submit_s)}s."
+        )
+    finally:
+        page.close()
+
+
+def ensure_watcher_browser_context(playwright: Playwright, *, slot: int) -> BrowserContext:
+    """Contexte IG pour le watcher : slot 0 = cookies principaux, slot 1 = 2e compte."""
+    import config
+
+    if slot == 0:
+        return get_browser_context(playwright, cookies_path=COOKIES_PATH)
+
+    cookies_path = Path(config.WATCHER_IG2_COOKIES_PATH)
+    if not cookies_path.is_file():
+        raise FileNotFoundError(
+            f"Cookies 2e compte absents ({cookies_path.resolve()}). "
+            "Lancer : python watcher.py --login-ig2"
+        )
+
+    context = get_browser_context(playwright, cookies_path=cookies_path)
+    if session_ok(context):
+        return context
+
+    br = context.browser
+    if br:
+        br.close()
+    raise RuntimeError(
+        f"Session 2e compte expirée ({cookies_path}). "
+        "Relancer : python watcher.py --login-ig2"
+    )
 
 
 def _session_ok(context: BrowserContext) -> bool:
@@ -2996,27 +3274,27 @@ def get_reel_page_metadata(media_id: str, context: BrowserContext) -> dict[str, 
     }
 
 
-def get_recent_reels(
-    username: str, context: BrowserContext, max_reels: int = 5
+def get_recent_reels_on_page(
+    page: Page,
+    username: str,
+    max_reels: int = 5,
+    *,
+    spa_wait_ms: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Reels récents : media_ids (DOM) + métriques (interception GraphQL).
+    """Reels récents en réutilisant une page Playwright (pool watcher parallèle).
 
-    Les captions manquantes ne sont pas récupérées ici (pas de visite
-    /reel/{id}/ — trop lent pour le scoring discovery). Utiliser
-    ``get_reel_caption()`` depuis l'embedder (1x/semaine).
+    Utilise ``open_reels_grid`` (détection login/privé + délai SPA) puis
+    interception GraphQL / grille DOM — même logique que ``get_recent_reels``.
     """
-    page = context.new_page()
     out: list[dict[str, Any]] = []
+    u = str(username or "").lstrip("@").strip()
+    if not u:
+        return out
     try:
         metrics_by_pk, metrics_by_code = _attach_graphql_metrics_listener(page)
 
-        page.goto(
-            f"{BASE_URL}/{username}/reels/",
-            timeout=_REQUEST_TIMEOUT_MS,
-            wait_until="domcontentloaded",
-        )
-        page.set_viewport_size(_VIEWPORT)
-        page.wait_for_load_state("load")
+        if not open_reels_grid(page, u, spa_wait_ms=spa_wait_ms):
+            return out
 
         deadline = time.time() + 5
         while time.time() < deadline:
@@ -3032,10 +3310,17 @@ def get_recent_reels(
         if not grid_rows and metrics_by_code:
             log.info(
                 "@%s : grille DOM vide — repli GraphQL (%d code(s)).",
-                username,
+                u,
                 len(metrics_by_code),
             )
             grid_rows = _grid_rows_from_graphql_codes(metrics_by_code, max_reels)
+
+        if not grid_rows:
+            log.warning(
+                "@%s : aucun reel dans la grille ni GraphQL (compte vide ou layout IG).",
+                u,
+            )
+            return out
 
         for row in grid_rows:
             media_id = row["media_id"]
@@ -3061,12 +3346,33 @@ def get_recent_reels(
                 }
             )
         # caption vide : pas de get_reel_caption() ici (réservé à l'embedder).
-    except Exception:
-        return []
-    finally:
-        page.close()
+    except Exception as e:
+        log.warning("get_recent_reels_on_page @%s : %s", u, e)
+        return out
 
     return out
+
+
+def get_recent_reels(
+    username: str,
+    context: BrowserContext,
+    max_reels: int = 5,
+    *,
+    spa_wait_ms: int | None = None,
+) -> list[dict[str, Any]]:
+    """Reels récents : media_ids (DOM) + métriques (interception GraphQL).
+
+    Les captions manquantes ne sont pas récupérées ici (pas de visite
+    /reel/{id}/ — trop lent pour le scoring discovery). Utiliser
+    ``get_reel_caption()`` depuis l'embedder (1x/semaine).
+    """
+    page = context.new_page()
+    try:
+        return get_recent_reels_on_page(
+            page, username, max_reels=max_reels, spa_wait_ms=spa_wait_ms
+        )
+    finally:
+        page.close()
 
 
 def get_suggested_accounts(

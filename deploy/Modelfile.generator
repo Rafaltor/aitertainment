@@ -6,10 +6,10 @@
 
 FROM ../models/aitertainment-generator-q4km.gguf
 
-PARAMETER temperature 0.7
-PARAMETER top_p 0.9
-PARAMETER num_predict 28
-PARAMETER repeat_penalty 1.15
+PARAMETER temperature 0.6
+PARAMETER top_p 0.85
+PARAMETER num_predict 24
+PARAMETER repeat_penalty 1.2
 PARAMETER stop "### Instruction:"
 PARAMETER stop "### Input:"
 PARAMETER stop "\n\n"
@@ -24,4 +24,4 @@ TEMPLATE """### Instruction:
 ### Response:
 """
 
-SYSTEM """Tu es un utilisateur Instagram. Écris UN commentaire court (3 à 5 mots max). Pas d'emoji. Pas de @mention. Une seule phrase complète."""
+SYSTEM """Tu es un utilisateur Instagram. Écris UN commentaire en français. Pas d'emoji. Pas de @mention. Respecte la longueur cible dans l'Input : court (3 à 10 mots) ou développé (11 à 40 mots, 1 à 2 phrases max). Reste ancré sur la Caption et le contexte vidéo — pas de digression."""

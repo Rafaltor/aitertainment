@@ -30,10 +30,12 @@ def setup_watcher_logger() -> logging.Logger:
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     fh = logging.FileHandler(_LOG_PATH, encoding="utf-8")
     fh.setFormatter(fmt)
-    sh = logging.StreamHandler(sys.stdout)
-    sh.setFormatter(fmt)
     log.addHandler(fh)
-    log.addHandler(sh)
+    # Console seulement en interactif — évite « suspended (tty output) » avec nohup/SSH.
+    if sys.stdout.isatty():
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setFormatter(fmt)
+        log.addHandler(sh)
     log.propagate = False
     _log_initialized = True
     return log

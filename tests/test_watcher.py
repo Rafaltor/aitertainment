@@ -8,18 +8,26 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
+from config import ORDERED_T_TYPES
 from watcher import (
     DAY_INTERVAL_S,
     MAX_ACCOUNTS_PAUSE_S,
     NEW_POST_VIEW_THRESHOLD,
     NIGHT_INTERVAL_S,
     PRIME_INTERVAL_S,
+    _dual_account_enabled,
+    _split_creator_batches,
+    _watcher_eligible,
     check_new_post,
     get_poll_interval,
     run_watcher,
 )
+
+
+def _mock_comments_by_type() -> dict[str, str]:
+    return {t: f"c-{t}" for t in ORDERED_T_TYPES}
 
 
 def _reel(
@@ -71,7 +79,9 @@ class CheckNewPostTest(unittest.TestCase):
         self.assertEqual(out["bootstrap"], False)
         self.assertIn("street", out["hashtags"])
         self.assertEqual(out["audio_id"], "music_xyz")
-        mock_reels.assert_called_once_with("someone", self.context, max_reels=4)
+        mock_reels.assert_called_once_with(
+            "someone", self.context, max_reels=4, spa_wait_ms=ANY
+        )
 
     @patch("watcher.get_recent_reels")
     def test_same_post_returns_none(self, mock_reels: MagicMock) -> None:
@@ -119,8 +129,8 @@ class CheckNewPostTest(unittest.TestCase):
         with self.assertLogs("aitertainment", level="INFO") as logs:
             self.assertIsNone(check_new_post(creator, self.context))
         self.assertEqual(mock_reels.call_count, 2)
-        mock_reels.assert_any_call("u", self.context, max_reels=4)
-        mock_reels.assert_any_call("u", self.context, max_reels=8)
+        mock_reels.assert_any_call("u", self.context, max_reels=4, spa_wait_ms=ANY)
+        mock_reels.assert_any_call("u", self.context, max_reels=8, spa_wait_ms=ANY)
         self.assertTrue(
             any("aucun reel non épinglé trouvé" in msg for msg in logs.output)
         )
@@ -138,11 +148,22 @@ class CheckNewPostTest(unittest.TestCase):
         self.assertEqual(out["video_id"], "fresh")
         self.assertEqual(mock_reels.call_count, 2)
 
+    @patch("watcher.VIEW_FILTER_ENABLED", True)
     @patch("watcher.get_recent_reels")
     def test_high_views_returns_none(self, mock_reels: MagicMock) -> None:
         mock_reels.return_value = [_reel("big", NEW_POST_VIEW_THRESHOLD + 1)]
         creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
         self.assertIsNone(check_new_post(creator, self.context))
+
+    @patch("watcher.VIEW_FILTER_ENABLED", False)
+    @patch("watcher.get_recent_reels")
+    def test_high_views_alerts_when_filter_disabled(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [_reel("big", NEW_POST_VIEW_THRESHOLD + 1)]
+        creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out["video_id"], "big")
 
     @patch("watcher.get_recent_reels")
     def test_skips_carousel_zero_views(self, mock_reels: MagicMock) -> None:
@@ -163,6 +184,22 @@ class CheckNewPostTest(unittest.TestCase):
         ]
         creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
         self.assertIsNone(check_new_post(creator, self.context))
+
+    @patch("watcher.get_recent_reels")
+    def test_uses_next_reel_when_head_owned_by_collab(self, mock_reels: MagicMock) -> None:
+        mock_reels.return_value = [
+            _reel("collab", 400, product_type="clips", owner_username="le.corbz"),
+            _reel("own", 300, product_type="clips", owner_username="bisou.boge"),
+        ]
+        creator = {
+            "username": "bisou.boge",
+            "platform": "instagram",
+            "last_post_id": "old",
+        }
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out["video_id"], "own")
 
     @patch("watcher.get_recent_reels")
     def test_skips_non_clips_product_type(self, mock_reels: MagicMock) -> None:
@@ -300,10 +337,12 @@ class RunWatcherRealCycleTest(unittest.TestCase):
             encoding="utf-8",
         )
 
+    @patch("watcher._dual_account_enabled", return_value=False)
     @patch("watcher._describe_reel_visually", return_value="")
     @patch("watcher._sync_post_metadata_from_reel_page", return_value=True)
     @patch("watcher._transcribe_reel", return_value=("", None))
     @patch("watcher.get_browser_context")
+    @patch("watcher.session_ok", return_value=True)
     @patch("watcher.sync_playwright")
     @patch("watcher.notify_new_post")
     @patch("watcher._generate_for_post")
@@ -317,9 +356,11 @@ class RunWatcherRealCycleTest(unittest.TestCase):
         mock_notify: MagicMock,
         mock_pw: MagicMock,
         mock_ctx: MagicMock,
+        mock_session: MagicMock,
         mock_transcribe: MagicMock,
         mock_sync: MagicMock,
         mock_describe: MagicMock,
+        _mock_dual: MagicMock,
     ) -> None:
         mock_pw.return_value.start.return_value = MagicMock()
         mock_ctx.return_value = MagicMock()
@@ -332,7 +373,7 @@ class RunWatcherRealCycleTest(unittest.TestCase):
             "posted_at": datetime(2026, 5, 7, 17, 0, tzinfo=timezone.utc),
             "bootstrap": False,
         }
-        mock_gen.return_value = ["c1", "c2", "c3"]
+        mock_gen.return_value = _mock_comments_by_type()
         mock_notify.return_value = True
 
         run_watcher(watchlist_path=self.wl_path, mock=False, max_cycles=1)
@@ -344,7 +385,9 @@ class RunWatcherRealCycleTest(unittest.TestCase):
         on_disk = json.loads(self.wl_path.read_text(encoding="utf-8"))
         self.assertEqual(on_disk["creators"][0]["last_post_id"], "fresh_post_id")
 
+    @patch("watcher._dual_account_enabled", return_value=False)
     @patch("watcher.get_browser_context")
+    @patch("watcher.session_ok", return_value=True)
     @patch("watcher.sync_playwright")
     @patch("watcher.notify_new_post")
     @patch("watcher._generate_for_post")
@@ -358,6 +401,8 @@ class RunWatcherRealCycleTest(unittest.TestCase):
         mock_notify: MagicMock,
         mock_pw: MagicMock,
         mock_ctx: MagicMock,
+        mock_session: MagicMock,
+        _mock_dual: MagicMock,
     ) -> None:
         mock_pw.return_value.start.return_value = MagicMock()
         mock_ctx.return_value = MagicMock()
@@ -400,7 +445,7 @@ class RunWatcherRealCycleTest(unittest.TestCase):
 
 
 class RunWatcherProtectionsTest(unittest.TestCase):
-    """Tests des protections anti-détection : pause anti-flag, recovery session."""
+    """Tests des protections anti-détection : pause anti-flag optionnelle."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -424,12 +469,15 @@ class RunWatcherProtectionsTest(unittest.TestCase):
             json.dumps({"creators": creators}), encoding="utf-8"
         )
 
+    @patch("watcher._dual_account_enabled", return_value=False)
     @patch("watcher.get_browser_context")
+    @patch("watcher.session_ok", return_value=True)
     @patch("watcher.sync_playwright")
     @patch("watcher.notify_new_post")
     @patch("watcher._generate_for_post")
     @patch("watcher.check_new_post", return_value=None)
     @patch("watcher.time.sleep")
+    @patch("watcher.MAX_ACCOUNTS_PAUSE_S", 180)
     @patch("watcher.config.MAX_ACCOUNTS_PER_SESSION", 3)
     def test_long_pause_after_max_accounts(
         self,
@@ -439,18 +487,52 @@ class RunWatcherProtectionsTest(unittest.TestCase):
         mock_notify: MagicMock,
         mock_pw: MagicMock,
         mock_ctx: MagicMock,
+        mock_session: MagicMock,
+        _mock_dual: MagicMock,
     ) -> None:
         mock_pw.return_value.start.return_value = MagicMock()
         mock_ctx.return_value = MagicMock()
-        # 4 comptes vérifiés ; seuil = 3 → une pause longue déclenchée
+        # 4 comptes vérifiés ; seuil = 3 → une pause longue si WATCHER_ACCOUNTS_PAUSE_S > 0
         self._write_watchlist(4)
         run_watcher(watchlist_path=self.wl_path, mock=False, max_cycles=1)
         self.assertEqual(mock_check.call_count, 4)
 
         long_pauses = [
-            c for c in mock_sleep.call_args_list if c.args and c.args[0] == MAX_ACCOUNTS_PAUSE_S
+            c for c in mock_sleep.call_args_list if c.args and c.args[0] == 180
         ]
         self.assertEqual(len(long_pauses), 1)
+
+    @patch("watcher._dual_account_enabled", return_value=False)
+    @patch("watcher.MAX_ACCOUNTS_PAUSE_S", 0)
+    @patch("watcher.config.MAX_ACCOUNTS_PER_SESSION", 3)
+    @patch("watcher.get_browser_context")
+    @patch("watcher.session_ok", return_value=True)
+    @patch("watcher.sync_playwright")
+    @patch("watcher.notify_new_post")
+    @patch("watcher._generate_for_post")
+    @patch("watcher.check_new_post", return_value=None)
+    @patch("watcher.time.sleep")
+    def test_no_pause_when_accounts_pause_disabled(
+        self,
+        mock_sleep: MagicMock,
+        mock_check: MagicMock,
+        mock_gen: MagicMock,
+        mock_notify: MagicMock,
+        mock_pw: MagicMock,
+        mock_ctx: MagicMock,
+        mock_session: MagicMock,
+        _mock_dual: MagicMock,
+    ) -> None:
+        mock_pw.return_value.start.return_value = MagicMock()
+        mock_ctx.return_value = MagicMock()
+        self._write_watchlist(4)
+        run_watcher(watchlist_path=self.wl_path, mock=False, max_cycles=1)
+        long_pauses = [
+            c
+            for c in mock_sleep.call_args_list
+            if c.args and c.args[0] == MAX_ACCOUNTS_PAUSE_S
+        ]
+        self.assertEqual(long_pauses, [])
 
 
 def _sample_named_axes() -> dict[str, float]:
@@ -469,7 +551,7 @@ def _sample_named_axes() -> dict[str, float]:
 
 
 class GenerateWithVectorTest(unittest.TestCase):
-    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
     def test_named_axes_from_vector_store_passed_to_generate_comments(
         self, mock_gen: MagicMock
     ) -> None:
@@ -494,7 +576,7 @@ class GenerateWithVectorTest(unittest.TestCase):
             any("vecteur 32D disponible" in msg for msg in logs.output)
         )
 
-    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
     def test_missing_username_omits_named_axes(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
@@ -513,7 +595,7 @@ class GenerateWithVectorTest(unittest.TestCase):
         self.assertNotIn("named_axes", kwargs)
         self.assertTrue(any("pas de vecteur" in msg for msg in logs.output))
 
-    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
     def test_empty_vector_store_keeps_legacy_call(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
@@ -523,7 +605,7 @@ class GenerateWithVectorTest(unittest.TestCase):
         )
         self.assertNotIn("named_axes", mock_gen.call_args.kwargs)
 
-    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
     def test_empty_named_axes_treated_as_missing(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
@@ -593,11 +675,25 @@ class NotifyNewPostTest(unittest.TestCase):
         text = mock_send.call_args.args[0]
         self.assertIn("1. mdr", text)
 
+    @patch("telegram_notify.send_telegram_markdown")
+    def test_dict_lists_comments_per_category(self, mock_send: MagicMock) -> None:
+        from watcher import notify_new_post
+
+        notify_new_post(
+            {"username": "u", "t_type": "T2", "niches": ["humour"]},
+            {"username": "u", "video_id": "r1", "caption": "c", "hashtags": [], "url": "—"},
+            {"T1": "bravo", "T2": "mdr", "T2b": "punch", "T3a": "nul", "T3b": "ironie", "T4": "mème", "T5": "ratio"},
+        )
+        text = mock_send.call_args.args[0]
+        self.assertIn("*T1* : bravo", text)
+        self.assertIn("*T2b* : punch", text)
+        self.assertIn("Commentaires par catégorie", text)
+
 
 class GenerateForPostTest(unittest.TestCase):
-    """Vérifie le câblage Watcher → ``modules.classifier.generate_comments``."""
+    """Vérifie le câblage Watcher → ``generate_comments_per_category``."""
 
-    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
     def test_passes_video_context_with_caption_hashtags_audio(
         self, mock_gen: MagicMock
     ) -> None:
@@ -613,15 +709,10 @@ class GenerateForPostTest(unittest.TestCase):
             "video_id": "REEL42",
         }
         out = _generate_for_post(ctx)
-        self.assertEqual(out, ["a", "b", "c"])
+        self.assertEqual(out, _mock_comments_by_type())
         mock_gen.assert_called_once()
         kwargs = mock_gen.call_args.kwargs
-        # comments_sample = [] (pas de scrape en phase Watcher).
-        self.assertEqual(mock_gen.call_args.args[1], [])
-        # ``niches`` (liste) propagée.
         self.assertEqual(kwargs["niches"], ["humour", "sketch"])
-        # ``t_type_profile`` égal au t_type du créateur (sa persona).
-        self.assertEqual(kwargs["t_type_profile"], "T2")
         self.assertEqual(
             kwargs["video_context"],
             {
@@ -634,7 +725,7 @@ class GenerateForPostTest(unittest.TestCase):
             },
         )
 
-    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
     def test_missing_niches_yields_empty_list(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
@@ -644,28 +735,28 @@ class GenerateForPostTest(unittest.TestCase):
         self.assertEqual(kwargs["niches"], [])
         self.assertEqual(kwargs["video_context"]["audio_id"], "OLD_KEY")
 
-    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
     def test_t1_generates_comments(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
         out = _generate_for_post({"t_type": "T1", "niches": ["x"], "username": "u"})
-        self.assertEqual(out, ["a", "b", "c"])
+        self.assertEqual(out, _mock_comments_by_type())
         mock_gen.assert_called_once()
 
-    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
     def test_t3a_generates_comments(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
         out = _generate_for_post({"t_type": "T3a", "niches": ["x"], "username": "u"})
-        self.assertEqual(out, ["a", "b", "c"])
+        self.assertEqual(out, _mock_comments_by_type())
         mock_gen.assert_called_once()
 
     @patch("watcher.notify_new_post")
-    @patch("watcher._generate_for_post", return_value=["c1", "c2", "c3"])
+    @patch("watcher._generate_for_post", return_value=_mock_comments_by_type())
     @patch("watcher._transcribe_reel", return_value=("", None))
     @patch("watcher._sync_post_metadata_from_reel_page", return_value=True)
     @patch("watcher.check_new_post")
-    def test_t1_new_post_generates_and_notifies(
+    def test_new_post_generates_and_notifies(
         self,
         mock_check: MagicMock,
         mock_sync: MagicMock,
@@ -676,15 +767,15 @@ class GenerateForPostTest(unittest.TestCase):
         from watcher import _process_creator
 
         creator = {
-            "username": "brand_t1",
+            "username": "creator_t2",
             "platform": "instagram",
             "niches": ["mode"],
-            "t_type": "T1",
+            "t_type": "T2",
             "last_post_id": "old",
         }
         mock_check.return_value = {
             "video_id": "new_reel",
-            "username": "brand_t1",
+            "username": "creator_t2",
             "caption": "drop",
             "hashtags": ["mode"],
             "audio_id": "snd",
@@ -700,9 +791,9 @@ class GenerateForPostTest(unittest.TestCase):
         )
         mock_gen.assert_called_once()
         mock_notify.assert_called_once()
-        self.assertEqual(mock_notify.call_args.args[2], ["c1", "c2", "c3"])
+        self.assertEqual(mock_notify.call_args.args[2], _mock_comments_by_type())
 
-    @patch("modules.classifier.generate_comments", return_value=["a", "b", "c"])
+    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
     def test_passes_merged_video_context(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
@@ -942,6 +1033,202 @@ class WatchlistSchemaMigrationTest(unittest.TestCase):
             self.assertEqual(len(loaded), 1)
             self.assertEqual(loaded[0]["niches"], ["humour", "sketch"])
             self.assertNotIn("niche", loaded[0])
+
+
+class SyncLastPostsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.wl_path = Path(self.tmp.name) / "watchlist.json"
+        self.wl_path.write_text(
+            json.dumps(
+                {
+                    "creators": [
+                        {
+                            "username": "creator_a",
+                            "platform": "instagram",
+                            "niches": ["humour"],
+                            "t_type": "T2",
+                            "engagement_baseline": 0.05,
+                            "last_post_id": "old_reel",
+                            "added_at": "2026-04-01T00:00:00",
+                        },
+                        {
+                            "username": "creator_b",
+                            "platform": "instagram",
+                            "niches": ["mode"],
+                            "t_type": "T1",
+                            "engagement_baseline": 0.05,
+                            "last_post_id": "already_latest",
+                            "added_at": "2026-04-01T00:00:00",
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    @patch("watcher._dual_account_enabled", return_value=False)
+    @patch("watcher.save_watchlist")
+    @patch("watcher.sync_creator_last_post_id")
+    @patch("watcher.session_ok", return_value=True)
+    @patch("watcher.get_browser_context")
+    @patch("watcher.sync_playwright")
+    @patch("watcher.time.sleep")
+    def test_sync_updates_watchlist(
+        self,
+        mock_sleep: MagicMock,
+        mock_pw: MagicMock,
+        mock_ctx: MagicMock,
+        mock_session: MagicMock,
+        mock_sync_one: MagicMock,
+        mock_save: MagicMock,
+        _mock_dual: MagicMock,
+    ) -> None:
+        from watcher import sync_watchlist_last_posts
+
+        mock_pw.return_value.start.return_value = MagicMock()
+        mock_ctx.return_value = MagicMock()
+        mock_sync_one.side_effect = [True, False]
+
+        sync_watchlist_last_posts(watchlist_path=self.wl_path)
+
+        # creator_b est T1 → exclu par WATCHER_SKIP_T_TYPES par défaut
+        self.assertEqual(mock_sync_one.call_count, 1)
+        mock_save.assert_called_once()
+
+    @patch("watcher.get_recent_reels")
+    def test_sync_creator_updates_last_post_id(self, mock_reels: MagicMock) -> None:
+        from watcher import sync_creator_last_post_id
+
+        mock_reels.return_value = [_reel("NEW_ID", 1000)]
+        creator = {
+            "username": "u",
+            "platform": "instagram",
+            "last_post_id": "OLD_ID",
+        }
+        changed = sync_creator_last_post_id(creator, MagicMock())
+        self.assertTrue(changed)
+        self.assertEqual(creator["last_post_id"], "NEW_ID")
+
+    @patch("watcher.get_recent_reels")
+    def test_sync_creator_no_change_when_already_latest(
+        self, mock_reels: MagicMock
+    ) -> None:
+        from watcher import sync_creator_last_post_id
+
+        mock_reels.return_value = [_reel("SAME", 1000)]
+        creator = {
+            "username": "u",
+            "platform": "instagram",
+            "last_post_id": "SAME",
+        }
+        self.assertFalse(sync_creator_last_post_id(creator, MagicMock()))
+        self.assertEqual(creator["last_post_id"], "SAME")
+
+
+class TestWatcherOptimizations(unittest.TestCase):
+    def test_split_creator_batches_even(self) -> None:
+        creators = [
+            {"username": f"u{i}", "t_type": "T2"} for i in range(4)
+        ]
+        left, right = _split_creator_batches(creators)
+        self.assertEqual(len(left), 2)
+        self.assertEqual(len(right), 2)
+        self.assertEqual(left[0][0], 0)
+        self.assertEqual(right[0][0], 2)
+
+    @patch("watcher.config.WATCHER_DUAL_ACCOUNT", True)
+    @patch("watcher.Path.is_file", return_value=True)
+    def test_dual_account_enabled_with_cookies(self, _mock_is_file: MagicMock) -> None:
+        self.assertTrue(_dual_account_enabled())
+
+    @patch("watcher.config.WATCHER_DUAL_ACCOUNT", True)
+    @patch("watcher.Path.is_file", return_value=False)
+    def test_dual_account_requires_cookies_file(self, _mock_is_file: MagicMock) -> None:
+        self.assertFalse(_dual_account_enabled())
+
+    @patch("watcher.config.WATCHER_DUAL_ACCOUNT", False)
+    def test_dual_account_disabled_by_config(self) -> None:
+        self.assertFalse(_dual_account_enabled())
+
+    @patch("watcher.get_recent_reels_on_page")
+    def test_check_new_post_uses_reused_page(self, mock_on_page: MagicMock) -> None:
+        mock_on_page.return_value = [_reel("fresh", 400)]
+        page = MagicMock()
+        creator = {"username": "u", "platform": "instagram", "last_post_id": "old"}
+        out = check_new_post(creator, MagicMock(), grid_page=page)
+        self.assertIsNotNone(out)
+        mock_on_page.assert_called_once()
+        self.assertIs(mock_on_page.call_args[0][0], page)
+
+
+class WatcherEligibleTest(unittest.TestCase):
+    @patch("watcher.SKIP_T_TYPES", frozenset({"T1"}))
+    def test_t1_excluded_by_default(self) -> None:
+        self.assertFalse(_watcher_eligible({"username": "b", "t_type": "T1"}))
+        self.assertTrue(_watcher_eligible({"username": "c", "t_type": "T2"}))
+        self.assertFalse(_watcher_eligible({"username": "d", "t_type": None}))
+
+    @patch("watcher.SKIP_T_TYPES", frozenset({"T1"}))
+    @patch("watcher.check_new_post")
+    def test_process_creator_skips_t1(self, mock_check: MagicMock) -> None:
+        from watcher import _process_creator
+
+        creator = {"username": "brand", "t_type": "T1", "last_post_id": "old"}
+        changed, did_check = _process_creator(
+            creator, mock=False, log=MagicMock(), browser_context=MagicMock()
+        )
+        self.assertFalse(changed)
+        self.assertFalse(did_check)
+        mock_check.assert_not_called()
+
+    @patch("watcher.SKIP_T_TYPES", frozenset())
+    def test_all_types_when_skip_empty(self) -> None:
+        self.assertTrue(_watcher_eligible({"username": "b", "t_type": "T1"}))
+
+
+class SyncPostMetadataTest(unittest.TestCase):
+    @patch("scripts.instagram_browser.get_reel_page_metadata")
+    def test_ignores_wrong_reel_page_owner_when_grid_empty(
+        self, mock_meta: MagicMock
+    ) -> None:
+        from watcher import _sync_post_metadata_from_reel_page
+
+        mock_meta.return_value = {
+            "caption": "fresh drop",
+            "owner_username": "tyga",
+        }
+        post = {
+            "video_id": "ABC123",
+            "caption": "",
+            "grid_owner": "",
+        }
+        ctx = MagicMock()
+        self.assertTrue(
+            _sync_post_metadata_from_reel_page(post, "raikkonenaf", ctx)
+        )
+        self.assertEqual(post["username"], "raikkonenaf")
+        self.assertEqual(post["caption"], "fresh drop")
+
+    @patch("scripts.instagram_browser.get_reel_page_metadata")
+    def test_rejects_when_grid_owner_conflicts(
+        self, mock_meta: MagicMock
+    ) -> None:
+        from watcher import _sync_post_metadata_from_reel_page
+
+        mock_meta.return_value = {"caption": "", "owner_username": ""}
+        post = {
+            "video_id": "ABC123",
+            "caption": "",
+            "grid_owner": "collab_partner",
+        }
+        self.assertFalse(
+            _sync_post_metadata_from_reel_page(
+                post, "raikkonenaf", MagicMock()
+            )
+        )
+        mock_meta.assert_not_called()
 
 
 if __name__ == "__main__":

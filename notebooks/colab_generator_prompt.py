@@ -1,27 +1,35 @@
-"""Prompts et format Alpaca pour le générateur de commentaires (fine-tune + inférence)."""
+"""Standalone copy of ``modules/generator_prompt.py`` for Colab / RunPod.
+
+Upload ce fichier dans ``/content/colab_generator_prompt.py`` à côté de
+``generator_dataset.json`` — pas besoin de cloner le repo (privé).
+"""
 
 from __future__ import annotations
 
 import re
 from typing import Any, Literal
 
-from modules.named_axes import NAMED_AXES
+NAMED_AXES = (
+    "scripted_vs_raw",
+    "solo_vs_collab",
+    "fictional_vs_real",
+    "energy_level",
+    "production_quality",
+    "format_length",
+    "distance_parasociale",
+    "interaction_style",
+    "mainstream_vs_niche",
+    "safe_vs_edgy",
+)
 
 LengthBucket = Literal["short", "long"]
 
-# Seuil dataset : ≤10 mots = court, >10 = développé (aligné médiane virale ~8 mots).
 GENERATOR_LENGTH_SHORT_MAX_WORDS = 10
 MAX_GENERATOR_OUTPUT_WORDS_SHORT = 10
 MAX_GENERATOR_OUTPUT_WORDS_LONG = 80
 MAX_TRAINING_COMMENT_WORDS = MAX_GENERATOR_OUTPUT_WORDS_LONG
 MAX_GENERATOR_OUTPUT_CHARS_SHORT = 72
 MAX_GENERATOR_OUTPUT_CHARS_LONG = 480
-# Plafonds inférence (plus stricts que le training pour éviter les pavés).
-INFERENCE_MAX_WORDS_SHORT = 10
-INFERENCE_MAX_WORDS_LONG = 40
-INFERENCE_MAX_CHARS_SHORT = 72
-INFERENCE_MAX_CHARS_LONG = 280
-INFERENCE_MAX_SENTENCES_LONG = 2
 MAX_GENERATOR_CAPTION_CHARS = 300
 
 _MENTION_RE = re.compile(r"@\w[\w.]*")
@@ -42,31 +50,27 @@ _EMOJI_RE = re.compile(
 
 
 def comment_length_bucket(text: str) -> LengthBucket:
-    """Classe un commentaire viral : court (≤10 mots) ou développé (>10)."""
     n = len(str(text or "").split())
     return "short" if n <= GENERATOR_LENGTH_SHORT_MAX_WORDS else "long"
 
 
 def generator_length_target_label(bucket: LengthBucket) -> str:
     if bucket == "long":
-        return "développé (11 à 40 mots)"
+        return "développé (11 à 60 mots)"
     return "court (3 à 10 mots)"
 
 
 def build_generator_instruction(length_bucket: LengthBucket | None = None) -> str:
-    """Instruction Alpaca — précise court vs développé si ``length_bucket`` est fourni."""
     base = (
         "Tu es un utilisateur Instagram. Écris UN commentaire en français. "
         "Pas d'emoji. Pas de @mention. "
     )
     if length_bucket == "short":
-        length = (
-            "Court : 3 à 10 mots, une phrase percutante, jamais coupée."
-        )
+        length = "Court : 3 à 10 mots, une phrase percutante, jamais coupée."
     elif length_bucket == "long":
         length = (
-            "Développé : 11 à 40 mots, une ou deux phrases complètes, "
-            "jamais coupées — ancré sur la Caption, pas de digression."
+            "Développé : 11 à 60 mots, une ou deux phrases complètes, "
+            "jamais coupées — pour une punchline qui demande du contexte."
         )
     else:
         length = (
@@ -74,8 +78,8 @@ def build_generator_instruction(length_bucket: LengthBucket | None = None) -> st
             "(court ou développé)."
         )
     context = (
-    "Si Transcript et/ou Visuel sont fournis, utilise-les pour rendre le commentaire "
-    "spécifique au contenu réel de la vidéo (dialogues, scène, personnages, ton). "
+        "Si Transcript et/ou Visuel sont fournis, utilise-les pour rendre le commentaire "
+        "spécifique au contenu réel de la vidéo (dialogues, scène, personnages, ton). "
         "Les champs Creator et Reel identifient le post cible — ne commente "
         "que le contenu de ce Reel (pas un autre créateur)."
     )
@@ -85,27 +89,11 @@ def build_generator_instruction(length_bucket: LengthBucket | None = None) -> st
 GENERATOR_INSTRUCTION = build_generator_instruction()
 
 
-def clamp_sentences(text: str, max_sentences: int = 2) -> str:
-    """Garde au plus ``max_sentences`` phrases (séparateurs . ! ? …)."""
-    s = str(text or "").strip()
-    if not s or max_sentences < 1:
-        return s
-    parts = re.split(r"(?<=[.!?…])\s+", s)
-    kept = [p.strip() for p in parts if p.strip()]
-    if len(kept) <= max_sentences:
-        return s
-    return " ".join(kept[:max_sentences]).strip()
-
-
 def normalize_generator_output(
     text: str,
     *,
     length_bucket: LengthBucket | None = None,
-    max_words: int | None = None,
-    max_chars: int | None = None,
-    max_sentences: int | None = None,
 ) -> str:
-    """Nettoie emoji/@ ; tronque selon le bucket court ou développé."""
     s = _EMOJI_RE.sub("", str(text or ""))
     s = _MENTION_RE.sub("", s)
     s = re.sub(r"\s+", " ", s).strip()
@@ -113,23 +101,21 @@ def normalize_generator_output(
     if not words:
         return ""
     bucket = length_bucket or comment_length_bucket(s)
-    word_cap = max_words if max_words is not None else (
+    max_words = (
         MAX_GENERATOR_OUTPUT_WORDS_LONG
         if bucket == "long"
         else MAX_GENERATOR_OUTPUT_WORDS_SHORT
     )
-    char_cap = max_chars if max_chars is not None else (
+    max_chars = (
         MAX_GENERATOR_OUTPUT_CHARS_LONG
         if bucket == "long"
         else MAX_GENERATOR_OUTPUT_CHARS_SHORT
     )
-    out = " ".join(words[:word_cap])
-    if len(out) > char_cap:
-        out = out[:char_cap].rsplit(" ", 1)[0]
+    out = " ".join(words[:max_words])
+    if len(out) > max_chars:
+        out = out[:max_chars].rsplit(" ", 1)[0]
     if bucket == "short":
         out = re.split(r"[.!?…]+", out, maxsplit=1)[0].strip()
-    elif max_sentences:
-        out = clamp_sentences(out, max_sentences=max_sentences)
     return out.strip()
 
 
@@ -194,7 +180,6 @@ def build_generator_input_block(
     named_axes: dict[str, Any] | None = None,
     length_bucket: LengthBucket | None = None,
 ) -> str:
-    """Bloc ``input`` identique à ``prepare_dataset.py`` (entraînement = inférence)."""
     lines = [
         f"T-type commentateur: {t_type_profile}",
         f"Niches: {format_niches(niches)}",
@@ -234,7 +219,6 @@ def build_alpaca_prompt(
     *,
     length_bucket: LengthBucket | None = None,
 ) -> str:
-    """Prompt brut Alpaca — doit matcher ``finetune_generator.ipynb`` cellule 4."""
     instr = instruction or build_generator_instruction(length_bucket)
     return (
         f"### Instruction:\n{instr}\n\n"
@@ -244,7 +228,6 @@ def build_alpaca_prompt(
 
 
 def length_buckets_for_generation(num_comments: int) -> list[LengthBucket]:
-    """Mix court/développé à l'inférence (~1/3 court, 2/3 développé)."""
     n = max(1, int(num_comments))
     short_count = max(1, n // 3) if n > 1 else 1
     if n == 1:

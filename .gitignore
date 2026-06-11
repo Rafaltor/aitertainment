@@ -9,6 +9,7 @@
 *.key
 # Instagram session Playwright (cookies exportés depuis le navigateur)
 data/instagram_cookies.json
+data/instagram_cookies_2.json
 
 # =============================================================================
 # Python
@@ -76,6 +77,9 @@ logs/
 data/*
 !data/.gitkeep
 !data/*.example.json
+data/*.bak*
+data/*.autobak
+data/instagram_cookies_netscape.txt
 
 # Modèles / embeddings régénérables
 pca_model.pkl

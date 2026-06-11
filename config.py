@@ -31,7 +31,8 @@ TELEGRAM_DISCOVERY_CHAT_ID = (
 # Anti-détection Instagram (Playwright) — Watcher
 MAX_ACCOUNTS_PER_SESSION = int(os.environ.get("MAX_ACCOUNTS_PER_SESSION", "50"))
 # Pause longue tous les N comptes vérifiés (secondes)
-WATCHER_ACCOUNTS_PAUSE_S = int(os.environ.get("WATCHER_ACCOUNTS_PAUSE_S", "600"))
+# 0 = pas de pause longue entre blocs de comptes (désactivé par défaut).
+WATCHER_ACCOUNTS_PAUSE_S = int(os.environ.get("WATCHER_ACCOUNTS_PAUSE_S", "0"))
 # Délai entre deux créateurs dans un cycle (secondes)
 WATCHER_SLEEP_BETWEEN_CREATORS_S = int(
     os.environ.get("WATCHER_SLEEP_BETWEEN_CREATORS_S", "3")
@@ -40,6 +41,31 @@ WATCHER_SLEEP_BETWEEN_CREATORS_S = int(
 WATCHER_PRIME_INTERVAL_S = int(os.environ.get("WATCHER_PRIME_INTERVAL_S", "300"))
 WATCHER_DAY_INTERVAL_S = int(os.environ.get("WATCHER_DAY_INTERVAL_S", "600"))
 WATCHER_NIGHT_INTERVAL_S = int(os.environ.get("WATCHER_NIGHT_INTERVAL_S", "1800"))
+# Filtre vues sur nouveau post : désactivé par défaut (cycles ~5–7 min → posts
+# souvent > 2000 vues avant le prochain check). Activer seulement si polling très rapide.
+WATCHER_VIEW_FILTER_ENABLED = os.environ.get(
+    "WATCHER_VIEW_FILTER_ENABLED", "false"
+).strip().lower() in ("1", "true", "yes")
+WATCHER_NEW_POST_VIEW_THRESHOLD = int(
+    os.environ.get("WATCHER_NEW_POST_VIEW_THRESHOLD", "2000")
+)
+# Attente SPA après ouverture grille /reels/ (ms). Défaut watcher : 1200.
+WATCHER_SPA_WAIT_MS = int(os.environ.get("WATCHER_SPA_WAIT_MS", "1200"))
+# 2e compte IG pour le watcher (moitié de la watchlist). Cookies ou login .env.
+IG_USERNAME = os.environ.get("IG_USERNAME", "").strip()
+IG_PASSWORD = os.environ.get("IG_PASSWORD", "").strip()
+WATCHER_IG2_COOKIES_PATH = _PROJECT_ROOT / os.environ.get(
+    "WATCHER_IG2_COOKIES_PATH", "data/instagram_cookies_2.json"
+)
+WATCHER_DUAL_ACCOUNT = os.environ.get(
+    "WATCHER_DUAL_ACCOUNT", "true"
+).strip().lower() in ("1", "true", "yes")
+# T-types exclus de la surveillance (ex. T1 = marques, peu utile en temps réel).
+WATCHER_SKIP_T_TYPES = frozenset(
+    t.strip().upper()
+    for t in os.environ.get("WATCHER_SKIP_T_TYPES", "T1").split(",")
+    if t.strip()
+)
 
 # ----------------------------------------------------------------------------
 # Discovery (Layer 0) — valeurs MODE TEST par défaut.
@@ -62,6 +88,10 @@ DISCOVERY_BETWEEN_PROFILES_MIN_S = float(
 DISCOVERY_BETWEEN_PROFILES_MAX_S = float(
     os.environ.get("DISCOVERY_BETWEEN_PROFILES_MAX_S", "180")
 )
+# Fil Reels (scrape viral) — scrolls phase 1 et engagement algo sur caption FR.
+FEED_SCROLL_STEPS_DEFAULT = int(os.environ.get("FEED_SCROLL_STEPS_DEFAULT", "80"))
+FEED_FR_REEL_WATCH_MIN_S = float(os.environ.get("FEED_FR_REEL_WATCH_MIN_S", "60"))
+FEED_EN_REEL_SKIP_MS = int(os.environ.get("FEED_EN_REEL_SKIP_MS", "600"))
 # Mode test : ignore les fenêtres humaines (nuit 23h-8h, déjeuner 12h-14h,
 # pause de burst toutes les 2h). À mettre à True pour pouvoir tester à tout
 # moment sans attendre la prochaine fenêtre active.
@@ -101,15 +131,18 @@ LM_STUDIO_VISION_MODEL = os.environ.get(
     "LM_STUDIO_VISION_MODEL", "openbmb/minicpm-v-2_6"
 ).strip()
 
-# Modèle Qwen3-35B pour labélisation T-type + fusion video_context
+# Modèle Qwen3-35B pour labélisation T-type (scripts/label_comments.py)
 # (``scripts/label_comments.py`` uniquement — remplace OLLAMA_MODEL pour ce script)
 LABEL_LLM_URL = (
     os.environ.get("LABEL_LLM_URL")
     or os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1")
 ).strip().rstrip("/")
 LABEL_LLM_MODEL = os.environ.get("LABEL_LLM_MODEL", "qwen/qwen3.6-35b-a3b").strip()
+LABEL_LLM_MAX_TOKENS = int(os.environ.get("LABEL_LLM_MAX_TOKENS", "256"))
 
 VALID_T_TYPES = frozenset({"T1", "T2", "T2b", "T3a", "T3b", "T4", "T5"})
+# Ordre stable pour l'affichage (génération 1 commentaire par catégorie).
+ORDERED_T_TYPES: tuple[str, ...] = ("T1", "T2", "T2b", "T3a", "T3b", "T4", "T5")
 
 # ----------------------------------------------------------------------------
 # Niches éditoriales — vocabulaire fermé pour la classification de profils

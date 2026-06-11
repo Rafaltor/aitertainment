@@ -7,6 +7,8 @@ import unittest
 from modules.generator_prompt import (
     build_alpaca_prompt,
     build_generator_input_block,
+    build_generator_instruction,
+    comment_length_bucket,
     normalize_generator_output,
 )
 
@@ -33,11 +35,32 @@ class GeneratorPromptTest(unittest.TestCase):
         self.assertIn("### Input:\nT-type commentateur: T2", prompt)
         self.assertTrue(prompt.endswith("### Response:\n"))
 
-    def test_normalize_strips_emoji_and_mentions(self) -> None:
-        out = normalize_generator_output("mdr trop vrai 🤣🤣 @someone extra words here")
+    def test_normalize_strips_emoji_and_mentions_short(self) -> None:
+        out = normalize_generator_output(
+            "mdr trop vrai 🤣🤣 @someone extra words here",
+            length_bucket="short",
+        )
         self.assertNotIn("@", out)
         self.assertNotIn("🤣", out)
         self.assertLessEqual(len(out.split()), 10)
+
+    def test_normalize_keeps_long_comment(self) -> None:
+        words = ["mot"] * 25
+        raw = " ".join(words)
+        out = normalize_generator_output(raw, length_bucket="long")
+        self.assertEqual(len(out.split()), 25)
+
+    def test_length_bucket_and_instruction(self) -> None:
+        self.assertEqual(comment_length_bucket("mdr trop vrai"), "short")
+        self.assertEqual(comment_length_bucket(" ".join(["mot"] * 12)), "long")
+        self.assertIn("3 à 10 mots", build_generator_instruction("short"))
+        self.assertIn("11 à 60 mots", build_generator_instruction("long"))
+        block = build_generator_input_block(
+            t_type_profile="T2",
+            niches=["humour"],
+            length_bucket="long",
+        )
+        self.assertIn("Longueur cible: développé", block)
 
     def test_video_context_in_input_block_and_alpaca_prompt(self) -> None:
         block = build_generator_input_block(
@@ -51,7 +74,7 @@ class GeneratorPromptTest(unittest.TestCase):
         )
         prompt = build_alpaca_prompt(block)
         self.assertIn("Contexte vidéo: Sketch où le drop est annoncé vendredi.", prompt)
-        self.assertIn("Contexte vidéo est fourni", prompt)
+        self.assertIn("Transcript et/ou Visuel sont fournis", prompt)
 
     def test_video_context_truncated_at_600_chars(self) -> None:
         long_vc = "z" * 700

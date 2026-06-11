@@ -432,20 +432,27 @@ Pour aller plus loin : `man launchd.plist`, `man launchctl`.
 
 ---
 
-## 12. Roadmap audit (juin 2026)
+## 12. État pipeline & dette technique (juin 2026)
+
+**Pipeline branché (prod Mac Mini)**
+
+| Couche | Process | État |
+|---|---|---|
+| Discovery | `telegram_discovery_bot.py` + `discovery.py` | OK |
+| Watcher | `watcher.py` (dual IG, skip T1, Ollama generator) | OK |
+| Générateur | Colab → `deploy_generator.py` → `aitertainment-generator` | OK |
+| Corpus viral | `scrape_viral_comments` → clean → label → prepare | OK |
+| Embeddings | `embedder.py` → `vector_store.json` | OK |
+
+**Nettoyage récent** : backups `viral_comments.json.bak*`, cookies Netscape orphelins,
+`WATCHER_PARALLEL_CHECKS` (jamais branché), vestiges instagrapi / `rescore_scheduler` / `curate_*`.
 
 | Priorité | Sujet | Statut |
 |---|---|---|
-| P0 | Vestiges instagrapi / `telegram_notify` | Fait |
-| P0 | Suppression `rescore_scheduler`, `sync_discovery_state`, `curate_*` | Fait |
-| P0 | Fusion `clean_comments.py` | Fait |
-| P0 | Verrous JSON cross-process (`atomic_json`) | Fait |
-| P0 | `DISABLE_HUMAN_SCHEDULE` défaut prod (`false`) | Fait |
-| P0 | `seeds.json` vide sur ta machine | **À remplir** (comptes seed) |
-| P1 | Unifier loaders watchlist (`embedder` / `label` / `watcher`) | À faire |
-| P1 | Découper `instagram_browser.py` | À faire |
-| P1 | Label/prepare incrémental (gros JSON) | À faire |
-| P2 | `Makefile` / cibles smoke | Optionnel |
+| P1 | Unifier loaders watchlist (`embedder` / `label` / `watcher`) | Dette — signatures différentes |
+| P1 | Découper `instagram_browser.py` (~3.6k lignes) | Dette |
+| P1 | Label/prepare incrémental (gros JSON) | Dette |
+| P2 | `Makefile` / cibles smoke (`watcher --mock`, `test_generator`) | Optionnel |
 
 **Parcours opérationnel type**
 

@@ -18,9 +18,24 @@ class CleanViralPoolTest(unittest.TestCase):
             path.write_text(
                 json.dumps(
                     [
-                        {"text": "super vidéo", "username": "creator_fr"},
-                        {"text": "this is clearly english content", "username": "creator_en"},
-                        {"text": "ok", "username": "unknown"},
+                        {
+                            "text": "super vidéo",
+                            "username": "creator_fr",
+                            "transcript": "dialogue",
+                            "visual_description": "scène",
+                        },
+                        {
+                            "text": "this is clearly english content",
+                            "username": "creator_en",
+                            "transcript": "dialogue",
+                            "visual_description": "scène",
+                        },
+                        {
+                            "text": "ok",
+                            "username": "unknown",
+                            "transcript": "dialogue",
+                            "visual_description": "scène",
+                        },
                     ],
                     ensure_ascii=False,
                 ),
@@ -35,11 +50,48 @@ class CleanViralPoolTest(unittest.TestCase):
                 }
             }
             with patch.object(clean, "build_creator_index", return_value=idx):
-                i, k, en, unk = clean.clean_viral_pool(path, dry_run=True)
+                i, k, en, unk, no_enrich = clean.clean_viral_pool(path, dry_run=True)
             self.assertEqual(i, 3)
             self.assertEqual(k, 1)
             self.assertGreaterEqual(en, 1)
             self.assertEqual(unk, 1)
+            self.assertEqual(no_enrich, 0)
+
+    def test_drops_missing_transcript_or_visual(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "viral.json"
+            path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "text": "mdr trop vrai",
+                            "username": "creator_fr",
+                            "transcript": "dialogue",
+                            "visual_description": "scène",
+                        },
+                        {
+                            "text": "autre punchline",
+                            "username": "creator_fr",
+                            "transcript": "",
+                            "visual_description": "scène",
+                        },
+                    ],
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            idx = {
+                "creator_fr": {
+                    "username": "creator_fr",
+                    "niches": ["humour"],
+                    "t_type": "T2",
+                    "has_vector": True,
+                }
+            }
+            with patch.object(clean, "build_creator_index", return_value=idx):
+                i, k, en, unk, no_enrich = clean.clean_viral_pool(path, dry_run=True)
+            self.assertEqual(k, 1)
+            self.assertEqual(no_enrich, 1)
 
 
 class CleanTrainingPoolTest(unittest.TestCase):

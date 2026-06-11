@@ -68,8 +68,10 @@ if str(_PROJECT_ROOT) not in sys.path:
 from config import VALID_T_TYPES
 from modules.generator_prompt import (
     GENERATOR_INSTRUCTION,
-    MAX_GENERATOR_OUTPUT_WORDS,
+    LengthBucket,
     build_generator_input_block,
+    build_generator_instruction,
+    comment_length_bucket,
     normalize_generator_output,
 )
 
@@ -284,6 +286,9 @@ def _generator_input_block(
     audio_id: str,
     named_axes: dict[str, Any] | None,
     video_context: str = "",
+    transcript: str = "",
+    visual_description: str = "",
+    length_bucket: LengthBucket | None = None,
 ) -> tuple[str, bool]:
     block = build_generator_input_block(
         t_type_profile=t_type_profile,
@@ -293,6 +298,9 @@ def _generator_input_block(
         audio_id=audio_id,
         named_axes=named_axes,
         video_context=video_context,
+        transcript=transcript,
+        visual_description=visual_description,
+        length_bucket=length_bucket,
     )
     return block, bool(named_axes)
 
@@ -330,15 +338,21 @@ def generate_generator_dataset(
     vector_store = vector_store or {}
     lines: list[str] = []
     skipped_text = 0
-    truncated_outputs = 0
+    short_outputs = 0
+    long_outputs = 0
     with_vector = 0
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         raw_text = str(entry.get("text") or "")
-        if len(raw_text.split()) > MAX_GENERATOR_OUTPUT_WORDS:
-            truncated_outputs += 1
-        comment_text = normalize_generator_output(raw_text)
+        length_bucket = comment_length_bucket(raw_text)
+        if length_bucket == "long":
+            long_outputs += 1
+        else:
+            short_outputs += 1
+        comment_text = normalize_generator_output(
+            raw_text, length_bucket=length_bucket
+        )
         if not comment_text:
             skipped_text += 1
             continue
@@ -359,6 +373,8 @@ def generate_generator_dataset(
         hashtags = _format_hashtags(entry.get("hashtags"))
         audio_id = str(entry.get("audio_id") or "")
         video_context = str(entry.get("video_context") or "")
+        transcript = str(entry.get("transcript") or "")
+        visual_description = str(entry.get("visual_description") or "")
 
         username = str(entry.get("username") or "").lstrip("@").strip().lower()
         store_entry = vector_store.get(username, {})
@@ -373,24 +389,29 @@ def generate_generator_dataset(
             audio_id=audio_id,
             named_axes=axes_dict,
             video_context=video_context,
+            transcript=transcript,
+            visual_description=visual_description,
+            length_bucket=length_bucket,
         )
         if has_vector:
             with_vector += 1
         record = {
-            "instruction": GENERATOR_INSTRUCTION,
+            "instruction": build_generator_instruction(length_bucket),
             "input": input_block,
             "output": comment_text,
             "has_vector": has_vector,
+            "length_bucket": length_bucket,
         }
         lines.append(json.dumps(record, ensure_ascii=False))
 
     _atomic_write_jsonl(output_path, lines)
-    if skipped_text or truncated_outputs:
+    if skipped_text:
         _LOG.debug(
-            "generator: %d ligne(s) écrites (skip text=%d, outputs tronqués=%d)",
+            "generator: %d ligne(s) écrites (skip text=%d, court=%d, développé=%d)",
             len(lines),
             skipped_text,
-            truncated_outputs,
+            short_outputs,
+            long_outputs,
         )
     return len(lines), with_vector
 

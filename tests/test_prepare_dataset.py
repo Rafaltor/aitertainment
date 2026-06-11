@@ -16,9 +16,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from modules.generator_prompt import build_generator_instruction
 from scripts.prepare_dataset import (
     GENERATOR_FILENAME,
-    GENERATOR_INSTRUCTION,
     generate_generator_dataset,
     load_vector_store,
     main,
@@ -122,7 +122,10 @@ class GeneratorDatasetTest(unittest.TestCase):
         self.assertEqual(with_vector, 0)
         self.assertFalse(_read_jsonl(self.out_path)[0]["has_vector"])
         rows = _read_jsonl(self.out_path)
-        self.assertEqual(rows[0]["instruction"], GENERATOR_INSTRUCTION)
+        self.assertEqual(
+            rows[0]["instruction"], build_generator_instruction("short")
+        )
+        self.assertIn("Longueur cible: court", rows[0]["input"])
         self.assertEqual(rows[0]["output"], "le passage 0:08")
         self.assertIn("T-type commentateur: T3b", rows[0]["input"])
         # ``t_type`` ne doit PAS écraser ``t_type_profile``.

@@ -71,6 +71,15 @@ _HASHTAG_RE = re.compile(r"#(\w+)")
 _WHISPER_LOGGERS_QUIETED = False
 
 
+def _yt_dlp_executable() -> str:
+    """``yt-dlp`` du venv (``sys.prefix/bin``) ou du PATH."""
+    for base in (Path(sys.prefix) / "bin", Path(sys.executable).resolve().parent):
+        candidate = base / "yt-dlp"
+        if candidate.is_file():
+            return str(candidate)
+    return shutil.which("yt-dlp") or "yt-dlp"
+
+
 def _quiet_whisper_logs() -> None:
     """Réduit le bruit faster-whisper / Hugging Face / ctranslate2 dans le terminal."""
     global _WHISPER_LOGGERS_QUIETED
@@ -175,15 +184,7 @@ def load_watchlist(path: Path | str | None = None) -> list[dict[str, Any]]:
     if not isinstance(entries, list):
         raise ValueError(f"entrées watchlist invalides dans {p}")
 
-    out: list[dict[str, Any]] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        action = entry.get("action")
-        if action is not None and action != "validated":
-            continue
-        out.append(entry)
-    return out
+    return [e for e in entries if isinstance(e, dict)]
 
 
 def load_creators_from_database(
@@ -278,7 +279,7 @@ def download_audio_from_reel(
     try:
         result = subprocess.run(
             [
-                "yt-dlp",
+                _yt_dlp_executable(),
                 "--cookies",
                 str(cookie_file),
                 "--extract-audio",
@@ -325,7 +326,7 @@ def download_reel_video(
     try:
         result = subprocess.run(
             [
-                "yt-dlp",
+                _yt_dlp_executable(),
                 "--cookies",
                 str(cookie_file),
                 "-f",

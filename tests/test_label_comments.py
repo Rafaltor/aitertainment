@@ -44,6 +44,34 @@ class ExtractTTypeTest(unittest.TestCase):
             "T2b",
         )
 
+    def test_prefill_completion_parses_t_type(self) -> None:
+        self.assertEqual(label_comments._parse_prefill_t_type('T2b"}\n'), "T2b")
+        self.assertEqual(
+            label_comments._parse_prefill_t_type('T4"}\n\n\n{"t_type": "T4"}'),
+            "T4",
+        )
+
+    def test_enum_list_does_not_yield_t5_as_last_token(self) -> None:
+        reasoning = (
+            "Classify into one of the T-types (T1, T2, T2b, T3a, T3b, T4, T5) "
+            "and return ONLY a JSON: `{\"t_type"
+        )
+        self.assertIsNone(label_comments._extract_last_ttype_token(reasoning))
+
+    def test_json_ttype_field_from_reasoning(self) -> None:
+        reasoning = (
+            "long analysis...\n"
+            '{"t_type": "T3b", "video_context": "ignored"}'
+        )
+        self.assertEqual(label_comments._extract_json_ttype_field(reasoning), "T3b")
+
+    def test_reasoning_json_regex_takes_last_verdict(self) -> None:
+        reasoning = (
+            'draft {"t_type": "T2"} then final {"t_type": "T4"}'
+        )
+        matches = label_comments._REASONING_JSON_TTYPE_RE.findall(reasoning)
+        self.assertEqual(matches[-1], "T4")
+
 
 class BuildUserPromptTest(unittest.TestCase):
     def test_without_creator_context_uses_legacy_format(self) -> None:
@@ -125,23 +153,18 @@ class BuildCreatorContextTest(unittest.TestCase):
         self.assertTrue(ctx["has_vector_profile"])
 
 
-class ParseLabelFuseResponseTest(unittest.TestCase):
+class ParseLabelResponseTest(unittest.TestCase):
     def test_parses_json_object(self) -> None:
         content = (
             '{"t_type": "T2b", "video_context": "Sketch de rue avec deux potes."}'
         )
-        t_type, ctx = label_comments._parse_label_fuse_response(content)
-        self.assertEqual(t_type, "T2b")
-        self.assertIn("Sketch", ctx)
+        self.assertEqual(label_comments._parse_label_response(content), "T2b")
 
-    def test_parses_json_with_apostrophe_in_video_context(self) -> None:
-        # Apostrophe non échappée (JSON valide) — cas fréquent en français.
+    def test_parses_json_with_extra_fields(self) -> None:
         content = (
             '{"t_type": "T2", "video_context": "il dit qu\'il part en cuisine."}'
         )
-        t_type, ctx = label_comments._parse_label_fuse_response(content)
-        self.assertEqual(t_type, "T2")
-        self.assertIn("qu'il part", ctx)
+        self.assertEqual(label_comments._parse_label_response(content), "T2")
 
     def test_extract_json_block_ignores_braces_inside_strings(self) -> None:
         raw = (
@@ -153,9 +176,16 @@ class ParseLabelFuseResponseTest(unittest.TestCase):
         self.assertIn("{ironique}", data["video_context"])
 
     def test_fallback_ttype_without_json(self) -> None:
-        t_type, ctx = label_comments._parse_label_fuse_response("Verdict final : T3b")
-        self.assertEqual(t_type, "T3b")
-        self.assertEqual(ctx, "")
+        self.assertEqual(
+            label_comments._parse_label_response("Verdict final : T3b"),
+            "T3b",
+        )
+
+    def test_fallback_uses_last_ttype_not_first_definition(self) -> None:
+        content = (
+            "T1 = spam. T2 = basic. After analysis the label is T2b for this joke."
+        )
+        self.assertEqual(label_comments._parse_label_response(content), "T2b")
 
 
 class LabelAndFuseTest(unittest.TestCase):
@@ -186,14 +216,18 @@ class LabelAndFuseTest(unittest.TestCase):
             model="qwen/qwen3.6-35b-a3b",
         )
         self.assertEqual(t_type, "T2")
-        self.assertEqual(video_context, "Parodie en cuisine.")
+        self.assertEqual(video_context, "")
         payload = mock_post.call_args.kwargs["json"]
         self.assertEqual(payload["model"], "qwen/qwen3.6-35b-a3b")
-        self.assertEqual(payload["max_tokens"], 2000)
+        self.assertEqual(payload["max_tokens"], 32)
+        self.assertEqual(payload["temperature"], 0.1)
+        self.assertEqual(payload["messages"][-1]["content"], '{"t_type": "')
         user_msg = payload["messages"][1]["content"]
         self.assertIn("mdr trop fort", user_msg)
         self.assertIn("dialogue audio", user_msg)
         self.assertIn("deux personnes", user_msg)
+        self.assertIn("Contenu de la vidéo (audio + visuel)", user_msg)
+        self.assertNotIn("Caption reel:", user_msg)
 
     @patch("scripts.label_comments.requests.post")
     def test_uses_reasoning_content_when_content_empty(self, mock_post: MagicMock) -> None:
@@ -205,7 +239,8 @@ class LabelAndFuseTest(unittest.TestCase):
                     "message": {
                         "content": "",
                         "reasoning_content": (
-                            '{"t_type": "T3b", "video_context": "Moment relatable."}'
+                            'Analysis... {"t_type": "T2"} '
+                            'verdict final {"t_type": "T3b"}'
                         ),
                     }
                 }
@@ -220,7 +255,7 @@ class LabelAndFuseTest(unittest.TestCase):
             model="qwen/qwen3.6-35b-a3b",
         )
         self.assertEqual(t_type, "T3b")
-        self.assertEqual(video_context, "Moment relatable.")
+        self.assertEqual(video_context, "")
 
     @patch("scripts.label_comments.requests.post")
     def test_request_failure_returns_none_empty(self, mock_post: MagicMock) -> None:
@@ -303,7 +338,7 @@ class BuildTrainingEntryTest(unittest.TestCase):
         self.assertEqual(entry["llm_model"], label_comments.LABEL_LLM_MODEL)
         self.assertIn("labelled_at", entry)
 
-    def test_video_context_stored_in_entry(self) -> None:
+    def test_transcript_and_visual_stored_in_entry(self) -> None:
         raw_entry = {
             "media_id": "m1",
             "username": "alpha",
@@ -316,9 +351,8 @@ class BuildTrainingEntryTest(unittest.TestCase):
             raw_entry,
             "T2",
             {"alpha": {"t_type": "T2"}},
-            video_context="Fusion audio + visuel.",
         )
-        self.assertEqual(entry["video_context"], "Fusion audio + visuel.")
+        self.assertNotIn("video_context", entry)
         self.assertEqual(entry["transcript"], "audio ici")
         self.assertEqual(entry["visual_description"], "visuel ici")
 
@@ -393,6 +427,8 @@ class MainTest(unittest.TestCase):
             "caption": "cap",
             "hashtags": [],
             "audio_id": "",
+            "transcript": "dialogue audio test",
+            "visual_description": "scène visuelle test",
             "collected_at": "2026-05-11T00:00:00",
         }
 
@@ -403,7 +439,7 @@ class MainTest(unittest.TestCase):
         ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
             label_comments, "save_training_comments"
         ) as save_mock, patch.object(
-            label_comments, "label_and_fuse"
+            label_comments, "classify_comment_t_type"
         ) as fuse_mock:
             code = label_comments.main(["--dry-run"])
         self.assertEqual(code, 0)
@@ -423,7 +459,7 @@ class MainTest(unittest.TestCase):
         with patch.object(label_comments, "load_viral_comments", return_value=raw), patch.object(
             label_comments, "load_training_comments", return_value=(existing, {key})
         ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
-            label_comments, "label_and_fuse"
+            label_comments, "classify_comment_t_type"
         ) as fuse_mock, patch.object(
             label_comments, "save_training_comments"
         ) as save_mock:
@@ -458,7 +494,9 @@ class MainTest(unittest.TestCase):
         ), patch.object(label_comments, "load_watchlist", return_value=watchlist), patch.object(
             label_comments, "load_vector_store", return_value=vector_store
         ), patch.object(
-            label_comments, "label_and_fuse", return_value=("T4", "Contexte vidéo fusionné.")
+            label_comments,
+            "classify_comment_t_type",
+            return_value="T4",
         ) as fuse_mock, patch.object(
             label_comments, "save_training_comments"
         ) as save_mock, patch.object(
@@ -467,14 +505,11 @@ class MainTest(unittest.TestCase):
             code = label_comments.main(["--force"])
         self.assertEqual(code, 0)
         fuse_mock.assert_called_once()
-        ctx = fuse_mock.call_args.args[2]
-        self.assertEqual(ctx["t_type_profile"], "T2")
-        self.assertEqual(ctx["named_axes"]["energy_level"], 0.2)
-        self.assertEqual(ctx["comment_likes"], 1)
+        self.assertEqual(fuse_mock.call_args.args[0], "hello world")
         save_mock.assert_called_once()
         saved = save_mock.call_args.args[0]
         self.assertEqual(saved[0]["t_type"], "T4")
-        self.assertEqual(saved[0]["video_context"], "Contexte vidéo fusionné.")
+        self.assertNotIn("video_context", saved[0])
 
     def test_account_filter_limits_processing(self) -> None:
         raw = [
@@ -486,7 +521,9 @@ class MainTest(unittest.TestCase):
         ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
             label_comments, "load_vector_store", return_value={}
         ), patch.object(
-            label_comments, "label_and_fuse", return_value=("T2", "")
+            label_comments,
+            "classify_comment_t_type",
+            return_value="T2",
         ) as fuse_mock, patch.object(
             label_comments, "save_training_comments"
         ), patch.object(label_comments, "_ensure_llm_available", return_value=True):
@@ -494,7 +531,6 @@ class MainTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(fuse_mock.call_count, 1)
         self.assertEqual(fuse_mock.call_args.args[0], "beta text")
-        self.assertIsInstance(fuse_mock.call_args.args[2], dict)
 
 
 class SaveTrainingCommentsTest(unittest.TestCase):

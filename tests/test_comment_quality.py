@@ -15,7 +15,10 @@ from modules.comment_quality import (
     is_repetitive_comment,
     strip_emojis,
 )
-from modules.generator_prompt import MAX_GENERATOR_OUTPUT_WORDS
+from modules.generator_prompt import (
+    MAX_GENERATOR_OUTPUT_WORDS_SHORT,
+    MAX_TRAINING_COMMENT_WORDS,
+)
 
 
 class AssessCommentQualityTest(unittest.TestCase):
@@ -29,9 +32,20 @@ class AssessCommentQualityTest(unittest.TestCase):
         self.assertFalse(q.ok)
         self.assertIn(REJECT_EMOJI_ONLY, q.reasons)
 
-    def test_rejects_too_long(self) -> None:
-        text = " ".join(["mot"] * (MAX_GENERATOR_OUTPUT_WORDS + 1))
-        q = assess_comment_quality(text)
+    def test_rejects_too_long_short_bucket(self) -> None:
+        text = " ".join(["mot"] * (MAX_GENERATOR_OUTPUT_WORDS_SHORT + 1))
+        q = assess_comment_quality(text, length_bucket="short")
+        self.assertFalse(q.ok)
+        self.assertIn(REJECT_TOO_LONG, q.reasons)
+
+    def test_keeps_long_comment_in_long_bucket(self) -> None:
+        text = " ".join(["mot"] * 25)
+        q = assess_comment_quality(text, length_bucket="long")
+        self.assertTrue(q.ok)
+
+    def test_rejects_absurdly_long_even_in_long_bucket(self) -> None:
+        text = " ".join(["mot"] * (MAX_TRAINING_COMMENT_WORDS + 5))
+        q = assess_comment_quality(text, length_bucket="long")
         self.assertFalse(q.ok)
         self.assertIn(REJECT_TOO_LONG, q.reasons)
 
@@ -64,10 +78,14 @@ class IsFrenchCommentTest(unittest.TestCase):
     def test_keeps_french(self) -> None:
         self.assertTrue(is_french_comment("mdr trop vrai"))
         self.assertTrue(is_french_comment("Pas mal hein ? C'est francais"))
+        self.assertTrue(is_french_comment("La traduction directe c'est incroyable"))
 
-    def test_keeps_emoji_reactions(self) -> None:
-        self.assertTrue(is_french_comment("😂😂😂"))
-        self.assertTrue(is_french_comment("💀💀"))
+    def test_rejects_emoji_only_and_short_english(self) -> None:
+        self.assertFalse(is_french_comment("😂😂😂"))
+        self.assertFalse(is_french_comment("Same time tomorrow?"))
+        self.assertFalse(is_french_comment("i'm so excited"))
+        self.assertFalse(is_french_comment("befive"))
+        self.assertFalse(is_french_comment("#funny #funnyvideo #lmfaooo"))
 
 
 class IsIncompleteCommentTest(unittest.TestCase):

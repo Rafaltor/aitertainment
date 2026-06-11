@@ -58,10 +58,8 @@ _GRID_CELL_H = 405
 _GRID_COLS = 2
 _GRID_ROWS = 2
 _GRID_PCTS = [0.12, 0.37, 0.62, 0.87]
-_GRID_SCALE_VF = (
-    f"scale={_GRID_CELL_W}:{_GRID_CELL_H}:force_original_aspect_ratio=decrease,"
-    f"pad={_GRID_CELL_W}:{_GRID_CELL_H}:(ow-iw)/2:(oh-ih)/2:black"
-)
+# Pas de pad=…:black (échoue sur ffmpeg 8.x + H.264 vertical IG) — scale direct 720×405.
+_GRID_SCALE_VF = f"scale={_GRID_CELL_W}:{_GRID_CELL_H}"
 
 _GRID_VISION_PROMPT = (
     "Cette image est une grille 2x2 montrant 4 moments d'un même reel Instagram "
@@ -132,6 +130,11 @@ def _make_frames_grid(mp4_path: Path, output_path: Path) -> Path | None:
             frame_paths.append(fp)
 
     if len(frame_paths) < 3:
+        _LOG.warning(
+            "Grille %s : seulement %d/4 frames extraites — abandon visuel.",
+            mp4_path.name,
+            len(frame_paths),
+        )
         for fp in frame_paths:
             fp.unlink(missing_ok=True)
         return None
@@ -215,9 +218,24 @@ def _describe_grid(grid_path: Path) -> str:
             timeout=90,
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
+        message = resp.json()["choices"][0]["message"]
+        content = str(message.get("content") or "").strip()
+        if not content:
+            content = str(message.get("reasoning_content") or "").strip()
+        if not content:
+            _LOG.warning(
+                "Vision grille : réponse vide (modèle=%s).",
+                vision_model,
+            )
+        return content
     except Exception as e:
-        _LOG.warning("Vision grille échouée pour %s : %s", grid_path, e)
+        _LOG.warning(
+            "Vision grille échouée pour %s (modèle=%s, url=%s) : %s",
+            grid_path,
+            vision_model,
+            lm_url,
+            e,
+        )
         return ""
 
 
@@ -256,6 +274,11 @@ def _enrich_reel_with_transcript_and_visual(
             grid_path = _make_frames_grid(mp4_path, tmp_dir / "grid.jpg")
             if grid_path:
                 visual = (_describe_grid(grid_path) or "")[:1000]
+            elif mp4_path:
+                _LOG.warning(
+                    "Reel %s : grille vision non générée (ffmpeg frames).",
+                    media_id,
+                )
     except Exception as e:
         _LOG.warning("Enrichissement échoué %s : %s", media_id, e)
     finally:
@@ -394,8 +417,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--feed-scrolls",
         type=int,
-        default=40,
-        help="Scrolls du fil /reels/ (mode feed).",
+        default=config.FEED_SCROLL_STEPS_DEFAULT,
+        help="Scrolls du fil /reels/ (mode feed, phase 1 complète).",
+    )
+    parser.add_argument(
+        "--fr-watch-s",
+        type=float,
+        default=config.FEED_FR_REEL_WATCH_MIN_S,
+        help="Secondes sur un reel dont la caption est FR (signal algo IG).",
+    )
+    parser.add_argument(
+        "--feed-en-skip-ms",
+        type=int,
+        default=config.FEED_EN_REEL_SKIP_MS,
+        help="Pause courte avant scroll si caption non-FR (ms).",
     )
     parser.add_argument("--scroll-rounds", type=int, default=8, help="Scroll panneau commentaires.")
     parser.add_argument(
@@ -471,7 +506,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(
                 f"Mode feed : {args.feed_scrolls} scrolls, max {args.max_reels} reels, "
-                f"min_likes={args.min_likes}{target_note} → {args.output}"
+                f"min_likes={args.min_likes}, fr_watch={args.fr_watch_s}s{target_note} → {args.output}"
             )
             print(
                 f"  Pool viral (non labellisés) : {current} entrée(s) "
@@ -558,6 +593,8 @@ def main(argv: list[str] | None = None) -> int:
                     between_reels_min_s=args.between_min,
                     between_reels_max_s=args.between_max,
                     french_only=french_only,
+                    fr_reel_watch_s=args.fr_watch_s,
+                    feed_en_skip_ms=args.feed_en_skip_ms,
                     fresh_feed=fresh_feed,
                     skip_transcript=args.skip_transcript,
                     skip_visual=args.skip_visual,

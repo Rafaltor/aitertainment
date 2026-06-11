@@ -7,15 +7,23 @@ from typing import Any
 import requests
 
 import config
+from config import ORDERED_T_TYPES
 from modules.comment_quality import (
     assess_comment_quality,
     is_incomplete_comment,
+    is_rambly_comment,
     is_repetitive_comment,
 )
 from modules.generator_prompt import (
-    GENERATOR_INSTRUCTION,
+    INFERENCE_MAX_CHARS_LONG,
+    INFERENCE_MAX_CHARS_SHORT,
+    INFERENCE_MAX_SENTENCES_LONG,
+    INFERENCE_MAX_WORDS_LONG,
+    INFERENCE_MAX_WORDS_SHORT,
+    LengthBucket,
     build_alpaca_prompt,
     build_generator_input_block,
+    length_buckets_for_generation,
     normalize_generator_output,
 )
 
@@ -71,6 +79,140 @@ def _clean_generated_comment_line(text: str) -> str:
     return line.strip('"').strip("'")
 
 
+# Longueur par défaut à l'inférence selon le registre émotionnel du T-type.
+_T_TYPE_LENGTH_BUCKET: dict[str, LengthBucket] = {
+    "T1": "short",
+    "T2": "short",
+    "T2b": "long",
+    "T3a": "short",
+    "T3b": "long",
+    "T4": "short",
+    "T5": "short",
+}
+_INFERENCE_NUM_PREDICT: dict[LengthBucket, int] = {"short": 24, "long": 72}
+_INFERENCE_TEMPERATURE: dict[LengthBucket, float] = {"short": 0.65, "long": 0.5}
+_INFERENCE_MAX_WORDS: dict[LengthBucket, int] = {
+    "short": INFERENCE_MAX_WORDS_SHORT,
+    "long": INFERENCE_MAX_WORDS_LONG,
+}
+_INFERENCE_MAX_CHARS: dict[LengthBucket, int] = {
+    "short": INFERENCE_MAX_CHARS_SHORT,
+    "long": INFERENCE_MAX_CHARS_LONG,
+}
+
+
+def _inference_normalize(
+    text: str,
+    *,
+    length_bucket: LengthBucket,
+) -> str:
+    return normalize_generator_output(
+        text,
+        length_bucket=length_bucket,
+        max_words=_INFERENCE_MAX_WORDS[length_bucket],
+        max_chars=_INFERENCE_MAX_CHARS[length_bucket],
+        max_sentences=INFERENCE_MAX_SENTENCES_LONG if length_bucket == "long" else None,
+    )
+
+
+def _prepare_generator_context(
+    video_context: dict[str, Any] | None,
+) -> tuple[str | list[Any], str]:
+    ctx = video_context or {}
+    raw_hashtags = ctx.get("hashtags") or []
+    if isinstance(raw_hashtags, str):
+        hashtags: str | list[Any] = raw_hashtags
+    else:
+        tags = [str(h).strip() for h in raw_hashtags if str(h).strip()]
+        hashtags = tags
+    merged_video_context = str(ctx.get("video_context") or "").strip()
+    return hashtags, merged_video_context
+
+
+def _generate_single_comment(
+    *,
+    t_type_profile: str,
+    niches: list[str] | str,
+    video_context: dict[str, Any] | None,
+    named_axes: dict[str, Any] | None,
+    model: str,
+    ollama_url: str,
+    length_bucket: LengthBucket,
+    seen: set[str] | None = None,
+    max_attempts: int = 4,
+) -> str:
+    """Un commentaire Alpaca ; ``—`` si aucune sortie valide après les essais."""
+    ctx = video_context or {}
+    hashtags, merged_video_context = _prepare_generator_context(video_context)
+    dedupe = seen if seen is not None else set()
+
+    for _ in range(max_attempts):
+        input_block = build_generator_input_block(
+            t_type_profile=t_type_profile,
+            niches=niches,
+            caption=str(ctx.get("caption") or "").strip(),
+            hashtags=hashtags,
+            audio_id=str(ctx.get("audio_id") or ctx.get("audio") or "").strip(),
+            video_context=merged_video_context,
+            reel_id=str(ctx.get("reel_id") or ctx.get("video_id") or "").strip(),
+            creator_username=str(
+                ctx.get("creator_username") or ctx.get("username") or ""
+            ).strip(),
+            named_axes=named_axes if isinstance(named_axes, dict) and named_axes else None,
+            length_bucket=length_bucket,
+        )
+        prompt = build_alpaca_prompt(input_block, length_bucket=length_bucket)
+        num_predict = _INFERENCE_NUM_PREDICT[length_bucket]
+        body: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": _INFERENCE_TEMPERATURE[length_bucket],
+                "top_p": 0.85,
+                "repeat_penalty": 1.2,
+                "num_predict": num_predict,
+                "stop": (
+                    ["\n\n", "###", "@", "\n###"]
+                    if length_bucket == "long"
+                    else ["\n", "###", "@", "\n###"]
+                ),
+            },
+            "keep_alive": 0,
+        }
+        try:
+            resp = _http_post(ollama_url, json_body=body, timeout=120)
+            raw_text = _ollama_response_text(resp)
+        except (requests.RequestException, ValueError) as e:
+            raise ClassificationError(f"Erreur Ollama generator: {e}") from e
+
+        comment = _inference_normalize(
+            _clean_generated_comment_line(raw_text),
+            length_bucket=length_bucket,
+        )
+        if not comment or not assess_comment_quality(
+            comment, length_bucket=length_bucket
+        ).ok:
+            continue
+        if (
+            is_repetitive_comment(comment)
+            or is_incomplete_comment(comment)
+            or is_rambly_comment(
+                comment,
+                max_sentences=INFERENCE_MAX_SENTENCES_LONG
+                if length_bucket == "long"
+                else 2,
+            )
+        ):
+            continue
+        key = comment.lower()
+        if key in dedupe:
+            continue
+        dedupe.add(key)
+        return comment
+    return "—"
+
+
 def _generate_comments_alpaca(
     *,
     t_type_profile: str,
@@ -81,67 +223,73 @@ def _generate_comments_alpaca(
     ollama_url: str,
     num_comments: int = 3,
 ) -> list[str]:
-    """3 commentaires via le modèle fine-tuné (un appel Alpaca par commentaire)."""
-    ctx = video_context or {}
-    raw_hashtags = ctx.get("hashtags") or []
-    if isinstance(raw_hashtags, str):
-        hashtags: str | list[Any] = raw_hashtags
-    else:
-        tags = [str(h).strip() for h in raw_hashtags if str(h).strip()]
-        hashtags = tags
-
-    merged_video_context = str(ctx.get("video_context") or "").strip()
-    input_block = build_generator_input_block(
-        t_type_profile=t_type_profile,
-        niches=niches,
-        caption=str(ctx.get("caption") or "").strip(),
-        hashtags=hashtags,
-        audio_id=str(ctx.get("audio_id") or ctx.get("audio") or "").strip(),
-        video_context=merged_video_context,
-        reel_id=str(ctx.get("reel_id") or ctx.get("video_id") or "").strip(),
-        creator_username=str(ctx.get("creator_username") or ctx.get("username") or "").strip(),
-        named_axes=named_axes if isinstance(named_axes, dict) and named_axes else None,
-    )
-    prompt = build_alpaca_prompt(input_block, instruction=GENERATOR_INSTRUCTION)
+    """N commentaires via le modèle fine-tuné (un appel Alpaca par commentaire)."""
+    target_buckets = length_buckets_for_generation(num_comments)
+    bucket_queue: list[LengthBucket] = list(target_buckets)
 
     out: list[str] = []
     seen: set[str] = set()
     for _ in range(max(num_comments * 4, num_comments)):
         if len(out) >= num_comments:
             break
-        body: dict[str, Any] = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.7,
-                "top_p": 0.9,
-                "repeat_penalty": 1.15,
-                "num_predict": 28,
-                "stop": ["\n", "###", "@"],
-            },
-            "keep_alive": 0,
-        }
-        try:
-            resp = _http_post(ollama_url, json_body=body, timeout=120)
-            raw_text = _ollama_response_text(resp)
-        except (requests.RequestException, ValueError) as e:
-            raise ClassificationError(f"Erreur Ollama generator: {e}") from e
-
-        comment = normalize_generator_output(_clean_generated_comment_line(raw_text))
-        if not comment or not assess_comment_quality(comment).ok:
+        length_bucket = (
+            bucket_queue[len(out)]
+            if len(out) < len(bucket_queue)
+            else "long"
+        )
+        comment = _generate_single_comment(
+            t_type_profile=t_type_profile,
+            niches=niches,
+            video_context=video_context,
+            named_axes=named_axes,
+            model=model,
+            ollama_url=ollama_url,
+            length_bucket=length_bucket,
+            seen=seen,
+        )
+        if comment == "—":
             continue
-        if is_repetitive_comment(comment) or is_incomplete_comment(comment):
-            continue
-        key = comment.lower()
-        if key in seen:
-            continue
-        seen.add(key)
         out.append(comment)
 
     while len(out) < num_comments:
         out.append("—")
     return out[:num_comments]
+
+
+def generate_comments_per_category(
+    *,
+    niches: list[str] | str = "",
+    video_context: dict[str, Any] | None = None,
+    named_axes: dict[str, Any] | None = None,
+    t_types: tuple[str, ...] | None = None,
+) -> dict[str, str]:
+    """Un commentaire par T-type pour le même prompt (caption / contexte vidéo).
+
+    Requiert ``OLLAMA_GENERATOR_MODEL`` dans ``.env``.
+    """
+    finetuned_model = getattr(config, "OLLAMA_GENERATOR_MODEL", "") or ""
+    if not finetuned_model:
+        raise ClassificationError(
+            "OLLAMA_GENERATOR_MODEL non défini : le modèle fine-tuné est requis "
+            "pour generate_comments_per_category."
+        )
+    axes = named_axes if isinstance(named_axes, dict) and named_axes else None
+    categories = t_types or ORDERED_T_TYPES
+    seen: set[str] = set()
+    out: dict[str, str] = {}
+    for t_type in categories:
+        length_bucket = _T_TYPE_LENGTH_BUCKET.get(t_type, "short")
+        out[t_type] = _generate_single_comment(
+            t_type_profile=t_type,
+            niches=niches,
+            video_context=video_context,
+            named_axes=axes,
+            model=finetuned_model,
+            ollama_url=config.OLLAMA_URL,
+            length_bucket=length_bucket,
+            seen=seen,
+        )
+    return out
 
 
 def generate_comments(

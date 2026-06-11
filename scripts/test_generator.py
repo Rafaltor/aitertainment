@@ -12,12 +12,17 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 import config
-from modules.classifier import generate_comments
+from config import ORDERED_T_TYPES
+from modules.classifier import generate_comments, generate_comments_per_category
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Test generate_comments (Ollama).")
-    parser.add_argument("--t-type", default="T2", help="T-type commentateur (ex. T2, T3b)")
+    parser.add_argument(
+        "--t-type",
+        default=None,
+        help="Une seule catégorie (ex. T3b). Par défaut : toutes les catégories.",
+    )
     parser.add_argument("--niche", default="humour", help="Niche(s), séparées par des virgules")
     parser.add_argument(
         "--caption",
@@ -31,26 +36,40 @@ def main() -> int:
     print(f"Modèle: {model}")
     print(f"URL: {config.OLLAMA_URL}\n")
 
-    classification = {"type": args.t_type, "confidence": 0.9}
     niches = [n.strip() for n in args.niche.split(",") if n.strip()]
-    comments = generate_comments(
-        classification,
-        [],
+    video_context = {
+        "caption": args.caption,
+        "hashtags": ["humour", "etudiant"],
+        "audio_id": "",
+    }
+    named_axes = {
+        "scripted_vs_raw": 0.6,
+        "energy_level": 0.5,
+        "mainstream_vs_niche": 0.4,
+    }
+
+    if args.t_type:
+        classification = {"type": args.t_type, "confidence": 0.9}
+        comments = generate_comments(
+            classification,
+            [],
+            niches=niches,
+            t_type_profile=args.t_type,
+            video_context=video_context,
+            named_axes=named_axes,
+        )
+        for i, c in enumerate(comments, 1):
+            print(f"  {i}. {c}")
+        return 0
+
+    by_type = generate_comments_per_category(
         niches=niches,
-        t_type_profile=args.t_type,
-        video_context={
-            "caption": args.caption,
-            "hashtags": ["humour", "etudiant"],
-            "audio_id": "",
-        },
-        named_axes={
-            "scripted_vs_raw": 0.6,
-            "energy_level": 0.5,
-            "mainstream_vs_niche": 0.4,
-        },
+        video_context=video_context,
+        named_axes=named_axes,
+        t_types=ORDERED_T_TYPES,
     )
-    for i, c in enumerate(comments, 1):
-        print(f"  {i}. {c}")
+    for t_type in ORDERED_T_TYPES:
+        print(f"  [{t_type}] {by_type.get(t_type, '—')}")
     return 0
 
 
