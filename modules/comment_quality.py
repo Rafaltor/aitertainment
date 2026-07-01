@@ -245,7 +245,12 @@ def is_french_reel_caption(caption: str) -> bool:
 def is_incomplete_comment(text: str) -> bool:
     """Phrase coupée (finit sur une préposition / conjonction / mot tronqué)."""
     raw = str(text or "").strip()
-    if re.search(r"\b(?:n'|j'|l'|d'|qu'|s'|c'|m'|t')\w*$", raw, re.IGNORECASE):
+    # Apostrophe orpheline en fin (j', l') — pas « l'oral » où le mot continue après l'.
+    if re.search(
+        r"\b(?:n'|j'|l'|d'|qu'|s'|c'|m'|t')$",
+        raw,
+        re.IGNORECASE,
+    ):
         return True
     words = re.findall(r"[\w']+", raw.lower())
     if len(words) < 4:

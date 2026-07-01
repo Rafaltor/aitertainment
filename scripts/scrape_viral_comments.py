@@ -14,16 +14,10 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import base64
-import json
 import logging
-import shutil
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
-import requests
 from playwright.sync_api import BrowserContext, sync_playwright
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -32,11 +26,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 import config
 from discovery import _seed_niches, _seed_username, load_seeds
-from scripts.reel_media import (
-    download_reel_video,
-    extract_wav_from_video,
-    transcribe_audio,
-)
+from modules.reel_enrichment import enrich_reel_with_transcript_and_visual
 from scripts.instagram_browser import (
     VIRAL_COMMENTS_PATH,
     collect_viral_comments,
@@ -53,237 +43,8 @@ from watcher import load_watchlist
 
 _LOG = logging.getLogger(__name__)
 
-_GRID_CELL_W = 720
-_GRID_CELL_H = 405
-_GRID_COLS = 2
-_GRID_ROWS = 2
-_GRID_PCTS = [0.12, 0.37, 0.62, 0.87]
-# Pas de pad=…:black (échoue sur ffmpeg 8.x + H.264 vertical IG) — scale direct 720×405.
-_GRID_SCALE_VF = f"scale={_GRID_CELL_W}:{_GRID_CELL_H}"
-
-_GRID_VISION_PROMPT = (
-    "Cette image est une grille 2x2 montrant 4 moments d'un même reel Instagram "
-    "humour français, lus chronologiquement de gauche à droite et de haut en bas "
-    "(intro → développement → climax → chute). Décris en 3-5 phrases la "
-    "progression de la vidéo : qui apparaît, ce qui se passe, le décor et le ton, "
-    "tout texte visible."
-)
-
-
-def _make_frames_grid(mp4_path: Path, output_path: Path) -> Path | None:
-    """Extrait 4 frames (12 %–87 %) et les assemble en grille 2×2 (720×405 par cellule)."""
-    mp4_path = Path(mp4_path)
-    output_path = Path(output_path)
-    if not mp4_path.exists():
-        return None
-
-    duration = 10.0
-    try:
-        probe = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "quiet",
-                "-print_format",
-                "json",
-                "-show_streams",
-                str(mp4_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if probe.returncode == 0 and probe.stdout:
-            data = json.loads(probe.stdout)
-            for stream in data.get("streams", []):
-                if stream.get("codec_type") == "video":
-                    duration = float(stream.get("duration", 10))
-                    break
-    except Exception:
-        pass
-
-    work = output_path.parent
-    frame_paths: list[Path] = []
-    for i, pct in enumerate(_GRID_PCTS):
-        fp = work / f"_grid_cell_{i}.jpg"
-        t = max(0.0, duration * pct)
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-ss",
-                str(t),
-                "-i",
-                str(mp4_path),
-                "-frames:v",
-                "1",
-                "-vf",
-                _GRID_SCALE_VF,
-                "-q:v",
-                "2",
-                str(fp),
-            ],
-            capture_output=True,
-            check=False,
-        )
-        if fp.exists() and fp.stat().st_size > 500:
-            frame_paths.append(fp)
-
-    if len(frame_paths) < 3:
-        _LOG.warning(
-            "Grille %s : seulement %d/4 frames extraites — abandon visuel.",
-            mp4_path.name,
-            len(frame_paths),
-        )
-        for fp in frame_paths:
-            fp.unlink(missing_ok=True)
-        return None
-
-    while len(frame_paths) < 4:
-        frame_paths.append(frame_paths[-1])
-
-    inputs: list[str] = []
-    for fp in frame_paths[:4]:
-        inputs.extend(["-i", str(fp)])
-
-    filter_complex = (
-        "[0:v][1:v]hstack=inputs=2[r1];"
-        "[2:v][3:v]hstack=inputs=2[r2];"
-        "[r1][r2]vstack=inputs=2[out]"
-    )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            *inputs,
-            "-filter_complex",
-            filter_complex,
-            "-map",
-            "[out]",
-            "-q:v",
-            "2",
-            str(output_path),
-        ],
-        capture_output=True,
-        check=False,
-    )
-    for fp in frame_paths[:4]:
-        fp.unlink(missing_ok=True)
-
-    if result.returncode != 0 or not output_path.exists():
-        _LOG.warning(
-            "ffmpeg grille 2x2 échoué pour %s : %s",
-            mp4_path,
-            (result.stderr or b"").decode(errors="replace")[-300:],
-        )
-        return None
-    return output_path
-
-
-def _describe_grid(grid_path: Path) -> str:
-    """Description visuelle via LM Studio (grille 2×2, ``config.LM_STUDIO_*``)."""
-    grid_path = Path(grid_path)
-    lm_url = (config.LM_STUDIO_URL or "").strip().rstrip("/")
-    vision_model = (config.LM_STUDIO_VISION_MODEL or "").strip()
-    if not grid_path.exists() or not lm_url or not vision_model:
-        return ""
-
-    img_b64 = base64.b64encode(grid_path.read_bytes()).decode()
-    try:
-        resp = requests.post(
-            f"{lm_url}/chat/completions",
-            json={
-                "model": vision_model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{img_b64}"
-                                },
-                            },
-                            {
-                                "type": "text",
-                                "text": _GRID_VISION_PROMPT,
-                            },
-                        ],
-                    }
-                ],
-                "max_tokens": 512,
-                "temperature": 0.3,
-            },
-            timeout=90,
-        )
-        resp.raise_for_status()
-        message = resp.json()["choices"][0]["message"]
-        content = str(message.get("content") or "").strip()
-        if not content:
-            content = str(message.get("reasoning_content") or "").strip()
-        if not content:
-            _LOG.warning(
-                "Vision grille : réponse vide (modèle=%s).",
-                vision_model,
-            )
-        return content
-    except Exception as e:
-        _LOG.warning(
-            "Vision grille échouée pour %s (modèle=%s, url=%s) : %s",
-            grid_path,
-            vision_model,
-            lm_url,
-            e,
-        )
-        return ""
-
-
-def _enrich_reel_with_transcript_and_visual(
-    media_id: str,
-    browser_context: BrowserContext,
-    *,
-    skip_transcript: bool = False,
-    skip_visual: bool = False,
-) -> tuple[str, str]:
-    """Télécharge le reel, transcrit, génère la description visuelle.
-
-    Retourne ``(transcript, visual_description)``. Nettoie le répertoire temporaire.
-    """
-    if skip_transcript and skip_visual:
-        return "", ""
-
-    media_id = str(media_id or "").strip()
-    if not media_id:
-        return "", ""
-
-    tmp_dir = Path(tempfile.mkdtemp(prefix="ait_viral_enrich_"))
-    transcript = ""
-    visual = ""
-    try:
-        mp4_path = download_reel_video(media_id, browser_context, tmp_dir)
-        if not mp4_path:
-            return "", ""
-
-        if not skip_transcript:
-            wav_path = extract_wav_from_video(mp4_path, tmp_dir)
-            if wav_path:
-                transcript = (transcribe_audio(wav_path) or "")[:2000]
-
-        if not skip_visual and config.LM_STUDIO_URL and config.LM_STUDIO_VISION_MODEL:
-            grid_path = _make_frames_grid(mp4_path, tmp_dir / "grid.jpg")
-            if grid_path:
-                visual = (_describe_grid(grid_path) or "")[:1000]
-            elif mp4_path:
-                _LOG.warning(
-                    "Reel %s : grille vision non générée (ffmpeg frames).",
-                    media_id,
-                )
-    except Exception as e:
-        _LOG.warning("Enrichissement échoué %s : %s", media_id, e)
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-    return transcript, visual
+# Rétro-compat (tests / imports externes).
+_enrich_reel_with_transcript_and_visual = enrich_reel_with_transcript_and_visual
 
 
 def _count_entries(path: Path) -> int:

@@ -111,12 +111,12 @@ class CountEntriesTest(unittest.TestCase):
 
 
 class EnrichReelTest(unittest.TestCase):
-    @patch("scripts.scrape_viral_comments.config")
-    @patch("scripts.scrape_viral_comments._describe_grid", return_value="scène cuisine")
-    @patch("scripts.scrape_viral_comments._make_frames_grid")
-    @patch("scripts.scrape_viral_comments.transcribe_audio", return_value="bonjour le monde")
-    @patch("scripts.scrape_viral_comments.extract_wav_from_video")
-    @patch("scripts.scrape_viral_comments.download_reel_video")
+    @patch("modules.reel_enrichment.config")
+    @patch("modules.reel_enrichment._describe_grid", return_value="scène cuisine")
+    @patch("modules.reel_enrichment._make_frames_grid")
+    @patch("modules.reel_enrichment.transcribe_audio", return_value="bonjour le monde")
+    @patch("modules.reel_enrichment.extract_wav_from_video")
+    @patch("modules.reel_enrichment.download_reel_video")
     def test_enrich_returns_transcript_and_visual(
         self,
         mock_dl: unittest.mock.MagicMock,
@@ -126,7 +126,7 @@ class EnrichReelTest(unittest.TestCase):
         mock_desc: unittest.mock.MagicMock,
         mock_cfg: unittest.mock.MagicMock,
     ) -> None:
-        from scripts.scrape_viral_comments import _enrich_reel_with_transcript_and_visual
+        from modules.reel_enrichment import enrich_reel_with_transcript_and_visual
 
         mock_cfg.LM_STUDIO_URL = "http://127.0.0.1:1234/v1"
         mock_cfg.LM_STUDIO_VISION_MODEL = "openbmb/minicpm-v-2_6"
@@ -135,18 +135,18 @@ class EnrichReelTest(unittest.TestCase):
         mock_wav.return_value = Path("/tmp/fake.wav")
         mock_grid.return_value = Path("/tmp/grid.jpg")
 
-        tr, vis = _enrich_reel_with_transcript_and_visual(
+        tr, vis = enrich_reel_with_transcript_and_visual(
             "reel1",
             unittest.mock.MagicMock(),
         )
         self.assertEqual(tr, "bonjour le monde")
         self.assertEqual(vis, "scène cuisine")
 
-    @patch("scripts.scrape_viral_comments.download_reel_video")
+    @patch("modules.reel_enrichment.download_reel_video")
     def test_enrich_skips_when_flags(self, mock_dl: unittest.mock.MagicMock) -> None:
-        from scripts.scrape_viral_comments import _enrich_reel_with_transcript_and_visual
+        from modules.reel_enrichment import enrich_reel_with_transcript_and_visual
 
-        tr, vis = _enrich_reel_with_transcript_and_visual(
+        tr, vis = enrich_reel_with_transcript_and_visual(
             "reel1",
             unittest.mock.MagicMock(),
             skip_transcript=True,

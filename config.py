@@ -38,8 +38,8 @@ WATCHER_SLEEP_BETWEEN_CREATORS_S = int(
     os.environ.get("WATCHER_SLEEP_BETWEEN_CREATORS_S", "3")
 )
 # Intervalle entre deux cycles selon l'heure locale (secondes)
-WATCHER_PRIME_INTERVAL_S = int(os.environ.get("WATCHER_PRIME_INTERVAL_S", "300"))
-WATCHER_DAY_INTERVAL_S = int(os.environ.get("WATCHER_DAY_INTERVAL_S", "600"))
+WATCHER_PRIME_INTERVAL_S = int(os.environ.get("WATCHER_PRIME_INTERVAL_S", "45"))
+WATCHER_DAY_INTERVAL_S = int(os.environ.get("WATCHER_DAY_INTERVAL_S", "45"))
 WATCHER_NIGHT_INTERVAL_S = int(os.environ.get("WATCHER_NIGHT_INTERVAL_S", "1800"))
 # Filtre vues sur nouveau post : désactivé par défaut (cycles ~5–7 min → posts
 # souvent > 2000 vues avant le prochain check). Activer seulement si polling très rapide.
@@ -50,7 +50,7 @@ WATCHER_NEW_POST_VIEW_THRESHOLD = int(
     os.environ.get("WATCHER_NEW_POST_VIEW_THRESHOLD", "2000")
 )
 # Attente SPA après ouverture grille /reels/ (ms). Défaut watcher : 1200.
-WATCHER_SPA_WAIT_MS = int(os.environ.get("WATCHER_SPA_WAIT_MS", "1200"))
+WATCHER_SPA_WAIT_MS = int(os.environ.get("WATCHER_SPA_WAIT_MS", "600"))
 # Nombre de reels lus sur la grille profil pour la détection (DOM).
 WATCHER_GRID_REELS = int(os.environ.get("WATCHER_GRID_REELS", "12"))
 # Alerte seulement si le reel en tête a été publié dans cette fenêtre (heures).
@@ -69,16 +69,23 @@ IG_PASSWORD = os.environ.get("IG_PASSWORD", "").strip()
 # 2e compte IG (watcher dual-account — moitié watchlist).
 IG2_USERNAME = os.environ.get("IG2_USERNAME", "").strip()
 IG2_PASSWORD = os.environ.get("IG2_PASSWORD", "").strip()
+IG3_USERNAME = os.environ.get("IG3_USERNAME", "").strip()
+IG3_PASSWORD = os.environ.get("IG3_PASSWORD", "").strip()
 WATCHER_IG2_COOKIES_PATH = _PROJECT_ROOT / os.environ.get(
     "WATCHER_IG2_COOKIES_PATH", "data/instagram_cookies_2.json"
+)
+WATCHER_IG3_COOKIES_PATH = _PROJECT_ROOT / os.environ.get(
+    "WATCHER_IG3_COOKIES_PATH", "data/instagram_cookies_3.json"
 )
 WATCHER_DUAL_ACCOUNT = os.environ.get(
     "WATCHER_DUAL_ACCOUNT", "false"
 ).strip().lower() in ("1", "true", "yes")
-# Watcher : surveillance watchlist sur IG2 uniquement (slot 1 = cookies_2).
-# IG1 (slot 0) est réservé au spam commentaires (``scripts/ig1_spam_reels.py``).
-WATCHER_SCRAPE_SLOT = int(os.environ.get("WATCHER_SCRAPE_SLOT", "1"))
-WATCHER_COMMENT_SLOT = int(os.environ.get("WATCHER_COMMENT_SLOT", "0"))
+# Slots Playwright : 0 = IG1 spam, 1 = IG2 watcher, 2 = IG3 watcher.
+# ``WATCHER_DUAL_ACCOUNT=true`` : scrape parallèle IG2 + IG3 (moitié watchlist chacun).
+# Sinon mono-compte via ``WATCHER_SCRAPE_SLOT`` (1 = IG2, 2 = IG3).
+WATCHER_SCRAPE_SLOT = int(os.environ.get("WATCHER_SCRAPE_SLOT", "2"))
+WATCHER_DUAL_SLOT_A = 1
+WATCHER_DUAL_SLOT_B = 2
 # Alerte Telegram seule sur nouveau post (pas Ollama / transcript / suggestions).
 WATCHER_ALERT_ONLY = os.environ.get(
     "WATCHER_ALERT_ONLY", "true"
@@ -88,6 +95,33 @@ WATCHER_AUTO_COMMENT_LOWTAPER = os.environ.get(
     "WATCHER_AUTO_COMMENT_LOWTAPER", "true"
 ).strip().lower() in ("1", "true", "yes")
 SPAM_COMMENT_TEXT = os.environ.get("SPAM_COMMENT_TEXT", "lowtaper67").strip()
+# Mot-clé obligatoire dans chaque commentaire IG1 généré (défaut = SPAM_COMMENT_TEXT).
+SPAM_COMMENT_KEYWORD = (
+    os.environ.get("SPAM_COMMENT_KEYWORD") or SPAM_COMMENT_TEXT or "lowtaper67"
+).strip()
+# T-type Ollama pour le spam fil Reels (défaut T3a = vanne / second degré).
+SPAM_GENERATOR_T_TYPE = os.environ.get("SPAM_GENERATOR_T_TYPE", "T3a").strip()
+# IG1 : inférence / 2 passes (Ollama base + weave Ollama Mac mini).
+SPAM_GENERATOR_MAX_WORDS = int(os.environ.get("SPAM_GENERATOR_MAX_WORDS", "12"))
+SPAM_GENERATOR_MAX_CHARS = int(os.environ.get("SPAM_GENERATOR_MAX_CHARS", "110"))
+SPAM_GENERATOR_BASE_ATTEMPTS = int(os.environ.get("SPAM_GENERATOR_BASE_ATTEMPTS", "2"))
+SPAM_GENERATOR_WEAVE_ATTEMPTS = int(os.environ.get("SPAM_GENERATOR_WEAVE_ATTEMPTS", "1"))
+SPAM_GENERATOR_BASE_COUNT = int(os.environ.get("SPAM_GENERATOR_BASE_COUNT", "1"))
+SPAM_GENERATOR_BASE_MAX_ATTEMPTS = int(
+    os.environ.get("SPAM_GENERATOR_BASE_MAX_ATTEMPTS", "6")
+)
+# IG1 : désactiver transcript Whisper ou vision (défaut = pipeline complet).
+IG1_SPAM_SKIP_TRANSCRIPT = os.environ.get("IG1_SPAM_SKIP_TRANSCRIPT", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+IG1_SPAM_SKIP_VISUAL = os.environ.get("IG1_SPAM_SKIP_VISUAL", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+IG1_QUEUE_MAX_RETRIES = int(os.environ.get("IG1_QUEUE_MAX_RETRIES", "3"))
 # T-types exclus de la surveillance (ex. T1 = marques, peu utile en temps réel).
 WATCHER_SKIP_T_TYPES = frozenset(
     t.strip().upper()
@@ -143,10 +177,23 @@ OLLAMA_URL = (
     or "http://localhost:11434/api/generate"
 ).strip()
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b").strip()
+# Durée de maintien des modèles en RAM entre appels (ex. ``5m``). ``0`` = décharger à chaque fois.
+OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "5m").strip() or "5m"
+# Timeout HTTP Ollama (fusion / générateur IG1). Défaut 60s — échec rapide si saturé.
+OLLAMA_REQUEST_TIMEOUT_S = int(os.environ.get("OLLAMA_REQUEST_TIMEOUT_S", "60"))
+SPAM_FUSION_OLLAMA_MODEL = (
+    os.environ.get("SPAM_FUSION_OLLAMA_MODEL") or OLLAMA_MODEL or ""
+).strip()
 
 # Modèle Ollama fine-tuné pour ``generate_comments`` (format Alpaca).
-# Requis pour ``generate_comments`` (Watcher). Ex. après ``ollama create`` (cf. deploy/).
 OLLAMA_GENERATOR_MODEL = os.environ.get("OLLAMA_GENERATOR_MODEL", "").strip()
+# Weave lowtaper67 : même modèle que le générateur par défaut (substitution d'un mot).
+SPAM_WEAVE_OLLAMA_MODEL = (
+    os.environ.get("SPAM_WEAVE_OLLAMA_MODEL")
+    or OLLAMA_GENERATOR_MODEL
+    or OLLAMA_MODEL
+    or ""
+).strip()
 
 # LM Studio (vision grille frames, labélisation T-type via LABEL_LLM_*)
 LM_STUDIO_URL = (

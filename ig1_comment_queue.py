@@ -1,6 +1,6 @@
 """File d'attente IG1 — reels à commenter (watcher + spam feed).
 
-Le watcher (IG2) pousse les nouveaux posts détectés ; ``scripts/ig1_spam_reels.py``
+Le watcher (IG2/IG3) pousse les nouveaux posts détectés ; ``scripts/ig1_spam_reels.py``
 consomme la file en priorité avant de continuer le scroll fil Reels.
 """
 
@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from modules.atomic_json import atomic_write_json, json_lock
+
+import config
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_QUEUE_PATH = _PROJECT_ROOT / "data" / "ig1_comment_queue.json"
@@ -105,6 +107,45 @@ def pop_ig1_comment(*, path: Path | None = None) -> dict[str, Any] | None:
         data["items"] = items
         _save_json(qpath, data, use_lock=False)
     return item if isinstance(item, dict) else None
+
+
+def requeue_ig1_comment(
+    item: dict[str, Any],
+    *,
+    path: Path | None = None,
+    max_retries: int | None = None,
+) -> bool:
+    """Remet un item en tête de file après échec génération/post. False si max retries."""
+    if not isinstance(item, dict):
+        return False
+    mid = str(item.get("media_id") or "").strip()
+    if not mid:
+        return False
+    limit = max_retries
+    if limit is None:
+        limit = int(getattr(config, "IG1_QUEUE_MAX_RETRIES", 3))
+    attempts = int(item.get("attempts") or 0) + 1
+    if attempts > limit:
+        return False
+
+    qpath = path or DEFAULT_QUEUE_PATH
+    retry_item = dict(item)
+    retry_item["attempts"] = attempts
+    retry_item["last_failed_at"] = _now_iso()
+    if not retry_item.get("queued_at"):
+        retry_item["queued_at"] = _now_iso()
+
+    with json_lock(qpath):
+        data = _load_json(qpath, {"items": []})
+        items = data.get("items")
+        if not isinstance(items, list):
+            items = []
+        if any(str(it.get("media_id") or "") == mid for it in items if isinstance(it, dict)):
+            return False
+        items.insert(0, retry_item)
+        data["items"] = _prune_queue(items)
+        _save_json(qpath, data, use_lock=False)
+    return True
 
 
 def queue_length(*, path: Path | None = None) -> int:

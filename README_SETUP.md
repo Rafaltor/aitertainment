@@ -447,26 +447,18 @@ Pour aller plus loin : `man launchd.plist`, `man launchctl`.
 
 | Compte | Cookies | Rôle |
 |---|---|---|
-| **IG1** (`lowtaperdu67`) | `data/instagram_cookies.json` | Spam `lowtaper67` — fil Reels + file watcher (`scripts/ig1_spam_reels.py`) |
-| **IG2** (`abaclavachaud`) | `data/instagram_cookies_2.json` | Watcher : scrape watchlist, alertes Telegram |
+| **IG1** (`lowtaperdu67`) | `data/instagram_cookies.json` | Spam fil Reels Ollama + mot-clé `lowtaper67` (`scripts/ig1_spam_reels.py`) |
+| **IG2** (`abaclavachaud`) | `data/instagram_cookies_2.json` | Watcher dual (moitié watchlist) |
+| **IG3** (`abalaclavachaud`) | `data/instagram_cookies_3.json` | Watcher dual (moitié watchlist) |
 
-### Modes watcher
-
-| `WATCHER_ALERT_ONLY` | Comportement |
-|---|---|
-| `true` (**prod**) | Alerte Telegram minimale + enqueue IG1 (`WATCHER_AUTO_COMMENT_LOWTAPER`) |
-| `false` | Mode complet : transcript, vision LM Studio, Ollama `generate_comments`, boutons Telegram |
-
-Le code mode Ollama reste maintenu — basculer via `.env` sans toucher au code.
-
-Variables clés : `WATCHER_DUAL_ACCOUNT=false`, `WATCHER_SCRAPE_SLOT=1`, `WATCHER_SKIP_T_TYPES=T1`.
+Variables clés : `WATCHER_DUAL_ACCOUNT=true`, `WATCHER_SKIP_T_TYPES=T1`.
 
 **Pipeline branché (prod Mac Mini)**
 
 | Couche | Process | État |
 |---|---|---|
 | Discovery | `telegram_discovery_bot.py` + `discovery.py` | OK |
-| Watcher | `watcher.py` sur IG2 (alertes + file IG1) | OK |
+| Watcher | `watcher.py` sur **IG2 + IG3** (dual, alertes + file IG1) | OK |
 | IG1 spam | `scripts/ig1_spam_reels.py --loop` | OK |
 | Générateur | Colab → `deploy_generator.py` → `aitertainment-generator` (Ollama) | OK |
 | Corpus viral | `scrape_viral_comments` → clean → label → prepare | OK |
@@ -484,11 +476,14 @@ Variables clés : `WATCHER_DUAL_ACCOUNT=false`, `WATCHER_SCRAPE_SLOT=1`, `WATCHE
 
 ```bash
 # Services Mac Mini (tmux ou launchd)
-# Session 1 — watcher IG2
+# Session 1 — watcher IG2 + IG3 (WATCHER_DUAL_ACCOUNT=true)
 .venv/bin/python -u watcher.py
 
 # Session 2 — spam IG1
 .venv/bin/python -u scripts/ig1_spam_reels.py --loop
+
+# Renouveler session IG1 si cookies expirés
+.venv/bin/python scripts/ig1_spam_reels.py --login
 
 # Discovery bot
 launchctl load com.aitertainment.discovery_bot.plist

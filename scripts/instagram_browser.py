@@ -311,7 +311,7 @@ def session_ok(context: BrowserContext) -> bool:
         )
         page.wait_for_timeout(800)
         url = page.url or ""
-        if "/accounts/login" in url:
+        if "/accounts/login" in url or "two_step_verification" in url:
             return False
         user_in = page.locator('input[name="username"]')
         pass_in = page.locator('input[name="password"]')
@@ -2646,6 +2646,22 @@ def _dismiss_post_login_dialogs(page: Page) -> None:
             pass
 
 
+def _accept_instagram_cookies(page: Page) -> None:
+    for label in (
+        "Autoriser tous les cookies",
+        "Allow all cookies",
+        "Tout accepter",
+    ):
+        try:
+            btn = page.locator(f'button:has-text("{label}")')
+            if btn.count() and btn.first.is_visible(timeout=1_500):
+                btn.first.click(timeout=3_000)
+                page.wait_for_timeout(800)
+                return
+        except Exception:
+            pass
+
+
 def _fill_instagram_login_form(page: Page, username: str, password: str) -> None:
     page.goto(
         f"{BASE_URL}/accounts/login/",
@@ -2653,10 +2669,63 @@ def _fill_instagram_login_form(page: Page, username: str, password: str) -> None
         wait_until="domcontentloaded",
     )
     page.wait_for_timeout(1200)
-    page.locator('input[name="username"]').first.fill(username, timeout=10_000)
-    page.locator('input[name="password"]').first.fill(password, timeout=10_000)
-    page.locator('button[type="submit"]').first.click(timeout=10_000)
+    _accept_instagram_cookies(page)
+    user_sel = 'input[name="username"]'
+    pass_sel = 'input[name="password"]'
+    if page.locator(user_sel).count() == 0:
+        user_sel = 'input[name="email"]'
+    if page.locator(pass_sel).count() == 0:
+        pass_sel = 'input[name="pass"]'
+    page.locator(user_sel).first.fill(username, timeout=10_000)
+    page.locator(pass_sel).first.fill(password, timeout=10_000)
+    submit = page.locator('button[type="submit"]')
+    if submit.count():
+        submit.first.click(timeout=10_000)
+    else:
+        page.get_by_role("button", name="Se connecter", exact=True).click(timeout=10_000)
     page.wait_for_load_state("load", timeout=30_000)
+
+
+def _submit_instagram_2fa(page: Page, code: str) -> bool:
+    """Saisit un code 2FA Instagram si la page de vérification est affichée."""
+    otp = str(code or "").strip().replace(" ", "")
+    if not otp:
+        return False
+    selectors = (
+        'input[name="verificationCode"]',
+        'input[aria-label*="code" i]',
+        'input[aria-label*="Code" i]',
+        'input[autocomplete="one-time-code"]',
+        'input[inputmode="numeric"]',
+    )
+    for sel in selectors:
+        loc = page.locator(sel)
+        if loc.count() == 0:
+            continue
+        try:
+            field = loc.first
+            if not field.is_visible(timeout=2_000):
+                continue
+            field.fill(otp, timeout=5_000)
+            for btn_name in (
+                "Confirmer",
+                "Confirm",
+                "Continuer",
+                "Continue",
+                "Suivant",
+                "Next",
+            ):
+                btn = page.get_by_role("button", name=btn_name)
+                if btn.count() and btn.first.is_visible(timeout=800):
+                    btn.first.click(timeout=5_000)
+                    page.wait_for_load_state("load", timeout=30_000)
+                    return True
+            page.keyboard.press("Enter")
+            page.wait_for_load_state("load", timeout=30_000)
+            return True
+        except Exception:
+            continue
+    return False
 
 
 def login_instagram_interactive(
@@ -2666,8 +2735,9 @@ def login_instagram_interactive(
     *,
     save_cookies_path: Path | str,
     wait_after_submit_s: float = 300,
+    otp_code: str | None = None,
 ) -> BrowserContext:
-    """Connexion avec navigateur visible : l'utilisateur complète 2FA/challenge à la main."""
+    """Connexion navigateur visible ; ``otp_code`` optionnel pour saisie 2FA auto."""
     u = str(username or "").strip()
     pwd = str(password or "")
     if not u or not pwd:
@@ -2684,9 +2754,15 @@ def login_instagram_interactive(
             int(wait_after_submit_s),
         )
         _fill_instagram_login_form(page, u, pwd)
+        if otp_code:
+            page.wait_for_timeout(2_500)
+            if _submit_instagram_2fa(page, otp_code):
+                log.info("Code 2FA soumis pour @%s.", u)
         deadline = time.time() + wait_after_submit_s
         while time.time() < deadline:
             _dismiss_post_login_dialogs(page)
+            if otp_code and "two_step" in (page.url or "").lower():
+                _submit_instagram_2fa(page, otp_code)
             if session_ok(context):
                 save_instagram_cookies(context, save_cookies_path)
                 log.info("Session @%s OK — cookies sauvegardés.", u)
@@ -2701,17 +2777,25 @@ def login_instagram_interactive(
 
 
 def ensure_watcher_browser_context(playwright: Playwright, *, slot: int) -> BrowserContext:
-    """Contexte IG pour le watcher : slot 0 = cookies principaux, slot 1 = 2e compte."""
+    """Contexte IG pour le watcher : slot 0 = IG1, 1 = IG2, 2 = IG3."""
     import config
 
     if slot == 0:
         return get_browser_context(playwright, cookies_path=COOKIES_PATH)
 
-    cookies_path = Path(config.WATCHER_IG2_COOKIES_PATH)
+    if slot == 1:
+        cookies_path = Path(config.WATCHER_IG2_COOKIES_PATH)
+        login_hint = "python watcher.py --login-ig2"
+    elif slot == 2:
+        cookies_path = Path(config.WATCHER_IG3_COOKIES_PATH)
+        login_hint = "python watcher.py --login-ig3"
+    else:
+        raise ValueError(f"slot watcher invalide : {slot} (attendu 0, 1 ou 2)")
+
     if not cookies_path.is_file():
         raise FileNotFoundError(
-            f"Cookies 2e compte absents ({cookies_path.resolve()}). "
-            "Lancer : python watcher.py --login-ig2"
+            f"Cookies compte IG{slot + 1} absents ({cookies_path.resolve()}). "
+            f"Lancer : {login_hint}"
         )
 
     context = get_browser_context(playwright, cookies_path=cookies_path)
@@ -2722,8 +2806,8 @@ def ensure_watcher_browser_context(playwright: Playwright, *, slot: int) -> Brow
     if br:
         br.close()
     raise RuntimeError(
-        f"Session 2e compte expirée ({cookies_path}). "
-        "Relancer : python watcher.py --login-ig2"
+        f"Session compte IG{slot + 1} expirée ({cookies_path}). "
+        f"Relancer : {login_hint}"
     )
 
 

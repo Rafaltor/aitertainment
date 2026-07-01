@@ -55,6 +55,17 @@ class Ig1CommentQueueTest(unittest.TestCase):
         self.assertFalse(q.was_recently_commented("OLD", path=self.commented))
         self.assertTrue(q.was_recently_commented("NEW", path=self.commented))
 
+    def test_requeue_after_failure(self) -> None:
+        item = {"media_id": "ABC", "username": "u1", "source": "watcher"}
+        self.assertTrue(q.requeue_ig1_comment(item, path=self.queue, max_retries=3))
+        restored = q.pop_ig1_comment(path=self.queue)
+        self.assertEqual(restored["media_id"], "ABC")
+        self.assertEqual(restored["attempts"], 1)
+
+    def test_requeue_max_retries(self) -> None:
+        item = {"media_id": "ABC", "username": "u1", "attempts": 3}
+        self.assertFalse(q.requeue_ig1_comment(item, path=self.queue, max_retries=3))
+
 
 if __name__ == "__main__":
     unittest.main()

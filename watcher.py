@@ -1042,14 +1042,14 @@ def _maybe_accounts_pause(*, mock: bool = False) -> None:
 def get_poll_interval(now: datetime | None = None) -> int:
     """Intervalle de polling (secondes) selon l'heure **locale**.
 
-    - 17h ≤ h < 21h : prime time → 300 s
-    - 09h ≤ h < 17h : journée    → 600 s
-    - sinon (21h–09h, nuit)      → 1800 s
+    - 16h ≤ h < 21h : prime time
+    - 09h ≤ h < 16h : journée
+    - sinon (21h–09h) : nuit
     """
     h = (now or datetime.now()).hour
-    if 17 <= h < 21:
+    if 16 <= h < 21:
         return PRIME_INTERVAL_S
-    if 9 <= h < 17:
+    if 9 <= h < 16:
         return DAY_INTERVAL_S
     return NIGHT_INTERVAL_S
 
@@ -1212,42 +1212,9 @@ def _fuse_transcript_visual_for_watcher(
     transcript: str, visual_description: str, caption: str
 ) -> str:
     """Appelle Qwen3-35B (LABEL_LLM) pour fusionner transcript + visuel."""
-    if not (transcript or visual_description):
-        return ""
-    api_url = (config.LABEL_LLM_URL or "").strip().rstrip("/")
-    api_model = (config.LABEL_LLM_MODEL or "").strip()
-    if not api_url or not api_model:
-        _LOGGER.warning("LABEL_LLM_* absent — fusion video_context ignorée.")
-        return ""
+    from modules.reel_enrichment import fuse_transcript_visual_context
 
-    user_prompt = f"""Fusionne en 2-4 phrases chronologiques le transcript audio 
-et la description visuelle de ce reel Instagram :
-
-Caption : {caption[:300]}
-Transcript : {transcript[:1000]}
-Description visuelle : {visual_description[:600]}
-
-Réponds uniquement la fusion, pas d'explication."""
-
-    try:
-        resp = requests.post(
-            f"{api_url}/chat/completions",
-            json={
-                "model": api_model,
-                "messages": [{"role": "user", "content": user_prompt}],
-                "max_tokens": 500,
-                "temperature": 0.3,
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        message = resp.json()["choices"][0]["message"]
-        return str(
-            message.get("content") or message.get("reasoning_content") or ""
-        ).strip()
-    except Exception as exc:
-        _LOGGER.warning("fusion video_context échouée : %s", exc)
-        return ""
+    return fuse_transcript_visual_context(transcript, visual_description, caption)
 
 
 def _generate_for_post(context: dict[str, Any]) -> dict[str, str]:
@@ -1339,12 +1306,13 @@ def notify_new_post_alert(
     if not url and reel_id:
         url = f"https://www.instagram.com/reel/{reel_id}/"
 
-    spam = config.SPAM_COMMENT_TEXT or "lowtaper67"
+    spam = config.SPAM_COMMENT_KEYWORD or config.SPAM_COMMENT_TEXT or "lowtaper67"
     text = (
         f"📢 *Nouveau post détecté*\n\n"
         f"👤 @{_telegram_md_escape(display_user)}\n"
         f"👁 {views:,} vues\n\n"
-        f"🤖 IG1 commentera `{_telegram_md_escape(spam)}` automatiquement.\n\n"
+        f"🤖 IG1 générera un commentaire Ollama avec le mot-clé "
+        f"`{_telegram_md_escape(spam)}` (weave automatique).\n\n"
         f"🔗 {_telegram_md_escape(url)}"
     )
 
@@ -1489,12 +1457,24 @@ class _WatcherIgWorker:
 
 
 def _dual_account_enabled() -> bool:
+    """Dual watcher IG2 + IG3 (slots 1 et 2) si cookies des deux comptes présents."""
     if not config.WATCHER_DUAL_ACCOUNT:
         return False
-    return Path(config.WATCHER_IG2_COOKIES_PATH).is_file()
+    ig2 = Path(config.WATCHER_IG2_COOKIES_PATH).is_file()
+    ig3 = Path(config.WATCHER_IG3_COOKIES_PATH).is_file()
+    return ig2 and ig3
 
 
-def login_watcher_ig2(*, wait_after_submit_s: float = 300) -> None:
+def _dual_scrape_slots() -> tuple[int, int]:
+    return (
+        int(getattr(config, "WATCHER_DUAL_SLOT_A", 1)),
+        int(getattr(config, "WATCHER_DUAL_SLOT_B", 2)),
+    )
+
+
+def login_watcher_ig2(
+    *, wait_after_submit_s: float = 300, otp_code: str | None = None
+) -> None:
     """Connexion interactive du 2e compte IG (2FA) → ``instagram_cookies_2.json``."""
     setup_watcher_logger()
     log = logging.getLogger("aitertainment.watcher")
@@ -1539,10 +1519,55 @@ def login_watcher_ig2(*, wait_after_submit_s: float = 300) -> None:
             login_pass,
             save_cookies_path=cookies_path,
             wait_after_submit_s=wait_after_submit_s,
+            otp_code=otp_code,
         )
         log.info("Login 2e compte terminé — redémarrer le watcher.")
     except Exception as e:
         log.error("Login 2e compte échoué : %s", e)
+        raise SystemExit(1) from e
+    finally:
+        playwright_instance.stop()
+
+
+def login_watcher_ig3(
+    *, wait_after_submit_s: float = 300, otp_code: str | None = None
+) -> None:
+    """Connexion interactive du 3e compte IG (2FA) → ``instagram_cookies_3.json``."""
+    setup_watcher_logger()
+    log = logging.getLogger("aitertainment.watcher")
+
+    login_user = (getattr(config, "IG3_USERNAME", "") or "").strip()
+    login_pass = getattr(config, "IG3_PASSWORD", "") or ""
+    if not login_user or not login_pass:
+        log.error(
+            "Identifiants requis dans .env pour --login-ig3 "
+            "(IG3_USERNAME / IG3_PASSWORD)."
+        )
+        raise SystemExit(1)
+
+    cookies_path = Path(config.WATCHER_IG3_COOKIES_PATH)
+    log.info(
+        "=== Login interactif 3e compte @%s → %s ===",
+        login_user,
+        cookies_path,
+    )
+    log.info(
+        "Exécuter sur le Mac Mini avec écran (fenêtre Chromium va s'ouvrir)."
+    )
+
+    playwright_instance = sync_playwright().start()
+    try:
+        login_instagram_interactive(
+            playwright_instance,
+            login_user,
+            login_pass,
+            save_cookies_path=cookies_path,
+            wait_after_submit_s=wait_after_submit_s,
+            otp_code=otp_code,
+        )
+        log.info("Login 3e compte terminé — redémarrer le watcher (dual IG2+IG3).")
+    except Exception as e:
+        log.error("Login 3e compte échoué : %s", e)
         raise SystemExit(1) from e
     finally:
         playwright_instance.stop()
@@ -1975,16 +2000,19 @@ def _run_cycle(
 
     if dual_account and not mock:
         batch_a, batch_b = _split_creator_batches(creators)
+        slot_a, slot_b = _dual_scrape_slots()
         log.info(
-            "Cycle dual-account : ig1 → %d créateurs, ig2 → %d créateurs.",
+            "Cycle dual-account : ig%d → %d créateurs, ig%d → %d créateurs.",
+            slot_a + 1,
             len(batch_a),
+            slot_b + 1,
             len(batch_b),
         )
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [
                 pool.submit(
                     _run_dual_slot_batch,
-                    0,
+                    slot_a,
                     batch_a,
                     creators=creators,
                     mock=mock,
@@ -1994,7 +2022,7 @@ def _run_cycle(
                 ),
                 pool.submit(
                     _run_dual_slot_batch,
-                    1,
+                    slot_b,
                     batch_b,
                     creators=creators,
                     mock=mock,
@@ -2090,9 +2118,8 @@ def sync_watchlist_last_posts(
     dual_account = _dual_account_enabled()
     if config.WATCHER_DUAL_ACCOUNT and not dual_account:
         log.warning(
-            "WATCHER_DUAL_ACCOUNT=true mais %s absent — sync mono-compte. "
-            "Lancer : python watcher.py --login-ig2",
-            config.WATCHER_IG2_COOKIES_PATH,
+            "WATCHER_DUAL_ACCOUNT=true mais cookies IG2/IG3 incomplets — sync mono-compte. "
+            "Lancer : python watcher.py --login-ig2 et --login-ig3"
         )
 
     playwright_instance = None
@@ -2120,16 +2147,19 @@ def sync_watchlist_last_posts(
     try:
         if dual_account:
             batch_a, batch_b = _split_creator_batches(creators)
+            slot_a, slot_b = _dual_scrape_slots()
             log.info(
-                "Sync dual-account : ig1 → %d créateurs, ig2 → %d créateurs.",
+                "Sync dual-account : ig%d → %d créateurs, ig%d → %d créateurs.",
+                slot_a + 1,
                 len(batch_a),
+                slot_b + 1,
                 len(batch_b),
             )
             with ThreadPoolExecutor(max_workers=2) as pool:
                 futs = [
                     pool.submit(
                         _sync_dual_slot_batch,
-                        0,
+                        slot_a,
                         batch_a,
                         creators=creators,
                         log=log,
@@ -2139,7 +2169,7 @@ def sync_watchlist_last_posts(
                     ),
                     pool.submit(
                         _sync_dual_slot_batch,
-                        1,
+                        slot_b,
                         batch_b,
                         creators=creators,
                         log=log,
@@ -2248,17 +2278,24 @@ def run_watcher(
                 log.warning("Poller Telegram non démarré : %s", e)
         dual_account = _dual_account_enabled()
         if dual_account:
-            if config.WATCHER_DUAL_ACCOUNT and not Path(
-                config.WATCHER_IG2_COOKIES_PATH
-            ).is_file():
-                log.warning(
-                    "WATCHER_DUAL_ACCOUNT=true mais %s absent — mono-compte. "
-                    "Lancer : python watcher.py --login-ig2",
-                    config.WATCHER_IG2_COOKIES_PATH,
-                )
-        else:
+            slot_a, slot_b = _dual_scrape_slots()
             log.info(
-                "Watcher scrape IG2 uniquement (slot %d) — IG1 réservé au spam commentaires.",
+                "Watcher dual IG%d + IG%d — watchlist partagée, IG1 réservé au spam.",
+                slot_a + 1,
+                slot_b + 1,
+            )
+        elif config.WATCHER_DUAL_ACCOUNT:
+            log.warning(
+                "WATCHER_DUAL_ACCOUNT=true mais cookies IG2/IG3 incomplets — mono-compte. "
+                "Lancer : python watcher.py --login-ig2 et --login-ig3"
+            )
+        else:
+            scrape_label = {1: "IG2", 2: "IG3"}.get(
+                config.WATCHER_SCRAPE_SLOT, f"slot {config.WATCHER_SCRAPE_SLOT}"
+            )
+            log.info(
+                "Watcher scrape %s (slot %d) — IG1 réservé au spam commentaires.",
+                scrape_label,
                 config.WATCHER_SCRAPE_SLOT,
             )
         try:
@@ -2381,10 +2418,21 @@ def diagnose_watchlist(
     grid_page: Page | None = None
     try:
         try:
-            worker = _start_watcher_worker(0, log)
+            worker = _start_watcher_worker(config.WATCHER_SCRAPE_SLOT, log)
         except Exception:
             playwright_instance = sync_playwright().start()
-            context = get_browser_context(playwright_instance)
+            try:
+                context = ensure_watcher_browser_context(
+                    playwright_instance, slot=config.WATCHER_SCRAPE_SLOT
+                )
+            except (FileNotFoundError, RuntimeError) as e:
+                log.error(
+                    "Session IG slot %d invalide — diagnostic interrompu : %s",
+                    config.WATCHER_SCRAPE_SLOT,
+                    e,
+                )
+                playwright_instance.stop()
+                return stats
             if not session_ok(context):
                 log.error("Session Instagram invalide — diagnostic interrompu.")
                 return stats
@@ -2517,12 +2565,28 @@ def _main_cli() -> None:
         action="store_true",
         help="Login interactif 2e compte IG (2FA) → data/instagram_cookies_2.json.",
     )
+    parser.add_argument(
+        "--login-ig3",
+        action="store_true",
+        help="Login interactif 3e compte IG (2FA) → data/instagram_cookies_3.json.",
+    )
+    parser.add_argument(
+        "--otp",
+        metavar="CODE",
+        help="Code 2FA Instagram (6 chiffres) pour --login-ig2 / --login-ig3.",
+    )
     args = parser.parse_args()
 
     if args.login_ig2:
         if args.mock:
             parser.error("--login-ig2 est incompatible avec --mock")
-        login_watcher_ig2()
+        login_watcher_ig2(otp_code=(args.otp or "").strip() or None)
+        return
+
+    if args.login_ig3:
+        if args.mock:
+            parser.error("--login-ig3 est incompatible avec --mock")
+        login_watcher_ig3(otp_code=(args.otp or "").strip() or None)
         return
 
     if args.sync_last_posts:
@@ -2565,6 +2629,7 @@ __all__ = [
     "sync_creator_last_post_id",
     "sync_watchlist_last_posts",
     "login_watcher_ig2",
+    "login_watcher_ig3",
 ]
 
 

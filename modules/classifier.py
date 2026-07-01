@@ -105,13 +105,20 @@ def _inference_normalize(
     text: str,
     *,
     length_bucket: LengthBucket,
+    max_words: int | None = None,
+    max_chars: int | None = None,
+    max_sentences: int | None = None,
 ) -> str:
     return normalize_generator_output(
         text,
         length_bucket=length_bucket,
-        max_words=_INFERENCE_MAX_WORDS[length_bucket],
-        max_chars=_INFERENCE_MAX_CHARS[length_bucket],
-        max_sentences=INFERENCE_MAX_SENTENCES_LONG if length_bucket == "long" else None,
+        max_words=max_words if max_words is not None else _INFERENCE_MAX_WORDS[length_bucket],
+        max_chars=max_chars if max_chars is not None else _INFERENCE_MAX_CHARS[length_bucket],
+        max_sentences=(
+            max_sentences
+            if max_sentences is not None
+            else (INFERENCE_MAX_SENTENCES_LONG if length_bucket == "long" else None)
+        ),
     )
 
 
@@ -139,6 +146,10 @@ def _generate_single_comment(
     length_bucket: LengthBucket,
     seen: set[str] | None = None,
     max_attempts: int = 4,
+    instruction: str | None = None,
+    options_overrides: dict[str, Any] | None = None,
+    normalize_overrides: dict[str, Any] | None = None,
+    extra_accept: Any | None = None,
 ) -> str:
     """Un commentaire Alpaca ; ``—`` si aucune sortie valide après les essais."""
     ctx = video_context or {}
@@ -153,33 +164,46 @@ def _generate_single_comment(
             hashtags=hashtags,
             audio_id=str(ctx.get("audio_id") or ctx.get("audio") or "").strip(),
             video_context=merged_video_context,
+            transcript=str(ctx.get("transcript") or "").strip(),
+            visual_description=str(ctx.get("visual_description") or "").strip(),
             reel_id=str(ctx.get("reel_id") or ctx.get("video_id") or "").strip(),
             creator_username=str(
                 ctx.get("creator_username") or ctx.get("username") or ""
             ).strip(),
             length_bucket=length_bucket,
         )
-        prompt = build_alpaca_prompt(input_block, length_bucket=length_bucket)
+        prompt = build_alpaca_prompt(
+            input_block,
+            instruction,
+            length_bucket=length_bucket,
+        )
         num_predict = _INFERENCE_NUM_PREDICT[length_bucket]
+        options: dict[str, Any] = {
+            "temperature": _INFERENCE_TEMPERATURE[length_bucket],
+            "top_p": 0.85,
+            "repeat_penalty": 1.2,
+            "num_predict": num_predict,
+            "stop": (
+                ["\n\n", "###", "@", "\n###"]
+                if length_bucket == "long"
+                else ["\n", "###", "@", "\n###"]
+            ),
+        }
+        if options_overrides:
+            options.update(options_overrides)
         body: dict[str, Any] = {
             "model": model,
             "prompt": prompt,
             "stream": False,
-            "options": {
-                "temperature": _INFERENCE_TEMPERATURE[length_bucket],
-                "top_p": 0.85,
-                "repeat_penalty": 1.2,
-                "num_predict": num_predict,
-                "stop": (
-                    ["\n\n", "###", "@", "\n###"]
-                    if length_bucket == "long"
-                    else ["\n", "###", "@", "\n###"]
-                ),
-            },
-            "keep_alive": 0,
+            "options": options,
+            "keep_alive": getattr(config, "OLLAMA_KEEP_ALIVE", "5m"),
         }
         try:
-            resp = _http_post(ollama_url, json_body=body, timeout=120)
+            resp = _http_post(
+                ollama_url,
+                json_body=body,
+                timeout=int(getattr(config, "OLLAMA_REQUEST_TIMEOUT_S", 60)),
+            )
             raw_text = _ollama_response_text(resp)
         except (requests.RequestException, ValueError) as e:
             raise ClassificationError(f"Erreur Ollama generator: {e}") from e
@@ -187,6 +211,7 @@ def _generate_single_comment(
         comment = _inference_normalize(
             _clean_generated_comment_line(raw_text),
             length_bucket=length_bucket,
+            **(normalize_overrides or {}),
         )
         if not comment or not assess_comment_quality(
             comment, length_bucket=length_bucket
@@ -202,6 +227,8 @@ def _generate_single_comment(
                 else 2,
             )
         ):
+            continue
+        if extra_accept is not None and not extra_accept(comment):
             continue
         key = comment.lower()
         if key in dedupe:

@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
 
 from config import ORDERED_T_TYPES
+import config
 from watcher import (
     DAY_INTERVAL_S,
     GRID_REELS,
@@ -401,13 +402,14 @@ class GetPollIntervalTest(unittest.TestCase):
         return datetime(2026, 5, 7, hour, 30, 0)
 
     def test_prime_time_evening(self) -> None:
+        self.assertEqual(get_poll_interval(self._at(16)), PRIME_INTERVAL_S)
         self.assertEqual(get_poll_interval(self._at(17)), PRIME_INTERVAL_S)
         self.assertEqual(get_poll_interval(self._at(20)), PRIME_INTERVAL_S)
 
     def test_day_hours(self) -> None:
         self.assertEqual(get_poll_interval(self._at(9)), DAY_INTERVAL_S)
         self.assertEqual(get_poll_interval(self._at(13)), DAY_INTERVAL_S)
-        self.assertEqual(get_poll_interval(self._at(16)), DAY_INTERVAL_S)
+        self.assertEqual(get_poll_interval(self._at(15)), DAY_INTERVAL_S)
 
     def test_night(self) -> None:
         self.assertEqual(get_poll_interval(self._at(0)), NIGHT_INTERVAL_S)
@@ -1246,13 +1248,23 @@ class TestWatcherOptimizations(unittest.TestCase):
 
     @patch("watcher.config.WATCHER_DUAL_ACCOUNT", True)
     @patch("watcher.Path.is_file", return_value=True)
-    def test_dual_account_enabled_with_cookies(self, _mock_is_file: MagicMock) -> None:
+    def test_dual_account_enabled_with_both_cookies(self, _mock_is_file: MagicMock) -> None:
         self.assertTrue(_dual_account_enabled())
 
     @patch("watcher.config.WATCHER_DUAL_ACCOUNT", True)
     @patch("watcher.Path.is_file", return_value=False)
-    def test_dual_account_requires_cookies_file(self, _mock_is_file: MagicMock) -> None:
+    def test_dual_account_requires_both_cookies(self, _mock_is_file: MagicMock) -> None:
         self.assertFalse(_dual_account_enabled())
+
+    @patch("watcher.config.WATCHER_DUAL_ACCOUNT", True)
+    def test_dual_account_requires_ig3_cookies(self) -> None:
+        ig2 = Path(config.WATCHER_IG2_COOKIES_PATH)
+
+        def _is_file(self: Path) -> bool:
+            return self == ig2
+
+        with patch.object(Path, "is_file", _is_file):
+            self.assertFalse(_dual_account_enabled())
 
     @patch("watcher.config.WATCHER_DUAL_ACCOUNT", False)
     def test_dual_account_disabled_by_config(self) -> None:

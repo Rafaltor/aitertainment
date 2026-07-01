@@ -10,6 +10,7 @@
 # Instagram session Playwright (cookies exportés depuis le navigateur)
 data/instagram_cookies.json
 data/instagram_cookies_2.json
+data/instagram_cookies_3.json
 
 # =============================================================================
 # Python

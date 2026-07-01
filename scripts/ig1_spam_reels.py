@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""IG1 — spam ``lowtaper67`` sur le fil Reels + file watcher.
+"""IG1 — commentaires Ollama sur le fil Reels (+ file watcher).
 
-Le watcher (IG2) pousse les nouveaux posts dans ``data/ig1_comment_queue.json``.
+Pipeline par commentaire : enrichissement reel → 1 base Ollama (filtrée qualité)
+→ 1 weave (remplace un verbe / sujet / nom par ``SPAM_COMMENT_KEYWORD``).
+
+Le watcher (IG2/IG3) pousse les nouveaux posts dans ``data/ig1_comment_queue.json``.
 Ce script tourne en boucle sur IG1 (``data/instagram_cookies.json``) :
 
-1. Vide la file watcher en priorité.
+1. Vide la file watcher en priorité (re-queue si échec, max ``IG1_QUEUE_MAX_RETRIES``).
 2. Scroll le fil ``/reels/`` (même mécanique que ``scrape_viral_comments``).
 3. Option ``--hashtag`` : parcourt une page tag puis commente chaque reel.
 
+Le rythme naturel (lecture ~60s FR + génération Ollama) limite le débit sans pause
+artificielle ni plafond configuré.
+
 Usage::
 
-    .venv/bin/python scripts/ig1_spam_reels.py
+    .venv/bin/python scripts/ig1_spam_reels.py --loop
+    .venv/bin/python scripts/ig1_spam_reels.py --login
     .venv/bin/python scripts/ig1_spam_reels.py --hashtag humour --limit 30
-    .venv/bin/python scripts/ig1_spam_reels.py --between-reels 8 15
 """
 
 from __future__ import annotations
@@ -22,7 +28,7 @@ import logging
 import random
 import re
 import sys
-import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
@@ -36,8 +42,16 @@ from ig1_comment_queue import (
     mark_commented,
     pop_ig1_comment,
     queue_length,
+    requeue_ig1_comment,
     was_recently_commented,
 )
+from modules.classifier import ClassificationError
+from modules.ig1_spam_generator import (
+    generate_ig1_spam_comment,
+    normalize_for_instagram,
+    spam_keyword,
+)
+from modules.reel_enrichment import enrich_reel_with_transcript_and_visual
 from scripts.instagram_browser import (
     BASE_URL,
     COOKIES_PATH,
@@ -49,11 +63,12 @@ from scripts.instagram_browser import (
     _focus_reels_feed_player,
     _is_valid_reel_code,
     _metrics_bucket_for_dom_media_id,
+    _owner_username_from_bucket,
     _wait_for_feed_reel_change,
     engage_feed_reel_for_algo,
     get_browser_context,
+    login_instagram_interactive,
     post_reel_comment,
-    polite_sleep,
     refresh_reels_feed,
     session_ok,
     should_boost_french_reel_on_feed,
@@ -62,26 +77,103 @@ from scripts.instagram_browser import (
 _LOG = logging.getLogger("aitertainment.ig1_spam")
 
 
+@dataclass
+class SpamSession:
+    """État d'une session spam : mot-clé + dédup commentaires générés."""
+
+    keyword: str = field(default_factory=spam_keyword)
+    seen: set[str] = field(default_factory=set)
+
+    def build_comment(
+        self,
+        *,
+        caption: str = "",
+        media_id: str = "",
+        username: str = "",
+        browser_context: BrowserContext | None = None,
+    ) -> str:
+        transcript = ""
+        visual_description = ""
+        if browser_context and str(media_id or "").strip():
+            skip_transcript = bool(getattr(config, "IG1_SPAM_SKIP_TRANSCRIPT", False))
+            skip_visual = bool(getattr(config, "IG1_SPAM_SKIP_VISUAL", False))
+            transcript, visual_description = enrich_reel_with_transcript_and_visual(
+                media_id,
+                browser_context,
+                skip_transcript=skip_transcript,
+                skip_visual=skip_visual,
+            )
+            _LOG.info(
+                "IG1 enrich reel=%s : transcript=%d chars, visuel=%d chars",
+                media_id,
+                len(transcript),
+                len(visual_description),
+            )
+        raw = generate_ig1_spam_comment(
+            caption=caption,
+            transcript=transcript,
+            visual_description=visual_description,
+            media_id=media_id,
+            username=username,
+            keyword=self.keyword,
+            seen=self.seen,
+        )
+        return normalize_for_instagram(raw, keyword=self.keyword)
+
+
 def _post_once(
     context: BrowserContext,
     media_id: str,
-    comment_text: str,
+    session: SpamSession,
     *,
+    caption: str = "",
+    username: str = "",
     source: str,
 ) -> bool:
     if was_recently_commented(media_id):
         _LOG.debug("reel %s déjà commenté récemment — skip.", media_id)
         return False
+    try:
+        comment_text = session.build_comment(
+            caption=caption,
+            media_id=media_id,
+            username=username,
+            browser_context=context,
+        )
+    except ClassificationError as exc:
+        _LOG.warning("Génération Ollama KO (%s) reel=%s : %s", source, media_id, exc)
+        return False
+    if not str(comment_text or "").strip():
+        _LOG.warning(
+            "Pas de commentaire valide (%s) reel=%s — skip post.",
+            source,
+            media_id,
+        )
+        return False
     ok, err = post_reel_comment(media_id, comment_text, context)
     if ok:
         mark_commented(media_id)
-        _LOG.info("Commentaire OK (%s) reel=%s", source, media_id)
+        _LOG.info(
+            "Commentaire OK (%s) reel=%s → %r",
+            source,
+            media_id,
+            comment_text[:120],
+        )
         return True
-    _LOG.warning("Commentaire KO (%s) reel=%s : %s", source, media_id, err)
+    _LOG.warning(
+        "Commentaire KO (%s) reel=%s : %s (texte=%r)",
+        source,
+        media_id,
+        err,
+        comment_text[:80],
+    )
     return False
 
 
-def _drain_queue(context: BrowserContext, comment_text: str) -> int:
+def _drain_queue(
+    context: BrowserContext,
+    session: SpamSession,
+) -> int:
     posted = 0
     while True:
         item = pop_ig1_comment()
@@ -90,14 +182,30 @@ def _drain_queue(context: BrowserContext, comment_text: str) -> int:
         mid = str(item.get("media_id") or "").strip()
         if not mid:
             continue
+        uname = str(item.get("username") or "").lstrip("@")
         if _post_once(
             context,
             mid,
-            comment_text,
-            source=f"queue @{item.get('username') or '?'}",
+            session,
+            username=uname,
+            source=f"queue @{uname or '?'}",
         ):
             posted += 1
-        polite_sleep(4, 6, 14)
+        elif requeue_ig1_comment(item):
+            attempts = int(item.get("attempts") or 0) + 1
+            _LOG.info(
+                "Reel %s remis en file (tentative %d/%d).",
+                mid,
+                attempts,
+                config.IG1_QUEUE_MAX_RETRIES,
+            )
+            break
+        else:
+            _LOG.warning(
+                "Reel %s abandonné après %d tentative(s) — file ou max retries.",
+                mid,
+                int(item.get("attempts") or 0) + 1,
+            )
     return posted
 
 
@@ -143,18 +251,20 @@ def _run_hashtag_pass(
     hashtag: str,
     *,
     limit: int,
-    comment_text: str,
-    between_min: float,
-    between_max: float,
+    session: SpamSession,
 ) -> int:
     codes = _collect_hashtag_codes(page, hashtag, limit=limit)
     _LOG.info("Hashtag #%s : %d reel(s) à traiter.", hashtag.lstrip("#"), len(codes))
     posted = 0
     for code in codes:
-        _drain_queue(context, comment_text)
-        if _post_once(context, code, comment_text, source=f"hashtag #{hashtag}"):
+        _drain_queue(context, session)
+        if _post_once(
+            context,
+            code,
+            session,
+            source=f"hashtag #{hashtag}",
+        ):
             posted += 1
-        time.sleep(random.uniform(between_min, between_max))
     return posted
 
 
@@ -162,9 +272,7 @@ def _run_feed_loop(
     context: BrowserContext,
     page: Page,
     *,
-    comment_text: str,
-    between_min: float,
-    between_max: float,
+    session: SpamSession,
     scroll_steps: int,
     french_only: bool = True,
     fr_watch_s: float | None = None,
@@ -173,7 +281,7 @@ def _run_feed_loop(
 ) -> None:
     """Scroll fil Reels avec comportement humain (aligné ``scrape_viral_comments``).
 
-    - Reel caption FR → regarder ~60s (engagement algo) puis commenter.
+    - Reel caption FR → regarder ~60s (engagement algo) puis commenter (Ollama).
     - Reel non-FR / sans caption → skip rapide, pas de commentaire.
     """
     fr_watch_s = float(
@@ -193,7 +301,8 @@ def _run_feed_loop(
     step = 0
 
     _LOG.info(
-        "Fil Reels : engagement FR=%.0fs, skip EN=%dms, french_only=%s.",
+        "Fil Reels : mot-clé=%r, engagement FR=%.0fs, skip EN=%dms, french_only=%s.",
+        session.keyword,
         fr_watch_s,
         en_skip_ms,
         french_only,
@@ -203,7 +312,7 @@ def _run_feed_loop(
         q = queue_length()
         if q:
             _LOG.info("File watcher : %d reel(s) en attente.", q)
-        _drain_queue(context, comment_text)
+        _drain_queue(context, session)
 
         code = _extract_reel_code_from_page(page)
         if not code or not _is_valid_reel_code(code):
@@ -217,6 +326,7 @@ def _run_feed_loop(
             code, metrics_by_pk, metrics_by_code
         )
         caption = str(bucket.get("caption") or "")
+        owner = _owner_username_from_bucket(bucket)
 
         if french_only and not should_boost_french_reel_on_feed(
             caption, french_only=True
@@ -242,7 +352,14 @@ def _run_feed_loop(
             stats["watch_s"] += watched
 
         if not was_recently_commented(code):
-            if _post_once(context, code, comment_text, source="feed"):
+            if _post_once(
+                context,
+                code,
+                session,
+                caption=caption,
+                username=owner,
+                source="feed",
+            ):
                 stats["fr_commented"] += 1
                 stagnant = 0
             else:
@@ -253,7 +370,6 @@ def _run_feed_loop(
         _advance_reels_feed(page)
         page.wait_for_timeout(scroll_wait_ms)
         _wait_for_feed_reel_change(page, code)
-        time.sleep(random.uniform(between_min, between_max))
         step += 1
 
         if stagnant >= 15:
@@ -273,8 +389,46 @@ def _run_feed_loop(
             stats = {"fr_watched": 0, "fr_commented": 0, "en_skipped": 0, "watch_s": 0.0}
 
 
+def login_ig1_spam(*, wait_after_submit_s: float = 300) -> None:
+    """Connexion interactive IG1 (2FA) → ``data/instagram_cookies.json``."""
+    login_user = (config.IG_USERNAME or "").strip()
+    login_pass = config.IG_PASSWORD or ""
+    if not login_user or not login_pass:
+        _LOG.error(
+            "Identifiants requis dans .env pour --login (IG_USERNAME / IG_PASSWORD)."
+        )
+        raise SystemExit(1)
+
+    cookies_path = Path(COOKIES_PATH)
+    _LOG.info("=== Login interactif IG1 @%s → %s ===", login_user, cookies_path)
+    _LOG.info("Fenêtre Chromium — compléter 2FA si demandé.")
+
+    pw = sync_playwright().start()
+    try:
+        login_instagram_interactive(
+            pw,
+            login_user,
+            login_pass,
+            save_cookies_path=cookies_path,
+            wait_after_submit_s=wait_after_submit_s,
+        )
+        _LOG.info("Login IG1 terminé — relancer ig1_spam_reels.py --loop.")
+    except Exception as exc:
+        _LOG.error("Login IG1 échoué : %s", exc)
+        raise SystemExit(1) from exc
+    finally:
+        pw.stop()
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="IG1 spam lowtaper67 (feed + queue watcher).")
+    parser = argparse.ArgumentParser(
+        description="IG1 spam fil Reels — commentaires Ollama avec mot-clé obligatoire.",
+    )
+    parser.add_argument(
+        "--login",
+        action="store_true",
+        help="Login interactif IG1 (2FA) → data/instagram_cookies.json puis quitter.",
+    )
     parser.add_argument(
         "--hashtag",
         help="Passe unique sur un hashtag (ex. humour) puis retour fil si --loop.",
@@ -290,14 +444,6 @@ def main(argv: list[str] | None = None) -> int:
         "--loop",
         action="store_true",
         help="Boucle infinie fil Reels (défaut si pas de --hashtag seul).",
-    )
-    parser.add_argument(
-        "--between-reels",
-        nargs=2,
-        type=float,
-        metavar=("MIN", "MAX"),
-        default=(6.0, 14.0),
-        help="Pause aléatoire après engagement+commentaire FR (secondes).",
     )
     parser.add_argument(
         "--no-french-filter",
@@ -317,10 +463,17 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
-    comment_text = (config.SPAM_COMMENT_TEXT or "lowtaper67").strip()
-    between_min, between_max = args.between_reels
-    if between_min > between_max:
-        between_min, between_max = between_max, between_min
+    if args.login:
+        login_ig1_spam()
+        return 0
+
+    if not (config.OLLAMA_GENERATOR_MODEL or "").strip():
+        _LOG.error(
+            "OLLAMA_GENERATOR_MODEL absent — définir le modèle fine-tuné dans .env."
+        )
+        return 1
+
+    session = SpamSession()
 
     infinite = args.loop or (not args.hashtag and args.scroll_steps == 0)
 
@@ -328,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
     context = get_browser_context(pw, cookies_path=COOKIES_PATH)
     if not session_ok(context):
         _LOG.error(
-            "Session IG1 invalide — régénérer %s (login compte spam).",
+            "Session IG1 invalide — régénérer %s (python scripts/ig1_spam_reels.py --login).",
             COOKIES_PATH,
         )
         context.close()
@@ -340,8 +493,9 @@ def main(argv: list[str] | None = None) -> int:
 
     page = context.new_page()
     _LOG.info(
-        "IG1 spam démarré — texte=%r, queue=%d, hashtag=%s",
-        comment_text,
+        "IG1 spam démarré — mot-clé=%r, modèle=%s, queue=%d, hashtag=%s",
+        session.keyword,
+        config.OLLAMA_GENERATOR_MODEL,
         queue_length(),
         args.hashtag or "(fil)",
     )
@@ -354,18 +508,14 @@ def main(argv: list[str] | None = None) -> int:
                     page,
                     args.hashtag,
                     limit=args.limit,
-                    comment_text=comment_text,
-                    between_min=between_min,
-                    between_max=between_max,
+                    session=session,
                 )
                 if not infinite:
                     break
             _run_feed_loop(
                 context,
                 page,
-                comment_text=comment_text,
-                between_min=between_min,
-                between_max=between_max,
+                session=session,
                 scroll_steps=0 if infinite else args.scroll_steps,
                 french_only=not args.no_french_filter,
                 fr_watch_s=args.fr_watch_s,
