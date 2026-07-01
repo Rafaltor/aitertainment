@@ -20,7 +20,6 @@ from modules.generator_prompt import build_generator_instruction
 from scripts.prepare_dataset import (
     GENERATOR_FILENAME,
     generate_generator_dataset,
-    load_vector_store,
     main,
     niches_str,
 )
@@ -117,10 +116,8 @@ class GeneratorDatasetTest(unittest.TestCase):
     def test_t_type_profile_is_used_when_present(self) -> None:
         # Cas 1 : t_type_profile présent → priorité absolue.
         entry = _valid_generator_entry(t_type_profile="T3b", t_type="T2")
-        n, with_vector = generate_generator_dataset([entry], self.out_path)
+        n = generate_generator_dataset([entry], self.out_path)
         self.assertEqual(n, 1)
-        self.assertEqual(with_vector, 0)
-        self.assertFalse(_read_jsonl(self.out_path)[0]["has_vector"])
         rows = _read_jsonl(self.out_path)
         self.assertEqual(
             rows[0]["instruction"], build_generator_instruction("short")
@@ -156,9 +153,8 @@ class GeneratorDatasetTest(unittest.TestCase):
     def test_empty_text_is_skipped(self) -> None:
         # Cas 5 : commentaire vide → entrée ignorée.
         entry = _valid_generator_entry(text="   ")
-        n, with_vector = generate_generator_dataset([entry], self.out_path)
+        n = generate_generator_dataset([entry], self.out_path)
         self.assertEqual(n, 0)
-        self.assertEqual(with_vector, 0)
         self.assertEqual(_read_jsonl(self.out_path), [])
 
     def test_video_context_included_in_input_block(self) -> None:
@@ -171,118 +167,6 @@ class GeneratorDatasetTest(unittest.TestCase):
             "Contexte vidéo: Deux potes en cuisine, ton ironique, drop vendredi.",
             rows[0]["input"],
         )
-
-
-# ---------------------------------------------------------------------------
-# load_vector_store
-# ---------------------------------------------------------------------------
-
-
-class LoadVectorStoreTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmpdir = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
-
-    def test_present_file_indexes_username_to_entry(self) -> None:
-        store_path = self.tmpdir / "vector_store.json"
-        store_path.write_text(
-            json.dumps(
-                {
-                    "entries": [
-                        {
-                            "username": "creator1",
-                            "named_axes": {"scripted_vs_raw": 0.5},
-                        }
-                    ]
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-        loaded = load_vector_store(store_path)
-        self.assertEqual(set(loaded), {"creator1"})
-        self.assertEqual(loaded["creator1"]["username"], "creator1")
-
-    def test_missing_file_returns_empty_dict_without_error(self) -> None:
-        missing = self.tmpdir / "absent.json"
-        with self.assertLogs("scripts.prepare_dataset", level="INFO") as logs:
-            loaded = load_vector_store(missing)
-        self.assertEqual(loaded, {})
-        self.assertTrue(
-            any(
-                "vector_store.json absent — named_axes non inclus dans le dataset"
-                in msg
-                for msg in logs.output
-            )
-        )
-
-
-# ---------------------------------------------------------------------------
-# generate_generator_dataset — named_axes / vector_store
-# ---------------------------------------------------------------------------
-
-
-def _sample_named_axes() -> dict[str, float]:
-    return {
-        "scripted_vs_raw": 0.11,
-        "solo_vs_collab": 0.22,
-        "fictional_vs_real": 0.33,
-        "energy_level": 0.44,
-        "production_quality": 0.55,
-        "format_length": 0.66,
-        "distance_parasociale": 0.77,
-        "interaction_style": 0.88,
-        "mainstream_vs_niche": 0.99,
-        "safe_vs_edgy": 0.12,
-    }
-
-
-class GeneratorWithVectorTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmpdir = Path(tempfile.mkdtemp())
-        self.out_path = self.tmpdir / "dataset_generator.jsonl"
-        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
-
-    def test_account_in_vector_store_includes_creator_profile(self) -> None:
-        entry = _valid_generator_entry(username="creator1")
-        vector_store = {
-            "creator1": {
-                "username": "creator1",
-                "named_axes": _sample_named_axes(),
-            }
-        }
-        n, with_vector = generate_generator_dataset(
-            [entry], self.out_path, vector_store=vector_store
-        )
-        self.assertEqual(n, 1)
-        self.assertEqual(with_vector, 1)
-        row = _read_jsonl(self.out_path)[0]
-        self.assertTrue(row["has_vector"])
-        self.assertIn("Profil créateur:", row["input"])
-        self.assertIn("scripted_vs_raw=0.11", row["input"])
-
-    def test_account_missing_from_vector_store_omits_creator_profile(self) -> None:
-        entry = _valid_generator_entry(username="unknown_creator")
-        n, with_vector = generate_generator_dataset(
-            [entry], self.out_path, vector_store={}
-        )
-        self.assertEqual(n, 1)
-        self.assertEqual(with_vector, 0)
-        row = _read_jsonl(self.out_path)[0]
-        self.assertFalse(row["has_vector"])
-        self.assertNotIn("Profil créateur:", row["input"])
-
-    def test_empty_named_axes_falls_back_without_vector(self) -> None:
-        entry = _valid_generator_entry(username="creator1")
-        vector_store = {"creator1": {"username": "creator1", "named_axes": {}}}
-        n, with_vector = generate_generator_dataset(
-            [entry], self.out_path, vector_store=vector_store
-        )
-        self.assertEqual(n, 1)
-        self.assertEqual(with_vector, 0)
-        row = _read_jsonl(self.out_path)[0]
-        self.assertFalse(row["has_vector"])
-        self.assertNotIn("Profil créateur:", row["input"])
 
 
 # ---------------------------------------------------------------------------
@@ -362,49 +246,6 @@ class MainTest(unittest.TestCase):
         rc = main(self._argv())
         self.assertEqual(rc, 1)
         self.assertFalse(self.generator_out.exists())
-
-
-class MainWithVectorTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmpdir = Path(tempfile.mkdtemp())
-        self.training_path = self.tmpdir / "training_comments_viral.json"
-        self.output_dir = self.tmpdir / "out"
-        self.addCleanup(shutil.rmtree, self.tmpdir, ignore_errors=True)
-
-    def test_main_logs_generator_vector_count(self) -> None:
-        self.training_path.write_text(
-            json.dumps(
-                {
-                    "entries": [
-                        _valid_generator_entry(username="creator1"),
-                    ]
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-        vector_store = {
-            "creator1": {
-                "username": "creator1",
-                "named_axes": _sample_named_axes(),
-            }
-        }
-        argv = [
-            "--training-path",
-            str(self.training_path),
-            "--output-dir",
-            str(self.output_dir),
-        ]
-        with patch(
-            "scripts.prepare_dataset.load_vector_store",
-            return_value=vector_store,
-        ):
-            with self.assertLogs("scripts.prepare_dataset", level="INFO") as logs:
-                rc = main(argv)
-        self.assertEqual(rc, 0)
-        self.assertTrue(
-            any("Generator : 1 entrées dont 1 avec vecteur 32D" in msg for msg in logs.output)
-        )
 
 
 if __name__ == "__main__":

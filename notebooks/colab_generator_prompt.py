@@ -9,18 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
-NAMED_AXES = (
-    "scripted_vs_raw",
-    "solo_vs_collab",
-    "fictional_vs_real",
-    "energy_level",
-    "production_quality",
-    "format_length",
-    "distance_parasociale",
-    "interaction_style",
-    "mainstream_vs_niche",
-    "safe_vs_edgy",
-)
+NAMED_AXES = ()  # conservé vide pour rétro-compat notebooks anciens
 
 LengthBucket = Literal["short", "long"]
 
@@ -153,18 +142,6 @@ def format_hashtags(value: Any) -> str:
     return str(value).strip()
 
 
-def named_axes_block(named_axes: dict[str, Any]) -> str:
-    values = [f"{axis}={_coerce_float(named_axes.get(axis)):.2f}" for axis in NAMED_AXES]
-    return (
-        "Profil créateur:\n"
-        f"  {values[0]} {values[1]}\n"
-        f"  {values[2]} {values[3]}\n"
-        f"  {values[4]} {values[5]}\n"
-        f"  {values[6]} {values[7]}\n"
-        f"  {values[8]} {values[9]}"
-    )
-
-
 def build_generator_input_block(
     *,
     t_type_profile: str,
@@ -177,7 +154,6 @@ def build_generator_input_block(
     visual_description: str = "",
     reel_id: str = "",
     creator_username: str = "",
-    named_axes: dict[str, Any] | None = None,
     length_bucket: LengthBucket | None = None,
 ) -> str:
     lines = [
@@ -190,8 +166,6 @@ def build_generator_input_block(
     rid = str(reel_id or "").strip()
     if rid:
         lines.append(f"Reel: {rid}")
-    if named_axes:
-        lines.append(named_axes_block(named_axes))
     if length_bucket:
         lines.append(f"Longueur cible: {generator_length_target_label(length_bucket)}")
     lines.extend(

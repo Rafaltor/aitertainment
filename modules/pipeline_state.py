@@ -1,6 +1,6 @@
-"""État incrémental du pipeline commentaires (viral → label ; embedder séparé).
+"""État incrémental du pipeline commentaires (viral → label).
 
-Évite de re-scraper, re-embedder ou re-labéliser ce qui est déjà traité.
+Évite de re-scraper ou re-labéliser ce qui est déjà traité.
 La clé de dédup commentaire est partagée partout : ``media_id||text.lower()``.
 """
 
@@ -16,7 +16,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def comment_dedup_key(media_id: str, text: str) -> str:
-    """Clé stable pour viral / training / embedder et empreintes."""
+    """Clé stable pour viral / training et empreintes."""
     return f"{media_id}||{text.strip().lower()}"
 
 
@@ -88,35 +88,6 @@ def load_training_labeled_keys(
     return keys
 
 
-def vector_store_entry_fingerprint(entry: dict[str, Any] | None) -> str | None:
-    """Lit l'empreinte stockée sur une entrée vector_store."""
-    if not entry:
-        return None
-    fp = entry.get("comments_fingerprint")
-    if fp:
-        return str(fp)
-    sources = entry.get("sources")
-    if isinstance(sources, dict) and sources.get("comments_fingerprint"):
-        return str(sources["comments_fingerprint"])
-    return None
-
-
-def should_skip_embed(
-    username: str,
-    fingerprint: str,
-    vector_entry: dict[str, Any] | None,
-    *,
-    force: bool = False,
-) -> bool:
-    """True si le compte est déjà embeddé avec la même empreinte commentaires."""
-    if force:
-        return False
-    if not vector_entry or not vector_entry.get("embedding_raw"):
-        return False
-    stored = vector_store_entry_fingerprint(vector_entry)
-    return bool(stored and stored == fingerprint)
-
-
 def should_skip_playwright_collect(
     username: str,
     raw_entries: list[dict[str, Any]],
@@ -133,7 +104,6 @@ def build_pipeline_patch(
     *,
     comments_count: int | None = None,
     comments_fingerprint: str | None = None,
-    embedded_at: str | None = None,
     labeled_count: int | None = None,
     labeled_at: str | None = None,
 ) -> dict[str, Any]:
@@ -143,8 +113,6 @@ def build_pipeline_patch(
         patch["comments_count"] = int(comments_count)
     if comments_fingerprint is not None:
         patch["comments_fingerprint"] = comments_fingerprint
-    if embedded_at is not None:
-        patch["embedded_at"] = embedded_at
     if labeled_count is not None:
         patch["labeled_count"] = int(labeled_count)
     if labeled_at is not None:

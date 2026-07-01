@@ -134,7 +134,6 @@ def _generate_single_comment(
     t_type_profile: str,
     niches: list[str] | str,
     video_context: dict[str, Any] | None,
-    named_axes: dict[str, Any] | None,
     model: str,
     ollama_url: str,
     length_bucket: LengthBucket,
@@ -158,7 +157,6 @@ def _generate_single_comment(
             creator_username=str(
                 ctx.get("creator_username") or ctx.get("username") or ""
             ).strip(),
-            named_axes=named_axes if isinstance(named_axes, dict) and named_axes else None,
             length_bucket=length_bucket,
         )
         prompt = build_alpaca_prompt(input_block, length_bucket=length_bucket)
@@ -218,7 +216,6 @@ def _generate_comments_alpaca(
     t_type_profile: str,
     niches: list[str] | str,
     video_context: dict[str, Any] | None,
-    named_axes: dict[str, Any] | None,
     model: str,
     ollama_url: str,
     num_comments: int = 3,
@@ -241,7 +238,6 @@ def _generate_comments_alpaca(
             t_type_profile=t_type_profile,
             niches=niches,
             video_context=video_context,
-            named_axes=named_axes,
             model=model,
             ollama_url=ollama_url,
             length_bucket=length_bucket,
@@ -260,7 +256,6 @@ def generate_comments_per_category(
     *,
     niches: list[str] | str = "",
     video_context: dict[str, Any] | None = None,
-    named_axes: dict[str, Any] | None = None,
     t_types: tuple[str, ...] | None = None,
 ) -> dict[str, str]:
     """Un commentaire par T-type pour le même prompt (caption / contexte vidéo).
@@ -273,7 +268,6 @@ def generate_comments_per_category(
             "OLLAMA_GENERATOR_MODEL non défini : le modèle fine-tuné est requis "
             "pour generate_comments_per_category."
         )
-    axes = named_axes if isinstance(named_axes, dict) and named_axes else None
     categories = t_types or ORDERED_T_TYPES
     seen: set[str] = set()
     out: dict[str, str] = {}
@@ -283,7 +277,6 @@ def generate_comments_per_category(
             t_type_profile=t_type,
             niches=niches,
             video_context=video_context,
-            named_axes=axes,
             model=finetuned_model,
             ollama_url=config.OLLAMA_URL,
             length_bucket=length_bucket,
@@ -299,15 +292,13 @@ def generate_comments(
     niches: list[str] | str = "",
     t_type_profile: str | None = None,
     video_context: dict[str, Any] | None = None,
-    named_axes: dict[str, Any] | None = None,
 ) -> list[str]:
     """Produit 3 commentaires via le modèle Ollama fine-tuné (format Alpaca).
 
     Le pipeline repose sur ``video_context`` (dict : caption, hashtags, audio,
-    ``video_context`` fusionné), ``t_type_profile`` (T-type **du commentateur**, lu dans
-    ``watchlist.json`` côté caller — notre persona) et ``named_axes`` (profil
-    créateur 32D). Un appel Alpaca est émis par commentaire, avec filtrage
-    qualité (cf. ``_generate_comments_alpaca``).
+    ``video_context`` fusionné) et ``t_type_profile`` (T-type **du commentateur**,
+    lu dans ``watchlist.json`` côté caller — notre persona). Un appel Alpaca est
+    émis par commentaire, avec filtrage qualité (cf. ``_generate_comments_alpaca``).
 
     ``niches`` accepte ``list[str]`` (schéma 2026-05) ou ``str`` (rétro-compat).
     ``t_type_profile=None`` produit ``"(non précisé)"`` dans le prompt.
@@ -325,12 +316,10 @@ def generate_comments(
             "OLLAMA_GENERATOR_MODEL non défini : le modèle fine-tuné est requis "
             "pour generate_comments."
         )
-    axes = named_axes if isinstance(named_axes, dict) and named_axes else None
     return _generate_comments_alpaca(
         t_type_profile=profile_tt,
         niches=niches,
         video_context=video_context,
-        named_axes=axes,
         model=finetuned_model,
         ollama_url=config.OLLAMA_URL,
     )

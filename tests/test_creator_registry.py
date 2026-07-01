@@ -1,36 +1,26 @@
-"""Tests creator_registry."""
+"""Tests pour ``modules.creator_registry``."""
+
+from __future__ import annotations
 
 import unittest
 
 from modules.creator_registry import resolve_creator_fields
 
 
-class CreatorRegistryTest(unittest.TestCase):
-    def test_unknown_creator_needs_embed(self) -> None:
-        meta = resolve_creator_fields("compte_inconnu_xyz", index={})
-        self.assertTrue(meta["needs_embed"])
+class ResolveCreatorFieldsTest(unittest.TestCase):
+    def test_unknown_creator_defaults(self) -> None:
+        meta = resolve_creator_fields("unknown", index={})
         self.assertEqual(meta["niches"], ["humour"])
+        self.assertFalse(meta["known_creator"])
 
-    def test_vector_store_list_format(self) -> None:
-        idx = {
+    def test_known_creator_from_index(self) -> None:
+        index = {
             "foo": {
                 "username": "foo",
                 "niches": ["humour"],
                 "t_type": "T2b",
-                "has_vector": False,
             }
         }
-        # Simule merge vector_store (liste) comme dans build_creator_index
-        for entry in [{"username": "foo"}, {"username": "bar"}]:
-            key = str(entry["username"]).lower()
-            base = dict(idx.get(key, {"username": key, "niches": []}))
-            base["has_vector"] = True
-            idx[key] = base
-        meta = resolve_creator_fields("foo", index=idx)
-        self.assertFalse(meta["needs_embed"])
-        meta_bar = resolve_creator_fields("bar", index=idx)
-        self.assertFalse(meta_bar["needs_embed"])
-
-
-if __name__ == "__main__":
-    unittest.main()
+        meta = resolve_creator_fields("foo", index=index)
+        self.assertEqual(meta["t_type_profile"], "T2b")
+        self.assertTrue(meta["known_creator"])

@@ -54,13 +54,12 @@ Prérequis : `data/watchlist.json`, `data/instagram_cookies.json`, Telegram (opt
 .venv/bin/python watcher.py --once
 ```
 
-Le Watcher appelle `generate_comments` avec le `t_type` du créateur, la caption du nouveau reel et les `named_axes` du `vector_store`.
+Le Watcher appelle `generate_comments` avec le `t_type` du créateur et la caption / contexte vidéo du nouveau reel.
 
 ## 6. Après un nouveau discover
 
 ```bash
 .venv/bin/python scripts/label_comments.py
-.venv/bin/python scripts/embedder.py --source database --tier B
 .venv/bin/python scripts/prepare_dataset.py
 # Re-fine-tune generator si le dataset a beaucoup changé
 ```

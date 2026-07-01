@@ -363,6 +363,26 @@ class CheckNewPostTest(unittest.TestCase):
         assert out is not None
         self.assertEqual(out["video_id"], "fresh")
 
+    @patch("watcher.get_recent_reels")
+    def test_new_reel_below_undetected_pinned_matching_last(self, mock_reels: MagicMock) -> None:
+        """Épingle non détectée en tête + last_post_id dessus → scan sous la tête."""
+        mock_reels.return_value = [
+            _reel("pinned_head", 5000),  # taken_at frais par défaut → heuristiques ratent
+            _reel("brand_new", 800, taken_at=_fresh_ts(days_ago=0)),
+            _reel("older", 100, taken_at=_fresh_ts(days_ago=2)),
+        ]
+        creator = {
+            "username": "u",
+            "platform": "instagram",
+            "last_post_id": "pinned_head",
+            "known_reel_ids": ["pinned_head", "older"],
+        }
+        out = check_new_post(creator, self.context)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertEqual(out["video_id"], "brand_new")
+        self.assertFalse(out["bootstrap"])
+
 
 class StripPinnedReelsTest(unittest.TestCase):
     def test_flag_and_taken_at_heuristics(self) -> None:
@@ -491,10 +511,11 @@ class RunWatcherRealCycleTest(unittest.TestCase):
     @patch("watcher._describe_reel_visually", return_value="")
     @patch("watcher._sync_post_metadata_from_reel_page", return_value=True)
     @patch("watcher._transcribe_reel", return_value=("", None))
-    @patch("watcher.get_browser_context")
+    @patch("watcher.ensure_watcher_browser_context")
     @patch("watcher.session_ok", return_value=True)
     @patch("watcher.sync_playwright")
-    @patch("watcher.notify_new_post")
+    @patch("watcher.notify_new_post_alert")
+    @patch("ig1_comment_queue.enqueue_ig1_comment", return_value=True)
     @patch("watcher._generate_for_post")
     @patch("watcher.check_new_post")
     @patch("watcher.time.sleep")
@@ -503,7 +524,8 @@ class RunWatcherRealCycleTest(unittest.TestCase):
         mock_sleep: MagicMock,
         mock_check: MagicMock,
         mock_gen: MagicMock,
-        mock_notify: MagicMock,
+        mock_enqueue: MagicMock,
+        mock_alert: MagicMock,
         mock_pw: MagicMock,
         mock_ctx: MagicMock,
         mock_session: MagicMock,
@@ -523,20 +545,20 @@ class RunWatcherRealCycleTest(unittest.TestCase):
             "posted_at": datetime(2026, 5, 7, 17, 0, tzinfo=timezone.utc),
             "bootstrap": False,
         }
-        mock_gen.return_value = _mock_comments_by_type()
-        mock_notify.return_value = True
+        mock_alert.return_value = True
 
         run_watcher(watchlist_path=self.wl_path, mock=False, max_cycles=1)
 
         mock_check.assert_called_once()
-        mock_gen.assert_called_once()
-        mock_notify.assert_called_once()
+        mock_gen.assert_not_called()
+        mock_enqueue.assert_called_once()
+        mock_alert.assert_called_once()
 
         on_disk = json.loads(self.wl_path.read_text(encoding="utf-8"))
         self.assertEqual(on_disk["creators"][0]["last_post_id"], "fresh_post_id")
 
     @patch("watcher._dual_account_enabled", return_value=False)
-    @patch("watcher.get_browser_context")
+    @patch("watcher.ensure_watcher_browser_context")
     @patch("watcher.session_ok", return_value=True)
     @patch("watcher.sync_playwright")
     @patch("watcher.notify_new_post")
@@ -620,7 +642,7 @@ class RunWatcherProtectionsTest(unittest.TestCase):
         )
 
     @patch("watcher._dual_account_enabled", return_value=False)
-    @patch("watcher.get_browser_context")
+    @patch("watcher.ensure_watcher_browser_context")
     @patch("watcher.session_ok", return_value=True)
     @patch("watcher.sync_playwright")
     @patch("watcher.notify_new_post")
@@ -655,7 +677,7 @@ class RunWatcherProtectionsTest(unittest.TestCase):
     @patch("watcher._dual_account_enabled", return_value=False)
     @patch("watcher.MAX_ACCOUNTS_PAUSE_S", 0)
     @patch("watcher.config.MAX_ACCOUNTS_PER_SESSION", 3)
-    @patch("watcher.get_browser_context")
+    @patch("watcher.ensure_watcher_browser_context")
     @patch("watcher.session_ok", return_value=True)
     @patch("watcher.sync_playwright")
     @patch("watcher.notify_new_post")
@@ -685,26 +707,9 @@ class RunWatcherProtectionsTest(unittest.TestCase):
         self.assertEqual(long_pauses, [])
 
 
-def _sample_named_axes() -> dict[str, float]:
-    return {
-        "scripted_vs_raw": 0.11,
-        "solo_vs_collab": 0.22,
-        "fictional_vs_real": 0.33,
-        "energy_level": 0.44,
-        "production_quality": 0.55,
-        "format_length": 0.66,
-        "distance_parasociale": 0.77,
-        "interaction_style": 0.88,
-        "mainstream_vs_niche": 0.99,
-        "safe_vs_edgy": 0.12,
-    }
-
-
-class GenerateWithVectorTest(unittest.TestCase):
+class GenerateForPostTest(unittest.TestCase):
     @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
-    def test_named_axes_from_vector_store_passed_to_generate_comments(
-        self, mock_gen: MagicMock
-    ) -> None:
+    def test_calls_generate_without_named_axes(self, mock_gen: MagicMock) -> None:
         from watcher import _generate_for_post
 
         ctx = {
@@ -712,61 +717,10 @@ class GenerateWithVectorTest(unittest.TestCase):
             "niches": ["humour"],
             "username": "creator1",
         }
-        vector_store = {
-            "creator1": {
-                "username": "creator1",
-                "named_axes": _sample_named_axes(),
-            }
-        }
-        with self.assertLogs("aitertainment.watcher", level="INFO") as logs:
-            _generate_for_post(ctx, vector_store=vector_store)
-        kwargs = mock_gen.call_args.kwargs
-        self.assertEqual(kwargs["named_axes"], _sample_named_axes())
-        self.assertTrue(
-            any("vecteur 32D disponible" in msg for msg in logs.output)
-        )
-
-    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
-    def test_missing_username_omits_named_axes(self, mock_gen: MagicMock) -> None:
-        from watcher import _generate_for_post
-
-        vector_store = {
-            "creator1": {
-                "username": "creator1",
-                "named_axes": _sample_named_axes(),
-            }
-        }
-        with self.assertLogs("aitertainment.watcher", level="INFO") as logs:
-            _generate_for_post(
-                {"t_type": "T2", "niches": ["humour"], "username": "unknown"},
-                vector_store=vector_store,
-            )
+        _generate_for_post(ctx)
         kwargs = mock_gen.call_args.kwargs
         self.assertNotIn("named_axes", kwargs)
-        self.assertTrue(any("pas de vecteur" in msg for msg in logs.output))
-
-    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
-    def test_empty_vector_store_keeps_legacy_call(self, mock_gen: MagicMock) -> None:
-        from watcher import _generate_for_post
-
-        _generate_for_post(
-            {"t_type": "T2", "niches": ["humour"], "username": "creator1"},
-            vector_store={},
-        )
-        self.assertNotIn("named_axes", mock_gen.call_args.kwargs)
-
-    @patch("modules.classifier.generate_comments_per_category", return_value=_mock_comments_by_type())
-    def test_empty_named_axes_treated_as_missing(self, mock_gen: MagicMock) -> None:
-        from watcher import _generate_for_post
-
-        vector_store = {"creator1": {"username": "creator1", "named_axes": {}}}
-        with self.assertLogs("aitertainment.watcher", level="INFO") as logs:
-            _generate_for_post(
-                {"t_type": "T2", "niches": ["humour"], "username": "creator1"},
-                vector_store=vector_store,
-            )
-        self.assertNotIn("named_axes", mock_gen.call_args.kwargs)
-        self.assertTrue(any("pas de vecteur" in msg for msg in logs.output))
+        self.assertEqual(kwargs["niches"], ["humour"])
 
 
 class NotifyNewPostTest(unittest.TestCase):
@@ -920,6 +874,7 @@ class GenerateForPostTest(unittest.TestCase):
         self.assertEqual(out, _mock_comments_by_type())
         mock_gen.assert_called_once()
 
+    @patch("watcher.config.WATCHER_ALERT_ONLY", False)
     @patch("watcher.notify_new_post")
     @patch("watcher._generate_for_post", return_value=_mock_comments_by_type())
     @patch("watcher._transcribe_reel", return_value=("", None))
@@ -1004,9 +959,9 @@ class FuseTranscriptVisualTest(unittest.TestCase):
 
 
 class TranscribeReelTest(unittest.TestCase):
-    @patch("scripts.embedder.transcribe_audio")
-    @patch("scripts.embedder.extract_wav_from_video")
-    @patch("scripts.embedder.download_reel_video")
+    @patch("scripts.reel_media.transcribe_audio")
+    @patch("scripts.reel_media.extract_wav_from_video")
+    @patch("scripts.reel_media.download_reel_video")
     def test_returns_transcript_and_mp4(
         self,
         mock_dl: MagicMock,
@@ -1028,33 +983,15 @@ class TranscribeReelTest(unittest.TestCase):
         mock_extract.assert_called_once()
         mock_tr.assert_called_once_with(wav)
 
-    @patch("scripts.embedder.download_reel_video", return_value=None)
+    @patch("scripts.reel_media.download_reel_video", return_value=None)
     def test_ytdlp_failure_returns_empty(self, mock_dl: MagicMock) -> None:
         from watcher import _transcribe_reel
 
         self.assertEqual(_transcribe_reel("reel123", MagicMock()), ("", None))
 
-    @patch("scripts.embedder.subprocess.run")
-    def test_download_no_video_formats_logs_debug_not_warning(
-        self, mock_run: MagicMock
-    ) -> None:
-        from scripts.embedder import download_reel_video
-
-        mock_run.return_value = MagicMock(
-            returncode=1,
-            stderr="ERROR: No video formats found",
-        )
-        with self.assertLogs("aitertainment.embedder", level="DEBUG") as logs:
-            out = download_reel_video("carousel_id", MagicMock(), Path(tempfile.mkdtemp()))
-        self.assertIsNone(out)
-        self.assertTrue(
-            any("pas de vidéo (carousel/photo)" in msg for msg in logs.output)
-        )
-        self.assertFalse(any("yt-dlp vidéo échoué" in msg for msg in logs.output))
-
-    @patch("scripts.embedder.transcribe_audio", return_value="ok")
-    @patch("scripts.embedder.extract_wav_from_video")
-    @patch("scripts.embedder.download_reel_video")
+    @patch("scripts.reel_media.transcribe_audio", return_value="ok")
+    @patch("scripts.reel_media.extract_wav_from_video")
+    @patch("scripts.reel_media.download_reel_video")
     def test_tmp_dir_not_removed_when_provided(
         self,
         mock_dl: MagicMock,
@@ -1241,7 +1178,7 @@ class SyncLastPostsTest(unittest.TestCase):
     @patch("watcher.save_watchlist")
     @patch("watcher.sync_creator_last_post_id")
     @patch("watcher.session_ok", return_value=True)
-    @patch("watcher.get_browser_context")
+    @patch("watcher.ensure_watcher_browser_context")
     @patch("watcher.sync_playwright")
     @patch("watcher.time.sleep")
     def test_sync_updates_watchlist(

@@ -21,12 +21,9 @@ class GeneratorPromptTest(unittest.TestCase):
             caption="test caption",
             hashtags=["f1", "monaco"],
             audio_id="AUD1",
-            named_axes={"scripted_vs_raw": 0.11, "energy_level": 0.44},
         )
         self.assertIn("T-type commentateur: T2b", block)
         self.assertIn("Niches: humour, sketch", block)
-        self.assertIn("Profil créateur:", block)
-        self.assertIn("scripted_vs_raw=0.11", block)
         self.assertIn("Caption: test caption", block)
 
     def test_alpaca_prompt_ends_with_response_header(self) -> None:
@@ -54,7 +51,7 @@ class GeneratorPromptTest(unittest.TestCase):
         self.assertEqual(comment_length_bucket("mdr trop vrai"), "short")
         self.assertEqual(comment_length_bucket(" ".join(["mot"] * 12)), "long")
         self.assertIn("3 à 10 mots", build_generator_instruction("short"))
-        self.assertIn("11 à 60 mots", build_generator_instruction("long"))
+        self.assertIn("11 à 40 mots", build_generator_instruction("long"))
         block = build_generator_input_block(
             t_type_profile="T2",
             niches=["humour"],

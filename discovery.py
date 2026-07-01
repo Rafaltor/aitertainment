@@ -70,6 +70,7 @@ from scripts.instagram_browser import (
     get_profile_data,
     get_recent_reels,
     get_suggested_accounts,
+    fetch_reel_comment_likes,
     polite_sleep,
 )
 
@@ -131,6 +132,29 @@ SCORE_POST_RATIO_W = 300
 SCORE_POST_ENGAGEMENT_W = 250
 SCORE_POST_T_TYPE_W = 150
 SCORE_POST_FREQ_W = 25
+
+# --- Comment-heat : signal DOMINANT (2026-06) -----------------------------
+# Ce qui nous importe vraiment : la section commentaires d'un compte est-elle
+# « chaude » ? Si les top commentaires récoltent beaucoup de likes, c'est là
+# qu'un commentaire bien placé (notre produit) sera vu et liké. On en fait le
+# signal dominant du score, devant les vues/engagement bruts des reels.
+#
+# Deux lectures, le ratio primant (cf. choix produit) :
+#   - ratio  = top_comment_likes / reel_likes  → culture commentaire, taille-agnostique
+#   - absolu = top_comment_likes               → garde-fou de visibilité réelle
+# Calibration 2026-06 (donnée live @marrant_club : top comment ≈ 0.2 % des likes
+# du reel sur un compte 470k). Les ratios top_comment/reel_likes réels sont de
+# l'ordre de 0.1-1 %, pas 5 % → ref abaissée à 1 % (= excellente culture
+# commentaire). Le ratio mène (poids 750), l'absolu n'est qu'un garde-fou de
+# visibilité (poids 175, ref haute pour ne pas dominer les gros comptes).
+SCORE_COMMENT_RATIO_REF = 0.01    # 1 % des likes du reel sur le top comment = excellent
+SCORE_COMMENT_ABS_REF = 1000.0    # likes absolus sur le top comment (garde-fou doux)
+SCORE_COMMENT_RATIO_W = 750       # ratio (primaire, dominant)
+SCORE_COMMENT_ABS_W = 175         # absolu (garde-fou)  → Σ comment-heat = 925
+# Part de la comment-heat dans le score final (le reste = contenu reels/posts).
+COMMENT_HEAT_WEIGHT = 0.65
+# Nb de reels visités pour lire les commentaires (coût/risque 429 vs signal).
+COMMENT_HEAT_REELS_SAMPLE = 3
 
 # --- Aliases rétro-compat (les anciens ``*_CAP`` désignent désormais des
 # **références** log, pas des plafonds linéaires — la sémantique a changé) ---
@@ -809,6 +833,69 @@ def _compute_post_score(
     )
 
 
+def _top_comment_likes_by_media(
+    comments: list[dict[str, Any]],
+) -> dict[str, int]:
+    """``media_id`` → likes du commentaire **le plus liké** du reel.
+
+    Les commentaires IG affichés par défaut sont déjà classés par engagement,
+    donc le max des likes parmi ceux scrapés approxime bien le « top comment ».
+    """
+    out: dict[str, int] = {}
+    for c in comments or []:
+        mid = str(c.get("media_id") or "").strip()
+        if not mid:
+            continue
+        likes = int(c.get("comment_likes") or c.get("like_count") or 0)
+        if likes > out.get(mid, -1):
+            out[mid] = likes
+    return out
+
+
+def _comment_ratio_median(
+    top_by_media: dict[str, int], reels: list[dict[str, Any]]
+) -> float:
+    """Médiane(``top_comment_likes / reel_likes``) sur les reels échantillonnés.
+
+    Ratio taille-agnostique : capte la *culture commentaire* (les gens likent
+    les commentaires) indépendamment du nombre d'abonnés. On ignore les reels
+    sans likes (données manquantes) pour ne pas fausser la médiane.
+    """
+    reel_likes = {
+        str(r.get("media_id") or ""): int(r.get("likes") or 0) for r in reels
+    }
+    ratios: list[float] = []
+    for mid, top_likes in top_by_media.items():
+        rl = reel_likes.get(mid, 0)
+        if rl > 0 and top_likes > 0:
+            ratios.append(top_likes / float(rl))
+    return float(statistics.median(ratios)) if ratios else 0.0
+
+
+def _comment_likes_median(top_by_media: dict[str, int]) -> float:
+    """Médiane des likes absolus du top comment (garde-fou de visibilité)."""
+    vals = [v for v in top_by_media.values() if v > 0]
+    return float(statistics.median(vals)) if vals else 0.0
+
+
+def _compute_comment_heat_score(
+    *,
+    comment_ratio_median: float,
+    comment_likes_median: float,
+) -> float:
+    """SCORE_COMMENT_HEAT — somme pondérée log (Σ nominal = 925).
+
+    Ratio primaire (culture commentaire) + absolu secondaire (visibilité).
+    """
+    ratio_norm = _log_norm(
+        comment_ratio_median, ref=SCORE_COMMENT_RATIO_REF, scale=100.0
+    )
+    abs_norm = _log_norm(comment_likes_median, ref=SCORE_COMMENT_ABS_REF)
+    return float(
+        ratio_norm * SCORE_COMMENT_RATIO_W + abs_norm * SCORE_COMMENT_ABS_W
+    )
+
+
 # Alias rétro-compat
 _compute_score = _compute_reel_score
 
@@ -842,6 +929,11 @@ def explain_score(score_result: dict[str, Any]) -> str:
     reel_w = _f("reel_weight")
     post_w = _f("post_weight")
     score_final = _f("score")
+    crm = _f("comment_ratio_median")
+    clm = _f("comment_likes_median")
+    score_comment_heat = _f("score_comment_heat")
+    content_score = _f("score_content")
+    has_comment_heat = sr.get("score_comment_heat") is not None
 
     rrm_pts = _log_norm(rrm, ref=SCORE_REEL_RATIO_REF) * SCORE_REEL_RATIO_W
     rp90_pts = _log_norm(rp90, ref=SCORE_REEL_RATIO_P90_REF) * SCORE_REEL_RATIO_P90_W
@@ -935,8 +1027,33 @@ def explain_score(score_result: dict[str, Any]) -> str:
     )
     lines.append("")
     lines.append(
-        f"score_final = {reel_w:.2f}×{score_reels:.0f} + {post_w:.2f}×{score_posts:.0f} = {score_final:.0f}"
+        f"score_contenu = {reel_w:.2f}×{score_reels:.0f} + {post_w:.2f}×{score_posts:.0f} = {content_score:.0f}"
     )
+    lines.append("")
+    crm_pts = (
+        _log_norm(crm, ref=SCORE_COMMENT_RATIO_REF, scale=100.0)
+        * SCORE_COMMENT_RATIO_W
+    )
+    clm_pts = _log_norm(clm, ref=SCORE_COMMENT_ABS_REF) * SCORE_COMMENT_ABS_W
+    lines.append("─── Comment-heat (DOMINANT) " + bar[:18])
+    lines.append(
+        f"comment_ratio_med : {crm * 100:>5.2f}%  → {crm_pts:>6.0f}pts / {SCORE_COMMENT_RATIO_W}"
+    )
+    lines.append(
+        f"comment_likes_med : {clm:>6.0f}   → {clm_pts:>6.0f}pts / {SCORE_COMMENT_ABS_W}"
+    )
+    lines.append(bar)
+    lines.append(f"score_comment_heat               → {score_comment_heat:>6.0f}pts")
+    lines.append("")
+    if has_comment_heat:
+        lines.append(
+            f"score_final = {COMMENT_HEAT_WEIGHT:.2f}×{score_comment_heat:.0f} (heat) + "
+            f"{1 - COMMENT_HEAT_WEIGHT:.2f}×{content_score:.0f} (contenu) = {score_final:.0f}"
+        )
+    else:
+        lines.append(
+            f"score_final = {content_score:.0f} (contenu seul — pas de donnée commentaire)"
+        )
     return "\n".join(lines)
 
 
@@ -954,6 +1071,8 @@ def _playwright_reel_rows(raw_reels: list[dict[str, Any]]) -> list[dict[str, Any
         rows.append(
             {
                 "media_id": str(r.get("media_id") or ""),
+                # pk numérique conservé pour l'API commentaires (comment-heat).
+                "pk": str(r.get("pk") or ""),
                 "views": int(r.get("view_count") or 0),
                 "likes": int(r.get("like_count") or 0),
                 "comments": int(r.get("comment_count") or 0),
@@ -974,6 +1093,15 @@ def score_profile(
     context: BrowserContext | None = None,
 ) -> dict[str, Any] | None:
     """Score un profil candidat sur son **historique** (Layer 0).
+
+    .. note:: Stratégie 2026-06 — **comment-heat dominante**.
+       Le score final est pondéré à ``COMMENT_HEAT_WEIGHT`` (~65 %) par la
+       « chaleur » de la section commentaires (likes des top commentaires,
+       surtout le ratio ``top_comment_likes / reel_likes``), le score contenu
+       (reels + posts ci-dessous) ne pesant que le reste. Rationale : un compte
+       n'a de valeur pour nous que si commenter y est vu/liké. Repli défensif :
+       si aucune donnée commentaire n'a pu être scrapée (rate-limit, etc.), on
+       retombe sur le score contenu seul plutôt que de pénaliser le profil.
 
     Pipeline :
 
@@ -1216,19 +1344,68 @@ def score_profile(
     # capés à 4), pas sur le brut renvoyé par ``user_medias``.
     reel_weight = len(reels) / float(total_for_scoring)
     post_weight = 1.0 - reel_weight
-    score_final = score_reels * reel_weight + score_posts * post_weight
+    content_score = score_reels * reel_weight + score_posts * post_weight
+
+    # 8.b COMMENT-HEAT (signal dominant) ----------------------------------
+    # On visite quelques reels pour lire les top commentaires et mesurer s'ils
+    # récoltent des likes (= section commentaires « chaude », là où un
+    # commentaire bien placé est vu/liké). C'est le critère décisif.
+    comment_ratio_med = 0.0
+    comment_likes_med = 0.0
+    comment_heat = 0.0
+    comment_reels_sampled = 0
+    comment_data_ok = False
+    if reels:
+        reels_for_comments = sorted(
+            reels, key=lambda r: int(r.get("comments") or 0), reverse=True
+        )[:COMMENT_HEAT_REELS_SAMPLE]
+        try:
+            scraped = fetch_reel_comment_likes(
+                context,
+                u,
+                reels_for_comments,
+                max_reels=COMMENT_HEAT_REELS_SAMPLE,
+                logger=log,
+            )
+        except Exception as e:  # noqa: BLE001 — best-effort, ne bloque pas le scoring
+            log.warning("score_profile @%s : fetch commentaires KO (%s).", u, e)
+            scraped = []
+        top_by_media = _top_comment_likes_by_media(scraped)
+        comment_reels_sampled = len(top_by_media)
+        if top_by_media:
+            comment_data_ok = True
+            comment_ratio_med = _comment_ratio_median(top_by_media, reels)
+            comment_likes_med = _comment_likes_median(top_by_media)
+            comment_heat = _compute_comment_heat_score(
+                comment_ratio_median=comment_ratio_med,
+                comment_likes_median=comment_likes_med,
+            )
+
+    # 8.c SCORE FINAL : comment-heat dominante, contenu en secondaire.
+    # Repli défensif : si AUCUNE donnée commentaire (scrape échoué/vide, p.ex.
+    # rate-limit), on ne pénalise pas un bon profil — on retombe sur le score
+    # contenu seul plutôt que de l'enterrer pour une raison technique.
+    if comment_data_ok:
+        score_final = (
+            COMMENT_HEAT_WEIGHT * comment_heat
+            + (1.0 - COMMENT_HEAT_WEIGHT) * content_score
+        )
+    else:
+        score_final = content_score
 
     log.info(
-        "score_profile @%s : score=%.1f (reels=%d w=%.2f score=%.1f / posts=%d w=%.2f score=%.1f) "
-        "t_type=%s followers=%d",
+        "score_profile @%s : score=%.1f [comment_heat=%.1f (ratio_med=%.3f likes_med=%.0f "
+        "reels=%d ok=%s) + contenu=%.1f (reels=%d/posts=%d)] t_type=%s followers=%d",
         u,
         score_final,
+        comment_heat,
+        comment_ratio_med,
+        comment_likes_med,
+        comment_reels_sampled,
+        comment_data_ok,
+        content_score,
         len(reels),
-        reel_weight,
-        score_reels,
         len(posts),
-        post_weight,
-        score_posts,
         dominant,
         follower_count,
     )
@@ -1249,8 +1426,18 @@ def score_profile(
         "score": float(score_final),
         "score_reels": float(score_reels),
         "score_posts": float(score_posts),
+        "score_content": float(content_score),
         "reel_weight": float(reel_weight),
         "post_weight": float(post_weight),
+        # Comment-heat (signal dominant) : None si pas de donnée commentaire.
+        "score_comment_heat": float(comment_heat) if comment_data_ok else None,
+        "comment_ratio_median": (
+            float(comment_ratio_med) if comment_data_ok else None
+        ),
+        "comment_likes_median": (
+            float(comment_likes_med) if comment_data_ok else None
+        ),
+        "comment_reels_sampled": comment_reels_sampled,
         # Métriques Reels (None si aucun reel)
         "reel_ratio_median": float(reel_ratio_med) if reels else None,
         "reel_ratio_p90": float(reel_ratio_p90) if reels else None,

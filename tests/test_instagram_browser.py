@@ -11,6 +11,7 @@ from scripts.instagram_browser import (
     _ingest_metrics_from_graphql_text,
     _ingest_suggestion_usernames_from_graphql_text,
     _is_clips_media_bucket,
+    _legacy_user_pk_from_page,
     _merge_profile_graphql_text,
     _metrics_for_dom_media_id,
     _parse_count,
@@ -242,6 +243,32 @@ class ClipsApiMediaTest(unittest.TestCase):
         self.assertEqual(reel["owner_username"], "marrant_club")
         self.assertEqual(reel["view_count"], 12000)
         self.assertEqual(reel["row_source"], "api_clips")
+
+
+class _FakePage:
+    def __init__(self, html: str) -> None:
+        self._html = html
+
+    def content(self) -> str:
+        return self._html
+
+
+class LegacyUserPkFromPageTest(unittest.TestCase):
+    def test_prefers_profile_id_over_professional_id(self) -> None:
+        # ``profile_id`` = pk legacy (attendu par /clips/user/) ; le ``id`` long
+        # (id professionnel) ne doit PAS être retenu.
+        html = (
+            '{"user":{"id":"17841463287620375","username":"marrant_club"},'
+            '"profile_id":"63203005587","user_id":"63203005587"}'
+        )
+        self.assertEqual(_legacy_user_pk_from_page(_FakePage(html)), "63203005587")
+
+    def test_user_id_fallback(self) -> None:
+        html = '{"foo":1,"user_id":"42424242","bar":2}'
+        self.assertEqual(_legacy_user_pk_from_page(_FakePage(html)), "42424242")
+
+    def test_none_when_absent(self) -> None:
+        self.assertIsNone(_legacy_user_pk_from_page(_FakePage("<html></html>")))
 
 
 if __name__ == "__main__":

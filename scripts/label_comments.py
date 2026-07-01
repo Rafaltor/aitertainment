@@ -28,7 +28,6 @@ if str(_PROJECT_ROOT) not in __import__("sys").path:
 
 from config import LABEL_LLM_MAX_TOKENS, LABEL_LLM_MODEL, LABEL_LLM_URL, VALID_T_TYPES
 from database import load_db, merge_profile_pipeline, save_db
-from modules.named_axes import NAMED_AXES
 from modules.pipeline_state import build_pipeline_patch, comment_dedup_key
 
 VALID_TTYPES = set(VALID_T_TYPES)
@@ -36,7 +35,6 @@ VIRAL_COMMENTS_PATH = Path("data/viral_comments.json")
 TRAINING_COMMENTS_PATH = Path("data/training_comments_viral.json")
 WATCHLIST_PATH = Path("data/watchlist.json")
 DATABASE_PATH = Path("data/database.json")
-VECTOR_STORE_PATH = Path("data/vector_store.json")
 
 SYSTEM_PROMPT = """Tu classifies des commentaires Instagram français selon le TYPE D'ÉMOTION COLLECTIVE de la section commentaires.
 
@@ -244,29 +242,6 @@ def load_watchlist(path: Path | str | None = None) -> dict[str, dict[str, Any]]:
     return out
 
 
-def load_vector_store(path: Path | str | None = None) -> dict[str, dict[str, Any]]:
-    """Charge ``vector_store.json`` indexé par username."""
-    p = _resolve_path(Path(path) if path is not None else VECTOR_STORE_PATH)
-    if not p.exists():
-        return {}
-
-    data = json.loads(p.read_text(encoding="utf-8"))
-    if isinstance(data, list):
-        entries = [entry for entry in data if isinstance(entry, dict)]
-    elif isinstance(data, dict):
-        raw_entries = data.get("entries") or data.get("profiles") or []
-        entries = [entry for entry in raw_entries if isinstance(entry, dict)]
-    else:
-        entries = []
-
-    out: dict[str, dict[str, Any]] = {}
-    for entry in entries:
-        username = str(entry.get("username") or "").lstrip("@").strip().lower()
-        if username:
-            out[username] = entry
-    return out
-
-
 def _truncate_field(text: str, limit: int = 500) -> str:
     t = (text or "").strip()
     if not t:
@@ -300,7 +275,6 @@ def _format_hashtags(value: Any) -> str:
 def build_creator_context_for_label(
     raw_entry: dict[str, Any],
     creator: dict[str, Any],
-    vs_entry: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Assemble le contexte créateur + reel pour le prompt de classification."""
     username = str(raw_entry.get("username") or "").lstrip("@").strip()
@@ -308,9 +282,6 @@ def build_creator_context_for_label(
     last_score = (
         history[-1] if history and isinstance(history[-1], dict) else {}
     )
-    named_axes: dict[str, Any] = {}
-    if vs_entry and isinstance(vs_entry.get("named_axes"), dict):
-        named_axes = vs_entry["named_axes"]
 
     return {
         "username": username,
@@ -327,7 +298,6 @@ def build_creator_context_for_label(
         "reel_engagement_median": float(
             last_score.get("reel_engagement_median") or 0
         ),
-        "named_axes": named_axes,
         "caption": str(raw_entry.get("caption") or ""),
         "hashtags": raw_entry.get("hashtags") or [],
         "comment_likes": int(raw_entry.get("comment_likes") or 0),
@@ -336,7 +306,6 @@ def build_creator_context_for_label(
         "comment_to_like_ratio": float(
             raw_entry.get("comment_to_like_ratio") or 0
         ),
-        "has_vector_profile": bool(named_axes),
     }
 
 
@@ -393,19 +362,6 @@ def _build_user_prompt(
     eng = float(creator_context.get("reel_engagement_median") or 0)
     if eng > 0:
         lines.append(f"Engagement reel médian: {eng:.3f}")
-
-    named_axes = creator_context.get("named_axes") or {}
-    if isinstance(named_axes, dict) and named_axes:
-        lines.append(
-            "Profil style (named_axes 0-1, échelle globale entre créateurs):"
-        )
-        for axis in NAMED_AXES:
-            if axis in named_axes:
-                lines.append(f"  - {axis}={float(named_axes[axis]):.2f}")
-    else:
-        lines.append(
-            "Profil style: non disponible (créateur absent du vector_store)"
-        )
 
     lines.extend(
         [
@@ -1107,7 +1063,6 @@ def main(argv: list[str] | None = None) -> int:
     watchlist = load_watchlist(WATCHLIST_PATH)
     database = load_database_profiles(DATABASE_PATH)
     creators = _merge_creator_sources(watchlist, database)
-    vector_store = load_vector_store(VECTOR_STORE_PATH)
 
     pending = []
     skipped_in_training = 0
@@ -1203,7 +1158,6 @@ def main(argv: list[str] | None = None) -> int:
             creator_context = build_creator_context_for_label(
                 raw_entry,
                 creator,
-                vector_store.get(username_key),
             )
 
             t_type = classify_comment_t_type(

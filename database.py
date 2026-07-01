@@ -481,7 +481,8 @@ def merge_profile_pipeline(
     """Fusionne ``patch`` dans ``profiles[username].pipeline`` (création si besoin).
 
     Champs typiques : ``comments_count``, ``comments_fingerprint``,
-    ``embedded_at``, ``labeled_count``, ``labeled_at``.
+    Champs optionnels : ``comments_count``, ``comments_fingerprint``,
+    ``labeled_count``, ``labeled_at``.
     """
     if not patch:
         return None

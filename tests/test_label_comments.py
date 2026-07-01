@@ -95,11 +95,6 @@ class BuildUserPromptTest(unittest.TestCase):
                 "caption": "Ma punchline du jour",
                 "hashtags": ["humour", "reels"],
                 "media_id": "ABC123",
-                "named_axes": {
-                    "scripted_vs_raw": 0.11,
-                    "energy_level": 0.44,
-                    "mainstream_vs_niche": 0.99,
-                },
             },
         )
         self.assertIn("Likes sur ce commentaire: 34", prompt)
@@ -107,11 +102,9 @@ class BuildUserPromptTest(unittest.TestCase):
         self.assertIn("Vues du reel (approx.): 50000", prompt)
         self.assertIn("Niches: humour, sketch", prompt)
         self.assertIn("T-type dominant (profil créateur): T2", prompt)
-        self.assertIn("scripted_vs_raw=0.11", prompt)
-        self.assertIn("energy_level=0.44", prompt)
         self.assertIn("pas T1 par défaut", prompt)
 
-    def test_empty_named_axes_shows_unavailable(self) -> None:
+    def test_minimal_creator_context(self) -> None:
         prompt = label_comments._build_user_prompt(
             "super",
             ["humour"],
@@ -119,12 +112,11 @@ class BuildUserPromptTest(unittest.TestCase):
                 "username": "beta",
                 "t_type_profile": "T3b",
                 "niches": ["humour"],
-                "named_axes": {},
                 "comment_likes": 2,
             },
         )
-        self.assertIn("absent du vector_store", prompt)
         self.assertIn("Likes sur ce commentaire: 2", prompt)
+        self.assertIn("Username: @beta", prompt)
 
 
 class BuildCreatorContextTest(unittest.TestCase):
@@ -143,14 +135,11 @@ class BuildCreatorContextTest(unittest.TestCase):
             "followers": 5000,
             "scores_history": [{"score": 420, "reel_engagement_median": 0.12}],
         }
-        vs = {"named_axes": {"energy_level": 0.8}}
-        ctx = label_comments.build_creator_context_for_label(raw, creator, vs)
+        ctx = label_comments.build_creator_context_for_label(raw, creator)
         self.assertEqual(ctx["comment_likes"], 10)
         self.assertEqual(ctx["caption"], "cap")
         self.assertEqual(ctx["tier"], "C")
         self.assertEqual(ctx["discovery_score"], 420)
-        self.assertEqual(ctx["named_axes"]["energy_level"], 0.8)
-        self.assertTrue(ctx["has_vector_profile"])
 
 
 class ParseLabelResponseTest(unittest.TestCase):
@@ -208,7 +197,7 @@ class LabelAndFuseTest(unittest.TestCase):
         t_type, video_context = label_comments.label_and_fuse(
             "mdr trop fort",
             ["humour"],
-            {"t_type_profile": "T2", "named_axes": {}},
+            {"t_type_profile": "T2"},
             caption="cap",
             transcript="dialogue audio",
             visual_description="deux personnes",
@@ -479,21 +468,9 @@ class MainTest(unittest.TestCase):
             }
         ]
         watchlist = {"alpha": {"username": "alpha", "t_type": "T2"}}
-        vector_store = {
-            "alpha": {
-                "username": "alpha",
-                "named_axes": {
-                    "scripted_vs_raw": 0.1,
-                    "energy_level": 0.2,
-                    "mainstream_vs_niche": 0.3,
-                },
-            }
-        }
         with patch.object(label_comments, "load_viral_comments", return_value=raw), patch.object(
             label_comments, "load_training_comments", return_value=(existing, {key})
         ), patch.object(label_comments, "load_watchlist", return_value=watchlist), patch.object(
-            label_comments, "load_vector_store", return_value=vector_store
-        ), patch.object(
             label_comments,
             "classify_comment_t_type",
             return_value="T4",
@@ -519,8 +496,6 @@ class MainTest(unittest.TestCase):
         with patch.object(label_comments, "load_viral_comments", return_value=raw), patch.object(
             label_comments, "load_training_comments", return_value=([], set())
         ), patch.object(label_comments, "load_watchlist", return_value={}), patch.object(
-            label_comments, "load_vector_store", return_value={}
-        ), patch.object(
             label_comments,
             "classify_comment_t_type",
             return_value="T2",

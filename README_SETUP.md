@@ -4,7 +4,16 @@ Guide complet pour faire tourner le pipeline en autonome sur un Mac Mini Apple S
 
 > **Cible** : machine dédiée allumée 24/7, daemons Watcher + bot Discovery lancés au boot via `launchd` (équivalent macOS de cron + systemd).
 
-**Checklist prod `.env`** : `DISABLE_HUMAN_SCHEDULE=false`, `OLLAMA_GENERATOR_MODEL` défini, `data/instagram_cookies.json` présent. Remplir `data/seeds.json` (comptes seed) pour lancer Discovery.
+**Checklist prod `.env`** :
+
+| Variable / fichier | Rôle |
+|---|---|
+| `OLLAMA_GENERATOR_MODEL` | Modèle fine-tuné pour `generate_comments` (mode watcher complet) |
+| `LM_STUDIO_URL` + `LM_STUDIO_VISION_MODEL` | Vision grille frames (watcher / scrape viral) |
+| `data/instagram_cookies.json` | Session IG1 (spam commentaires) |
+| `data/instagram_cookies_2.json` | Session IG2 (watcher scrape) |
+| `WATCHER_ALERT_ONLY=true` | Prod actuelle : alertes Telegram + file IG1 (pas Ollama live) |
+| `data/seeds.json` | Optionnel — `seeds: []` OK tant que Discovery n'explore pas le réseau |
 
 ---
 
@@ -162,6 +171,8 @@ Le scraping passe par Chromium + cookies persistés (pas d'API mobile privée).
 ```bash
 python -c "from scripts.instagram_browser import test_session; print('OK' if test_session() else 'session expirée')"
 ```
+
+**Deux comptes en prod** : exporte aussi `data/instagram_cookies_2.json` pour le watcher (IG2). IG1 (`instagram_cookies.json`) sert au spam commentaires.
 
 Renouvelle les cookies si la commande échoue ou si Discovery/Watcher loguent « session expirée ».
 
@@ -390,8 +401,7 @@ sudo pmset -a autorestart 1
 | `data/training_comments_viral.json` | `label_comments.py` | Commentaires labellisés (T-types) pour le générateur |
 | `data/generator_dataset.json` | `prepare_dataset.py` | Export Alpaca pour fine-tune Colab |
 | `data/discovery_bot_state.json` | `telegram_discovery_bot.py` | Offset Telegram pour `getUpdates` |
-| `data/watchlist.json` | `watcher.py`, `scripts/embedder.py` | Créateurs surveillés (watcher + embeddings) |
-| `data/vector_store.json` | `scripts/embedder.py` | Embeddings + axes 32D |
+| `data/watchlist.json` | `watcher.py` | Créateurs surveillés |
 | `data/dataset_generator.jsonl` | `scripts/prepare_dataset.py` | Export JSONL (fine-tune) |
 | `data/instagram_cookies.json` | `scripts/instagram_browser.py` | Session Playwright (non versionné) |
 | `data/seeds.json` | `discovery.py` | Domaines + comptes seed pour exploration |
@@ -407,9 +417,8 @@ sudo pmset -a autorestart 1
 | `scrape_viral_comments.py` | Pool `viral_comments.json` (fil Reels) |
 | `clean_comments.py` | Nettoyage viral (`--viral`) et training (`--training`) |
 | `label_comments.py` | Labélisation T-types → `training_comments_viral.json` |
-| `prepare_dataset.py` | Export `generator_dataset.json` + `dataset_generator.jsonl` |
+| `prepare_dataset.py` | Export `dataset_generator.jsonl` (Colab) |
 | `train_from_viral.py` | Orchestrateur clean → label → prepare |
-| `embedder.py` | Embeddings + `vector_store.json` |
 | `deploy_generator.py` / `merge_generator_lora.py` | Post-Colab → Ollama |
 | `instagram_browser.py` | Couche Playwright partagée |
 
@@ -432,24 +441,41 @@ Pour aller plus loin : `man launchd.plist`, `man launchctl`.
 
 ---
 
-## 12. État pipeline & dette technique (juin 2026)
+## 12. Architecture prod & dette technique (juillet 2026)
+
+### Comptes Instagram
+
+| Compte | Cookies | Rôle |
+|---|---|---|
+| **IG1** (`lowtaperdu67`) | `data/instagram_cookies.json` | Spam `lowtaper67` — fil Reels + file watcher (`scripts/ig1_spam_reels.py`) |
+| **IG2** (`abaclavachaud`) | `data/instagram_cookies_2.json` | Watcher : scrape watchlist, alertes Telegram |
+
+### Modes watcher
+
+| `WATCHER_ALERT_ONLY` | Comportement |
+|---|---|
+| `true` (**prod**) | Alerte Telegram minimale + enqueue IG1 (`WATCHER_AUTO_COMMENT_LOWTAPER`) |
+| `false` | Mode complet : transcript, vision LM Studio, Ollama `generate_comments`, boutons Telegram |
+
+Le code mode Ollama reste maintenu — basculer via `.env` sans toucher au code.
+
+Variables clés : `WATCHER_DUAL_ACCOUNT=false`, `WATCHER_SCRAPE_SLOT=1`, `WATCHER_SKIP_T_TYPES=T1`.
 
 **Pipeline branché (prod Mac Mini)**
 
 | Couche | Process | État |
 |---|---|---|
 | Discovery | `telegram_discovery_bot.py` + `discovery.py` | OK |
-| Watcher | `watcher.py` (dual IG, skip T1, Ollama generator) | OK |
-| Générateur | Colab → `deploy_generator.py` → `aitertainment-generator` | OK |
+| Watcher | `watcher.py` sur IG2 (alertes + file IG1) | OK |
+| IG1 spam | `scripts/ig1_spam_reels.py --loop` | OK |
+| Générateur | Colab → `deploy_generator.py` → `aitertainment-generator` (Ollama) | OK |
 | Corpus viral | `scrape_viral_comments` → clean → label → prepare | OK |
-| Embeddings | `embedder.py` → `vector_store.json` | OK |
 
-**Nettoyage récent** : backups `viral_comments.json.bak*`, cookies Netscape orphelins,
-`WATCHER_PARALLEL_CHECKS` (jamais branché), vestiges instagrapi / `rescore_scheduler` / `curate_*`.
+**Nettoyage récent** : `debug/`, `pca_model.pkl`, doublon `generator_dataset.json`, `watcher_pending_posts` vidé.
 
 | Priorité | Sujet | Statut |
 |---|---|---|
-| P1 | Unifier loaders watchlist (`embedder` / `label` / `watcher`) | Dette — signatures différentes |
+| P1 | Unifier loaders watchlist (`label` / `watcher`) | Dette — signatures différentes |
 | P1 | Découper `instagram_browser.py` (~3.6k lignes) | Dette |
 | P1 | Label/prepare incrémental (gros JSON) | Dette |
 | P2 | `Makefile` / cibles smoke (`watcher --mock`, `test_generator`) | Optionnel |
@@ -457,16 +483,23 @@ Pour aller plus loin : `man launchd.plist`, `man launchctl`.
 **Parcours opérationnel type**
 
 ```bash
-# Services Mac Mini
-launchctl load com.aitertainment.watcher.plist
+# Services Mac Mini (tmux ou launchd)
+# Session 1 — watcher IG2
+.venv/bin/python -u watcher.py
+
+# Session 2 — spam IG1
+.venv/bin/python -u scripts/ig1_spam_reels.py --loop
+
+# Discovery bot
 launchctl load com.aitertainment.discovery_bot.plist
 
-# Discovery (après seeds remplis)
+# Discovery scoring (seeds optionnels)
 .venv/bin/python discovery.py --domain humour
 
 # Pipeline générateur (manuel, hors heures de pointe)
 .venv/bin/python scripts/train_from_viral.py --label-limit 200
 # Colab → models/incoming_lora/ → deploy_generator.py
 
-.venv/bin/python watcher.py --once
+# Mode watcher Ollama complet (optionnel)
+# WATCHER_ALERT_ONLY=false dans .env puis redémarrer watcher.py
 ```

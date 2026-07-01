@@ -86,7 +86,6 @@ from scripts.instagram_browser import (
 _HASHTAG_RE = re.compile(r"#(\w+)")
 
 DEFAULT_WATCHLIST_PATH = _PROJECT_ROOT / "data" / "watchlist.json"
-VECTOR_STORE_PATH = Path("data/vector_store.json")
 
 VALID_PLATFORMS = frozenset({"instagram", "tiktok"})
 NEW_POST_VIEW_THRESHOLD = config.WATCHER_NEW_POST_VIEW_THRESHOLD
@@ -220,13 +219,21 @@ def _reel_taken_at_ts(reel: dict[str, Any]) -> int:
     return 0
 
 
+def _median_taken_at_ts(reels: list[dict[str, Any]]) -> int | None:
+    """Médiane des ``taken_at`` (unix) sur la grille — heuristique épingles."""
+    values = sorted(t for t in (_reel_taken_at_ts(r) for r in reels) if t > 0)
+    if not values:
+        return None
+    return values[len(values) // 2]
+
+
 def _strip_pinned_reels(
     reels: list[dict[str, Any]],
     *,
     username: str,
     log_prefix: str = "check_new_post",
 ) -> list[dict[str, Any]]:
-    """Exclut les reels épinglés (flag ``is_pinned`` ou tête plus vieille que le suivant)."""
+    """Exclut les reels épinglés (flag, tête plus vieille que le suivant, médiane -30j)."""
     non_pinned: list[dict[str, Any]] = []
     for reel in reels:
         media_id = str(reel.get("media_id") or "")
@@ -258,7 +265,63 @@ def _strip_pinned_reels(
             non_pinned = non_pinned[1:]
             continue
         break
+
+    median_ts = _median_taken_at_ts(non_pinned)
+    if median_ts is not None and len(non_pinned) >= 3:
+        threshold_ts = median_ts - 30 * 86400
+        trimmed: list[dict[str, Any]] = []
+        for idx, reel in enumerate(non_pinned):
+            if idx < 3:
+                taken = _reel_taken_at_ts(reel)
+                if taken and taken < threshold_ts:
+                    _LOGGER.info(
+                        "%s @%s : reel %s ignoré (épinglé probable — taken_at "
+                        "%d < médiane-30j %d).",
+                        log_prefix,
+                        username,
+                        str(reel.get("media_id") or ""),
+                        taken,
+                        threshold_ts,
+                    )
+                    continue
+            trimmed.append(reel)
+        non_pinned = trimmed
+
     return non_pinned
+
+
+def _pick_surveillance_candidate(
+    reels: list[dict[str, Any]],
+    *,
+    known: set[str],
+    last_post_id: str,
+) -> dict[str, Any] | None:
+    """Premier reel récent inconnu dans la grille (sous épingles non détectées)."""
+    for reel in reels:
+        media_id = str(reel.get("media_id") or "")
+        if not media_id or media_id == last_post_id or media_id in known:
+            continue
+        if reel.get("is_pinned", False):
+            continue
+        if not _is_fresh_reel(reel):
+            continue
+        return reel
+    return None
+
+
+def _view_filter_threshold(
+    non_pinned: list[dict[str, Any]],
+) -> float | None:
+    if not VIEW_FILTER_ENABLED:
+        return None
+    views_list = [
+        int(r["view_count"])
+        for r in non_pinned
+        if int(r.get("view_count") or 0) > 0
+    ]
+    if len(views_list) >= 2:
+        return max(NEW_POST_VIEW_THRESHOLD, sum(views_list[1:]) / len(views_list[1:]) * 0.05)
+    return float(NEW_POST_VIEW_THRESHOLD)
 
 
 def _creator_username_platform(
@@ -338,7 +401,7 @@ def _fetch_non_pinned_video_reels(
     if not reels:
         _LOGGER.warning(
             "%s @%s : aucun reel récupéré "
-            "(session IG, compte privé/inexistant, ou rate-limit — voir logs grille).",
+            "(compte introuvable/renommé, privé, sans reels, session IG, ou rate-limit).",
             log_prefix,
             username,
         )
@@ -512,6 +575,7 @@ def _build_new_post_payload(
 ) -> dict[str, Any]:
     caption = str(first.get("caption") or "")
     media_id = str(first.get("media_id") or "")
+    taken_at = _reel_taken_at_ts(first) or None
     return {
         "video_id": media_id,
         "username": username,
@@ -521,6 +585,8 @@ def _build_new_post_payload(
         "audio_id": str(first.get("audio_id") or ""),
         "url": f"https://www.instagram.com/reel/{media_id}/",
         "posted_at": _reel_posted_at(first) or datetime.now(timezone.utc),
+        "taken_at": taken_at,
+        "view_count": int(first.get("view_count") or 0),
         "bootstrap": bootstrap,
         "repair": repair,
     }
@@ -537,8 +603,8 @@ def check_new_post(
 
     - **Bootstrap** (``last_post_id`` absent) : mémorise l'état sans notification.
     - **Repair** (curseur périmé / reel trop ancien) : resync silencieux.
-    - **Surveillance** : alerte seulement si le reel en tête est nouveau, récent
-      (``taken_at``), visible en DOM, et ``last_post_id`` est juste derrière (index 1).
+    - **Surveillance** : alerte sur le premier reel récent inconnu dans la grille
+      (pas seulement la tête — couvre les épingles non détectées au-dessus).
     """
     parsed = _creator_username_platform(creator)
     if parsed is None:
@@ -558,13 +624,6 @@ def check_new_post(
         return None
 
     first = non_pinned[0]
-    if first.get("is_pinned", False):
-        _LOGGER.warning(
-            "check_new_post @%s : tête %s encore marquée épinglée — ignoré.",
-            username,
-            str(first.get("media_id") or ""),
-        )
-        return None
     first_views = int(first.get("view_count") or 0)
     media_id = grid_ids[0]
     _LOGGER.debug(
@@ -577,6 +636,66 @@ def check_new_post(
     )
     last_post_id = str(creator.get("last_post_id") or "")
     known = _creator_known_reel_ids(creator)
+
+    candidate: dict[str, Any] | None = None
+    if last_post_id:
+        candidate = _pick_surveillance_candidate(
+            non_pinned, known=known, last_post_id=last_post_id
+        )
+    if candidate is not None:
+        cand_id = str(candidate.get("media_id") or "")
+        cand_views = int(candidate.get("view_count") or 0)
+        row_source = str(candidate.get("row_source") or "")
+        if grid_page is not None and row_source == "dom":
+            from scripts.instagram_browser import verify_reel_on_profile_grid
+
+            if not verify_reel_on_profile_grid(
+                grid_page, cand_id, max_reels=GRID_REELS
+            ):
+                _LOGGER.warning(
+                    "check_new_post @%s : reel %s absent de la grille DOM — ignoré.",
+                    username,
+                    cand_id,
+                )
+                candidate = None
+        if candidate is not None:
+            threshold = _view_filter_threshold(non_pinned)
+            if threshold is not None and cand_views >= threshold:
+                _LOGGER.info(
+                    "check_new_post @%s : reel %s ignoré (%d vues >= seuil %.0f, filtre actif)",
+                    username,
+                    cand_id,
+                    cand_views,
+                    threshold,
+                )
+            else:
+                if cand_id != media_id:
+                    _LOGGER.info(
+                        "check_new_post @%s : nouveau post %s sous épingles "
+                        "(tête=%s, last=%s).",
+                        username,
+                        cand_id,
+                        media_id,
+                        last_post_id or "(null)",
+                    )
+                elif threshold is not None:
+                    _LOGGER.info(
+                        "check_new_post @%s : nouveau post détecté %s (%d vues < seuil %.0f)",
+                        username,
+                        cand_id,
+                        cand_views,
+                        threshold,
+                    )
+                else:
+                    _LOGGER.info(
+                        "check_new_post @%s : nouveau post détecté %s (%d vues)",
+                        username,
+                        cand_id,
+                        cand_views,
+                    )
+                return _build_new_post_payload(
+                    candidate, username, bootstrap=False
+                )
 
     if media_id == last_post_id:
         _merge_known_reel_ids(creator, grid_ids)
@@ -945,31 +1064,6 @@ def _telegram_md_escape(text: str) -> str:
     return "".join(out)
 
 
-def load_vector_store(path: Path | str | None = None) -> dict[str, dict[str, Any]]:
-    """Charge ``vector_store.json`` et indexe les entrées par username."""
-    p = Path(path) if path is not None else VECTOR_STORE_PATH
-    if not p.is_absolute():
-        p = _PROJECT_ROOT / p
-    if not p.exists():
-        return {}
-
-    data = json.loads(p.read_text(encoding="utf-8"))
-    if isinstance(data, list):
-        entries = [entry for entry in data if isinstance(entry, dict)]
-    elif isinstance(data, dict):
-        raw_entries = data.get("entries") or data.get("profiles") or []
-        entries = [entry for entry in raw_entries if isinstance(entry, dict)]
-    else:
-        entries = []
-
-    out: dict[str, dict[str, Any]] = {}
-    for entry in entries:
-        username = str(entry.get("username") or "").lstrip("@").strip().lower()
-        if username:
-            out[username] = entry
-    return out
-
-
 def _describe_reel_visually(
     mp4_path: Path, lm_studio_url: str, vision_model: str
 ) -> str:
@@ -1078,7 +1172,7 @@ def _transcribe_reel(
 
     Si ``tmp_dir`` est fourni, le répertoire n'est pas supprimé (le caller gère).
     """
-    from scripts.embedder import (
+    from scripts.reel_media import (
         download_reel_video,
         extract_wav_from_video,
         transcribe_audio,
@@ -1156,10 +1250,7 @@ Réponds uniquement la fusion, pas d'explication."""
         return ""
 
 
-def _generate_for_post(
-    context: dict[str, Any],
-    vector_store: dict[str, dict[str, Any]] | None = None,
-) -> dict[str, str]:
+def _generate_for_post(context: dict[str, Any]) -> dict[str, str]:
     """Produit un commentaire par T-type depuis le ``context``.
 
     Le contexte vidéo (caption, hashtags, audio_id) est passé à
@@ -1172,7 +1263,6 @@ def _generate_for_post(
     from modules.classifier import generate_comments_per_category  # import local
 
     log = logging.getLogger("aitertainment.watcher")
-    vector_store = vector_store or {}
     t_type = str(context.get("t_type") or "")
     # ``niches`` (liste) : le caller (``run_watcher``) passe ``creator["niches"]``
     # à la construction du context.
@@ -1181,12 +1271,6 @@ def _generate_for_post(
 
     if t_type not in VALID_T_TYPES:
         return {}
-
-    username = str(context.get("username") or "").lstrip("@").strip().lower()
-    vs_entry = vector_store.get(username, {})
-    named_axes = vs_entry.get("named_axes") or {}
-    if not isinstance(named_axes, dict):
-        named_axes = {}
 
     gen_kwargs: dict[str, Any] = {
         "niches": niches,
@@ -1200,6 +1284,7 @@ def _generate_for_post(
         },
     }
     reel_id = str(context.get("video_id") or "")
+    username = str(context.get("username") or "").lstrip("@").strip().lower()
     log.info(
         "generate @%s reel=%s — caption=%d chars, video_context=%d",
         username or "?",
@@ -1207,18 +1292,6 @@ def _generate_for_post(
         len(str(context.get("caption") or "")),
         len(str(context.get("video_context") or "")),
     )
-    if named_axes:
-        log.info(
-            "generate @%s : vecteur 32D disponible (%d axes)",
-            username or "?",
-            len(named_axes),
-        )
-        gen_kwargs["named_axes"] = named_axes
-    else:
-        log.info(
-            "generate @%s : pas de vecteur — génération sans profil créateur",
-            username or "?",
-        )
 
     with patch_ollama_timeout(OLLAMA_TIMEOUT_S):
         return generate_comments_per_category(**gen_kwargs)
@@ -1247,6 +1320,46 @@ class patch_ollama_timeout:
 
         if self._orig is not None:
             clf._http_post = self._orig
+
+
+def notify_new_post_alert(
+    creator: dict[str, Any],
+    post: dict[str, Any],
+) -> bool:
+    """Alerte Telegram minimale (sans Ollama ni boutons commentaire)."""
+    log = logging.getLogger("aitertainment.watcher")
+    from telegram_watcher_callbacks import send_watcher_post_alert
+
+    display_user = str(
+        post.get("username") or creator.get("username") or "?"
+    ).lstrip("@").strip()
+    reel_id = str(post.get("video_id") or "")
+    views = int(post.get("view_count") or 0)
+    url = str(post.get("url") or "").strip()
+    if not url and reel_id:
+        url = f"https://www.instagram.com/reel/{reel_id}/"
+
+    spam = config.SPAM_COMMENT_TEXT or "lowtaper67"
+    text = (
+        f"📢 *Nouveau post détecté*\n\n"
+        f"👤 @{_telegram_md_escape(display_user)}\n"
+        f"👁 {views:,} vues\n\n"
+        f"🤖 IG1 commentera `{_telegram_md_escape(spam)}` automatiquement.\n\n"
+        f"🔗 {_telegram_md_escape(url)}"
+    )
+
+    try:
+        send_watcher_post_alert(text, reply_markup=None)
+    except ValueError as e:
+        log.warning(
+            "Telegram non envoyée @%s (config manquante) : %s", display_user, e
+        )
+        return False
+    except Exception as e:
+        log.warning("Telegram non envoyée @%s : %s", display_user, e)
+        return False
+    log.info("Telegram alerte envoyée pour @%s reel=%s", display_user, reel_id)
+    return True
 
 
 def notify_new_post(
@@ -1463,7 +1576,6 @@ def _run_dual_slot_batch(
     creators: list[dict[str, Any]],
     mock: bool,
     log: logging.Logger,
-    vector_store: dict[str, dict[str, Any]],
     watchlist_path: str | Path | None,
     watchlist_lock: threading.Lock,
 ) -> int:
@@ -1483,7 +1595,6 @@ def _run_dual_slot_batch(
             creators=creators,
             mock=mock,
             log=log,
-            vector_store=vector_store,
             worker=None,
             browser_context=context,
             grid_page=page,
@@ -1609,7 +1720,6 @@ def _process_creator(
     *,
     mock: bool,
     log: logging.Logger,
-    vector_store: dict[str, dict[str, Any]] | None = None,
     browser_context: BrowserContext | None = None,
     grid_page: Page | None = None,
 ) -> tuple[bool, bool]:
@@ -1671,6 +1781,35 @@ def _process_creator(
         creator["last_check_at"] = datetime.now(timezone.utc).isoformat(
             timespec="seconds"
         )
+
+    if not mock and config.WATCHER_ALERT_ONLY:
+        if config.WATCHER_AUTO_COMMENT_LOWTAPER and media_id:
+            from ig1_comment_queue import enqueue_ig1_comment
+
+            if enqueue_ig1_comment(
+                media_id,
+                username=username,
+                source="watcher",
+            ):
+                log.info(
+                    "@%s reel=%s : en file IG1 pour commentaire %r.",
+                    username,
+                    media_id,
+                    config.SPAM_COMMENT_TEXT,
+                )
+        notify_new_post_alert(creator, post)
+        _apply_creator_scan_state(
+            creator,
+            [{"media_id": media_id}] + [
+                {"media_id": mid} for mid in (creator.get("known_reel_ids") or [])
+            ],
+        )
+        log.info(
+            "@%s : last_post_id mis à jour -> %s",
+            username,
+            creator["last_post_id"],
+        )
+        return True, did_check
 
     if not mock and browser_context is not None:
         log.info("@%s reel=%s : enrichissement métadonnées…", username, media_id)
@@ -1739,7 +1878,7 @@ def _process_creator(
         comments = (
             _mock_generate(gen_context)
             if mock
-            else _generate_for_post(gen_context, vector_store=vector_store or {})
+            else _generate_for_post(gen_context)
         )
     except Exception as e:
         log.exception("@%s : génération de commentaires échouée (%s)", username, e)
@@ -1775,7 +1914,6 @@ def _run_creator_batch(
     creators: list[dict[str, Any]],
     mock: bool,
     log: logging.Logger,
-    vector_store: dict[str, dict[str, Any]],
     worker: _WatcherIgWorker | None,
     browser_context: BrowserContext | None,
     grid_page: Page | None,
@@ -1790,7 +1928,6 @@ def _run_creator_batch(
                 creator,
                 mock=mock,
                 log=log,
-                vector_store=vector_store,
                 browser_context=browser_context,
                 grid_page=grid_page,
             )
@@ -1827,7 +1964,6 @@ def _run_cycle(
     *,
     mock: bool,
     log: logging.Logger,
-    vector_store: dict[str, dict[str, Any]],
     dual_account: bool,
     browser_context: BrowserContext | None,
     grid_page: Page | None,
@@ -1853,7 +1989,6 @@ def _run_cycle(
                     creators=creators,
                     mock=mock,
                     log=log,
-                    vector_store=vector_store,
                     watchlist_path=watchlist_path,
                     watchlist_lock=watchlist_lock,
                 ),
@@ -1864,7 +1999,6 @@ def _run_cycle(
                     creators=creators,
                     mock=mock,
                     log=log,
-                    vector_store=vector_store,
                     watchlist_path=watchlist_path,
                     watchlist_lock=watchlist_lock,
                 ),
@@ -1888,7 +2022,6 @@ def _run_cycle(
                 creator,
                 mock=mock,
                 log=log,
-                vector_store=vector_store,
                 browser_context=browser_context,
                 grid_page=grid_page,
             )
@@ -1967,16 +2100,16 @@ def sync_watchlist_last_posts(
     grid_page: Page | None = None
     if not dual_account:
         playwright_instance = sync_playwright().start()
-        context = get_browser_context(playwright_instance)
-        if not session_ok(context):
-            log.error(
-                "Session Instagram invalide ou expirée — "
-                "régénérer data/instagram_cookies.json puis relancer."
+        try:
+            context = ensure_watcher_browser_context(
+                playwright_instance, slot=config.WATCHER_SCRAPE_SLOT
             )
-            context.close()
-            br = context.browser
-            if br:
-                br.close()
+        except (FileNotFoundError, RuntimeError) as e:
+            log.error(
+                "Session IG slot %d invalide — %s",
+                config.WATCHER_SCRAPE_SLOT,
+                e,
+            )
             playwright_instance.stop()
             return
         grid_page = context.new_page()
@@ -2095,9 +2228,6 @@ def run_watcher(
         max_cycles = 1
 
     cycle = 0
-    vector_store = load_vector_store(VECTOR_STORE_PATH)
-    log.info("vector_store chargé : %d comptes", len(vector_store))
-    last_vector_store_reload = datetime.utcnow()
 
     dual_account = False
     playwright_instance = None
@@ -2106,21 +2236,30 @@ def run_watcher(
     telegram_stop: threading.Event | None = None
 
     if not mock:
-        try:
-            from telegram_watcher_callbacks import start_poller_thread
+        if not config.WATCHER_ALERT_ONLY:
+            try:
+                from telegram_watcher_callbacks import start_poller_thread
 
-            _, telegram_stop = start_poller_thread()
-            log.info(
-                "Poller Telegram actif — boutons commentaire → compte IG 1."
-            )
-        except Exception as e:
-            log.warning("Poller Telegram non démarré : %s", e)
+                _, telegram_stop = start_poller_thread()
+                log.info(
+                    "Poller Telegram actif — boutons commentaire → compte IG 1."
+                )
+            except Exception as e:
+                log.warning("Poller Telegram non démarré : %s", e)
         dual_account = _dual_account_enabled()
-        if config.WATCHER_DUAL_ACCOUNT and not dual_account:
-            log.warning(
-                "WATCHER_DUAL_ACCOUNT=true mais %s absent — mono-compte. "
-                "Lancer : python watcher.py --login-ig2",
-                config.WATCHER_IG2_COOKIES_PATH,
+        if dual_account:
+            if config.WATCHER_DUAL_ACCOUNT and not Path(
+                config.WATCHER_IG2_COOKIES_PATH
+            ).is_file():
+                log.warning(
+                    "WATCHER_DUAL_ACCOUNT=true mais %s absent — mono-compte. "
+                    "Lancer : python watcher.py --login-ig2",
+                    config.WATCHER_IG2_COOKIES_PATH,
+                )
+        else:
+            log.info(
+                "Watcher scrape IG2 uniquement (slot %d) — IG1 réservé au spam commentaires.",
+                config.WATCHER_SCRAPE_SLOT,
             )
         try:
             creators_preview = load_watchlist_synced(watchlist_path)
@@ -2149,16 +2288,16 @@ def run_watcher(
         )
         if not dual_account:
             playwright_instance = sync_playwright().start()
-            context = get_browser_context(playwright_instance)
-            if not session_ok(context):
-                log.error(
-                    "Session Instagram invalide ou expirée — "
-                    "régénérer data/instagram_cookies.json puis relancer."
+            try:
+                context = ensure_watcher_browser_context(
+                    playwright_instance, slot=config.WATCHER_SCRAPE_SLOT
                 )
-                context.close()
-                br = context.browser
-                if br:
-                    br.close()
+            except (FileNotFoundError, RuntimeError) as e:
+                log.error(
+                    "Session IG slot %d invalide — %s",
+                    config.WATCHER_SCRAPE_SLOT,
+                    e,
+                )
                 playwright_instance.stop()
                 return
             grid_page = context.new_page()
@@ -2167,11 +2306,6 @@ def run_watcher(
         while True:
             cycle += 1
             log.info("--- Cycle %d ---", cycle)
-
-            if (datetime.utcnow() - last_vector_store_reload).total_seconds() > 21600:
-                vector_store = load_vector_store(VECTOR_STORE_PATH)
-                last_vector_store_reload = datetime.utcnow()
-                log.info("vector_store rechargé : %d comptes", len(vector_store))
 
             try:
                 creators = load_watchlist_synced(watchlist_path)
@@ -2186,7 +2320,6 @@ def run_watcher(
                 creators,
                 mock=mock,
                 log=log,
-                vector_store=vector_store,
                 dual_account=dual_account,
                 browser_context=context,
                 grid_page=grid_page,
@@ -2427,13 +2560,11 @@ __all__ = [
     "save_watchlist",
     "check_new_post",
     "get_poll_interval",
-    "load_vector_store",
     "notify_new_post",
     "run_watcher",
     "sync_creator_last_post_id",
     "sync_watchlist_last_posts",
     "login_watcher_ig2",
-    "VECTOR_STORE_PATH",
 ]
 
 

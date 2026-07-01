@@ -1,7 +1,7 @@
 # Navigateur (scraping Instagram)
 playwright>=1.40,<2.0
 
-# Téléchargement Reels (embedder)
+# Téléchargement Reels (yt-dlp / watcher / scrape viral)
 yt-dlp>=2024.0.0
 
 # HTTP (Telegram Bot API)

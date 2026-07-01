@@ -81,7 +81,6 @@ from modules.generator_prompt import (
 
 DEFAULT_TRAINING_PATH = _PROJECT_ROOT / "data" / "training_comments_viral.json"
 DEFAULT_OUTPUT_DIR = _PROJECT_ROOT / "data"
-VECTOR_STORE_PATH = Path("data/vector_store.json")
 GENERATOR_FILENAME = "dataset_generator.jsonl"
 # Rétro-compat notebooks Unsloth (tableau JSON unique).
 GENERATOR_JSON_FILENAME = "generator_dataset.json"
@@ -188,37 +187,6 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-from modules.named_axes import NAMED_AXES
-
-
-def load_vector_store(path: Path | str | None = None) -> dict[str, dict[str, Any]]:
-    """Charge ``vector_store.json`` et indexe les entrées par username."""
-    p = Path(path) if path is not None else VECTOR_STORE_PATH
-    if not p.is_absolute():
-        p = _PROJECT_ROOT / p
-    if not p.exists():
-        _LOG.info(
-            "vector_store.json absent — named_axes non inclus dans le dataset"
-        )
-        return {}
-
-    data = json.loads(p.read_text(encoding="utf-8"))
-    if isinstance(data, list):
-        entries = [entry for entry in data if isinstance(entry, dict)]
-    elif isinstance(data, dict):
-        raw_entries = data.get("entries") or data.get("profiles") or []
-        entries = [entry for entry in raw_entries if isinstance(entry, dict)]
-    else:
-        entries = []
-
-    out: dict[str, dict[str, Any]] = {}
-    for entry in entries:
-        username = str(entry.get("username") or "").lstrip("@").strip().lower()
-        if username:
-            out[username] = entry
-    return out
-
-
 def _format_hashtags(value: Any) -> str:
     """Liste de hashtags → ``"a, b, c"`` ; string passée telle quelle ;
     ``""`` si absent / ``None``.
@@ -284,35 +252,30 @@ def _generator_input_block(
     caption: str,
     hashtags: str,
     audio_id: str,
-    named_axes: dict[str, Any] | None,
     video_context: str = "",
     transcript: str = "",
     visual_description: str = "",
     length_bucket: LengthBucket | None = None,
-) -> tuple[str, bool]:
+) -> str:
     block = build_generator_input_block(
         t_type_profile=t_type_profile,
         niches=niches,
         caption=caption,
         hashtags=hashtags,
         audio_id=audio_id,
-        named_axes=named_axes,
         video_context=video_context,
         transcript=transcript,
         visual_description=visual_description,
         length_bucket=length_bucket,
     )
-    return block, bool(named_axes)
+    return block
 
 
 def generate_generator_dataset(
     entries: list[dict],
     output_path: Path,
-    vector_store: dict[str, dict[str, Any]] | None = None,
-) -> tuple[int, int]:
-    """Écrit ``dataset_generator.jsonl``.
-
-    Retourne ``(nb_lignes, nb_avec_vecteur)``.
+) -> int:
+    """Écrit ``dataset_generator.jsonl``. Retourne le nombre de lignes.
 
     Format de chaque ligne ::
 
@@ -335,12 +298,10 @@ def generate_generator_dataset(
     * ``comment_text`` : ``entry.get("text") or ""`` ; entrée **ignorée**
       si vide après strip.
     """
-    vector_store = vector_store or {}
     lines: list[str] = []
     skipped_text = 0
     short_outputs = 0
     long_outputs = 0
-    with_vector = 0
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -376,30 +337,21 @@ def generate_generator_dataset(
         transcript = str(entry.get("transcript") or "")
         visual_description = str(entry.get("visual_description") or "")
 
-        username = str(entry.get("username") or "").lstrip("@").strip().lower()
-        store_entry = vector_store.get(username, {})
-        named_axes = store_entry.get("named_axes")
-        axes_dict = named_axes if isinstance(named_axes, dict) and named_axes else None
-
-        input_block, has_vector = _generator_input_block(
+        input_block = _generator_input_block(
             t_type_profile=t_type_profile,
             niches=n_str,
             caption=caption,
             hashtags=hashtags,
             audio_id=audio_id,
-            named_axes=axes_dict,
             video_context=video_context,
             transcript=transcript,
             visual_description=visual_description,
             length_bucket=length_bucket,
         )
-        if has_vector:
-            with_vector += 1
         record = {
             "instruction": build_generator_instruction(length_bucket),
             "input": input_block,
             "output": comment_text,
-            "has_vector": has_vector,
             "length_bucket": length_bucket,
         }
         lines.append(json.dumps(record, ensure_ascii=False))
@@ -413,7 +365,7 @@ def generate_generator_dataset(
             short_outputs,
             long_outputs,
         )
-    return len(lines), with_vector
+    return len(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -482,22 +434,13 @@ def main(argv: list[str] | None = None) -> int:
 
     generator_path = args.output_dir / GENERATOR_FILENAME
 
-    vector_store = load_vector_store(VECTOR_STORE_PATH)
-    _LOG.info("vector_store chargé : %d comptes", len(vector_store))
-
     try:
-        n_gen, n_vec = generate_generator_dataset(
-            entries, generator_path, vector_store=vector_store
-        )
+        n_gen = generate_generator_dataset(entries, generator_path)
     except OSError as e:
         _LOG.error("Erreur d'écriture des datasets : %s", e)
         return 1
 
-    _LOG.info(
-        "Generator : %d entrées dont %d avec vecteur 32D",
-        n_gen,
-        n_vec,
-    )
+    _LOG.info("Generator : %d entrées", n_gen)
 
     for jsonl_path, json_name in ((generator_path, GENERATOR_JSON_FILENAME),):
         json_path = args.output_dir / json_name
@@ -537,10 +480,8 @@ __all__ = [
     "GENERATOR_FILENAME",
     "GENERATOR_INSTRUCTION",
     "VALID_T_TYPES",
-    "VECTOR_STORE_PATH",
     "generate_generator_dataset",
     "load_training",
-    "load_vector_store",
     "main",
     "niches_str",
 ]

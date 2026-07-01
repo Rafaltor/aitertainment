@@ -32,7 +32,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 import config
 from discovery import _seed_niches, _seed_username, load_seeds
-from scripts.embedder import (
+from scripts.reel_media import (
     download_reel_video,
     extract_wav_from_video,
     transcribe_audio,

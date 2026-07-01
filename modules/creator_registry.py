@@ -1,4 +1,4 @@
-"""Lookup créateurs (database + watchlist + vector_store) pour le pipeline commentaires."""
+"""Lookup créateurs (database + watchlist) pour le pipeline commentaires."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from typing import Any
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATABASE_PATH = _PROJECT_ROOT / "data" / "database.json"
 WATCHLIST_PATH = _PROJECT_ROOT / "data" / "watchlist.json"
-VECTOR_STORE_PATH = _PROJECT_ROOT / "data" / "vector_store.json"
 
 
 def _read_json(path: Path) -> Any:
@@ -19,7 +18,7 @@ def _read_json(path: Path) -> Any:
 
 
 def build_creator_index() -> dict[str, dict[str, Any]]:
-    """Index username → niches, t_type, présence vector_store."""
+    """Index username → niches, t_type."""
     index: dict[str, dict[str, Any]] = {}
 
     db = _read_json(DATABASE_PATH)
@@ -35,7 +34,6 @@ def build_creator_index() -> dict[str, dict[str, Any]]:
                 "username": key,
                 "niches": profile.get("niches") or [],
                 "t_type": profile.get("t_type_final") or profile.get("t_type"),
-                "has_vector": False,
             }
 
     wl = _read_json(WATCHLIST_PATH)
@@ -53,26 +51,6 @@ def build_creator_index() -> dict[str, dict[str, Any]]:
             base["t_type"] = creator.get("t_type")
         index[key] = base
 
-    vs = _read_json(VECTOR_STORE_PATH)
-    if isinstance(vs, list):
-        raw_entries = vs
-    elif isinstance(vs, dict):
-        raw_entries = vs.get("entries") or vs.get("profiles") or []
-    else:
-        raw_entries = []
-    if isinstance(raw_entries, list):
-        for entry in raw_entries:
-            if not isinstance(entry, dict):
-                continue
-            key = str(entry.get("username") or "").lstrip("@").strip().lower()
-            if not key:
-                continue
-            base = dict(index.get(key, {"username": key, "niches": []}))
-            base["has_vector"] = True
-            if entry.get("niches") and not base.get("niches"):
-                base["niches"] = entry.get("niches")
-            index[key] = base
-
     return index
 
 
@@ -81,14 +59,13 @@ def resolve_creator_fields(
     *,
     index: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Résout niches / t_type / needs_embed pour un créateur de reel."""
+    """Résout niches / t_type pour un créateur de reel."""
     key = str(username or "").lstrip("@").strip().lower()
     if not key or key == "unknown":
         return {
             "username": "",
             "niches": ["humour"],
             "t_type_profile": None,
-            "needs_embed": True,
             "known_creator": False,
         }
 
@@ -102,6 +79,5 @@ def resolve_creator_fields(
         "username": key,
         "niches": niches,
         "t_type_profile": hit.get("t_type"),
-        "needs_embed": not bool(hit.get("has_vector")),
         "known_creator": bool(hit),
     }

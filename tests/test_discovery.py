@@ -16,6 +16,21 @@ from unittest.mock import MagicMock, patch
 import discovery
 
 
+# La comment-heat (scoring 2026-06) déclenche un appel réseau (API commentaires)
+# dans ``score_profile``. Tous les tests de ce module utilisent des contexts
+# Playwright mockés : on neutralise cet appel globalement (retour vide → repli
+# sur le score contenu). Les helpers comment-heat sont testés à part en direct.
+_COMMENTS_PATCHER = patch("discovery.fetch_reel_comment_likes", return_value=[])
+
+
+def setUpModule() -> None:
+    _COMMENTS_PATCHER.start()
+
+
+def tearDownModule() -> None:
+    _COMMENTS_PATCHER.stop()
+
+
 class DiscoveryIOTest(unittest.TestCase):
     def test_load_seeds_default(self) -> None:
         data = discovery.load_seeds()
@@ -1896,6 +1911,18 @@ class ExploreNetworkUpsertsDatabaseTest(unittest.TestCase):
         self._sleep_patch = patch.object(discovery, "polite_sleep", lambda *a, **k: None)
         self._sleep_patch.start()
         self.addCleanup(self._sleep_patch.stop)
+        # Neutralise la fenêtre horaire (nuit / déjeuner) et la pause de burst :
+        # sans ça, lancer la suite entre 12h-14h ferait dormir le test ~30min.
+        self._window_patch = patch.object(
+            discovery, "_wait_for_active_window", lambda *a, **k: None
+        )
+        self._window_patch.start()
+        self.addCleanup(self._window_patch.stop)
+        self._burst_patch = patch.object(
+            discovery, "_maybe_take_burst_break", lambda *a, **k: None
+        )
+        self._burst_patch.start()
+        self.addCleanup(self._burst_patch.stop)
         # Stub seeds.json IO (le bloc seeds removal essaie sinon de
         # ``load_seeds`` avec ``DEFAULT_SEEDS_PATH``).
         self._save_seeds_patch = patch.object(discovery, "save_seeds")
@@ -2155,6 +2182,127 @@ class ScoreProfileNichesSchemaTest(unittest.TestCase):
         # ``INVALID`` est rejeté par ``validate_niches`` et logué en WARNING.
         self.assertEqual(result["niches"], ["humour", "sketch"])
         self.assertNotIn("niche", result)
+
+
+class CommentHeatTest(unittest.TestCase):
+    """Helpers de la stratégie comment-heat (signal dominant 2026-06)."""
+
+    def test_top_comment_likes_by_media_keeps_max(self) -> None:
+        comments = [
+            {"media_id": "A", "comment_likes": 10},
+            {"media_id": "A", "comment_likes": 120},
+            {"media_id": "A", "comment_likes": 5},
+            {"media_id": "B", "like_count": 42},  # fallback clé like_count
+            {"media_id": "", "comment_likes": 999},  # ignoré (pas de media_id)
+        ]
+        out = discovery._top_comment_likes_by_media(comments)
+        self.assertEqual(out, {"A": 120, "B": 42})
+
+    def test_comment_ratio_median_normalizes_by_reel_likes(self) -> None:
+        top = {"A": 100, "B": 50}
+        reels = [
+            {"media_id": "A", "likes": 1000},  # ratio 0.10
+            {"media_id": "B", "likes": 1000},  # ratio 0.05
+        ]
+        self.assertAlmostEqual(
+            discovery._comment_ratio_median(top, reels), 0.075, places=6
+        )
+
+    def test_comment_ratio_median_ignores_zero_like_reels(self) -> None:
+        top = {"A": 100, "B": 50}
+        reels = [
+            {"media_id": "A", "likes": 0},  # ignoré (données manquantes)
+            {"media_id": "B", "likes": 500},  # ratio 0.1
+        ]
+        self.assertAlmostEqual(
+            discovery._comment_ratio_median(top, reels), 0.1, places=6
+        )
+
+    def test_comment_likes_median_absolute(self) -> None:
+        self.assertEqual(
+            discovery._comment_likes_median({"A": 100, "B": 300, "C": 200}), 200.0
+        )
+        self.assertEqual(discovery._comment_likes_median({}), 0.0)
+
+    def test_comment_heat_score_ratio_dominates_absolute(self) -> None:
+        # À ratio égal (= ref → norm 1.0), le poids ratio (650) pèse plus que
+        # l'absolu (275) : un fort ratio sans volume bat un fort volume sans ratio.
+        strong_ratio = discovery._compute_comment_heat_score(
+            comment_ratio_median=discovery.SCORE_COMMENT_RATIO_REF,
+            comment_likes_median=0.0,
+        )
+        strong_abs = discovery._compute_comment_heat_score(
+            comment_ratio_median=0.0,
+            comment_likes_median=discovery.SCORE_COMMENT_ABS_REF,
+        )
+        self.assertGreater(strong_ratio, strong_abs)
+        self.assertAlmostEqual(strong_ratio, discovery.SCORE_COMMENT_RATIO_W, places=6)
+        self.assertAlmostEqual(strong_abs, discovery.SCORE_COMMENT_ABS_W, places=6)
+
+    def test_comment_heat_zero_when_no_signal(self) -> None:
+        self.assertEqual(
+            discovery._compute_comment_heat_score(
+                comment_ratio_median=0.0, comment_likes_median=0.0
+            ),
+            0.0,
+        )
+
+
+class ScoreProfileCommentHeatIntegrationTest(unittest.TestCase):
+    """``score_profile`` : la comment-heat domine et le repli est défensif."""
+
+    DOMAIN = {"name": "humour", "t_types_target": ["T2"]}
+
+    def setUp(self) -> None:
+        self._sleep = patch.object(discovery, "polite_sleep", lambda *a, **k: None)
+        self._sleep.start()
+        self.addCleanup(self._sleep.stop)
+        self._ctx = MagicMock()
+        self._profile = patch(
+            "discovery.get_profile_data",
+            return_value=_make_profile_data(followers=50_000, posts_count=20),
+        )
+        self._profile.start()
+        self.addCleanup(self._profile.stop)
+        reels = _reels_from_medias(
+            [
+                _make_media(
+                    pk=f"m{i}",
+                    views=100_000,
+                    likes=1000,
+                    comments=50,
+                    days_ago=i,
+                )
+                for i in range(5)
+            ]
+        )
+        self._reels = patch("discovery.get_recent_reels", return_value=reels)
+        self._reels.start()
+        self.addCleanup(self._reels.stop)
+
+    def test_hot_comments_boost_score(self) -> None:
+        hot = [{"media_id": "m0", "comment_likes": 200}]  # ratio 0.2 >> ref 0.05
+        cold = [{"media_id": "m0", "comment_likes": 1}]
+        with patch("discovery.fetch_reel_comment_likes", return_value=hot):
+            r_hot = discovery.score_profile(
+                "hot", self.DOMAIN, db={"profiles": []}, context=self._ctx
+            )
+        with patch("discovery.fetch_reel_comment_likes", return_value=cold):
+            r_cold = discovery.score_profile(
+                "cold", self.DOMAIN, db={"profiles": []}, context=self._ctx
+            )
+        self.assertIsNotNone(r_hot["score_comment_heat"])
+        self.assertGreater(r_hot["score"], r_cold["score"])
+        self.assertGreater(r_hot["comment_ratio_median"], r_cold["comment_ratio_median"])
+
+    def test_no_comment_data_falls_back_to_content(self) -> None:
+        with patch("discovery.fetch_reel_comment_likes", return_value=[]):
+            r = discovery.score_profile(
+                "nodata", self.DOMAIN, db={"profiles": []}, context=self._ctx
+            )
+        # Repli : pas de donnée commentaire → score = score contenu, pas de pénalité.
+        self.assertIsNone(r["score_comment_heat"])
+        self.assertAlmostEqual(r["score"], r["score_content"], places=6)
 
 
 if __name__ == "__main__":

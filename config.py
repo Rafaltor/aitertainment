@@ -73,8 +73,21 @@ WATCHER_IG2_COOKIES_PATH = _PROJECT_ROOT / os.environ.get(
     "WATCHER_IG2_COOKIES_PATH", "data/instagram_cookies_2.json"
 )
 WATCHER_DUAL_ACCOUNT = os.environ.get(
-    "WATCHER_DUAL_ACCOUNT", "true"
+    "WATCHER_DUAL_ACCOUNT", "false"
 ).strip().lower() in ("1", "true", "yes")
+# Watcher : surveillance watchlist sur IG2 uniquement (slot 1 = cookies_2).
+# IG1 (slot 0) est réservé au spam commentaires (``scripts/ig1_spam_reels.py``).
+WATCHER_SCRAPE_SLOT = int(os.environ.get("WATCHER_SCRAPE_SLOT", "1"))
+WATCHER_COMMENT_SLOT = int(os.environ.get("WATCHER_COMMENT_SLOT", "0"))
+# Alerte Telegram seule sur nouveau post (pas Ollama / transcript / suggestions).
+WATCHER_ALERT_ONLY = os.environ.get(
+    "WATCHER_ALERT_ONLY", "true"
+).strip().lower() in ("1", "true", "yes")
+# Enqueue auto ``lowtaper67`` sur IG1 quand le watcher détecte un nouveau post.
+WATCHER_AUTO_COMMENT_LOWTAPER = os.environ.get(
+    "WATCHER_AUTO_COMMENT_LOWTAPER", "true"
+).strip().lower() in ("1", "true", "yes")
+SPAM_COMMENT_TEXT = os.environ.get("SPAM_COMMENT_TEXT", "lowtaper67").strip()
 # T-types exclus de la surveillance (ex. T1 = marques, peu utile en temps réel).
 WATCHER_SKIP_T_TYPES = frozenset(
     t.strip().upper()
@@ -135,11 +148,10 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b").strip()
 # Requis pour ``generate_comments`` (Watcher). Ex. après ``ollama create`` (cf. deploy/).
 OLLAMA_GENERATOR_MODEL = os.environ.get("OLLAMA_GENERATOR_MODEL", "").strip()
 
-# LM Studio — embeddings profils (``scripts/embedder.py`` uniquement)
+# LM Studio (vision grille frames, labélisation T-type via LABEL_LLM_*)
 LM_STUDIO_URL = (
     os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1") or ""
 ).strip().rstrip("/")
-LM_STUDIO_EMBED_MODEL = os.environ.get("LM_STUDIO_EMBED_MODEL", "").strip()
 
 # Modèle vision LM Studio (description grille frames)
 LM_STUDIO_VISION_MODEL = os.environ.get(

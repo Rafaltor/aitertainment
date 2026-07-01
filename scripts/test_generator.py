@@ -42,11 +42,6 @@ def main() -> int:
         "hashtags": ["humour", "etudiant"],
         "audio_id": "",
     }
-    named_axes = {
-        "scripted_vs_raw": 0.6,
-        "energy_level": 0.5,
-        "mainstream_vs_niche": 0.4,
-    }
 
     if args.t_type:
         classification = {"type": args.t_type, "confidence": 0.9}
@@ -56,7 +51,6 @@ def main() -> int:
             niches=niches,
             t_type_profile=args.t_type,
             video_context=video_context,
-            named_axes=named_axes,
         )
         for i, c in enumerate(comments, 1):
             print(f"  {i}. {c}")
@@ -65,7 +59,6 @@ def main() -> int:
     by_type = generate_comments_per_category(
         niches=niches,
         video_context=video_context,
-        named_axes=named_axes,
         t_types=ORDERED_T_TYPES,
     )
     for t_type in ORDERED_T_TYPES:

@@ -287,7 +287,13 @@ def _instagram_page_blocked(page: Page) -> str | None:
         return "login"
     if "this account is private" in snippet or "compte est privé" in snippet:
         return "private"
-    if "page isn't available" in snippet or "n'est pas disponible" in snippet:
+    if (
+        "page isn't available" in snippet
+        or "pas disponible" in snippet
+        or "n'est pas disponible" in snippet
+        or "page not found" in snippet
+        or "page introuvable" in snippet
+    ):
         return "unavailable"
     if "sorry" in snippet and "available" in snippet:
         return "unavailable"
@@ -561,7 +567,7 @@ def scrape_profile_comments(
     """Scrape les commentaires visibles sur les reels profil (sans persistance).
 
     Retourne une liste de dicts ``media_id``, ``text``, ``comment_likes``, ``views``,
-  ``username``, ``niches``. Utilisé par l'embedder (mémoire seulement).
+  ``username``, ``niches``. Utilisé en mémoire par le pipeline viral.
     """
     log_cb = logger or log
     u = (username or "").lstrip("@").strip()
@@ -861,7 +867,6 @@ def collect_viral_comments(
                         "llm_validated": False,
                         "source": "viral_scrape",
                         "min_likes_threshold": min_likes,
-                        "needs_embed": bool(creator_meta.get("needs_embed")),
                         "collected_at": datetime.now(timezone.utc)
                         .replace(microsecond=0)
                         .isoformat(),
@@ -1412,7 +1417,6 @@ def collect_viral_comments_from_feed(
                             "username": creator_meta["username"],
                             "niches": creator_meta["niches"],
                             "t_type_profile": creator_meta["t_type_profile"],
-                            "needs_embed": creator_meta["needs_embed"],
                         }
                     )
 
@@ -1475,7 +1479,6 @@ def collect_viral_comments_from_feed(
                             "llm_validated": False,
                             "source": "reels_feed",
                             "min_likes_threshold": min_likes,
-                            "needs_embed": bool(creator_meta.get("needs_embed")),
                             "collected_at": datetime.now(timezone.utc)
                             .replace(microsecond=0)
                             .isoformat(),
@@ -3137,6 +3140,31 @@ def _csrf_token_from_page_context(page: Page) -> str:
     return ""
 
 
+def _legacy_user_pk_from_page(page: Page) -> str | None:
+    """PK numérique *legacy* du créateur depuis le HTML de la page profil.
+
+    Instagram embarque le pk legacy (celui qu'attend ``/api/v1/clips/user/``
+    via ``target_user_id``) dans les données injectées de la page sous
+    ``"profile_id"`` / ``"user_id"``. Cette source est **passive** (trafic
+    naturel de la page) donc elle échappe au rate-limit 429 qui frappe
+    ``web_profile_info``. À ne pas confondre avec l'``id`` long des nœuds
+    GraphQL (id professionnel ``1784…``) qui renvoie 0 item sur l'API clips.
+    """
+    try:
+        html = page.content()
+    except Exception:
+        return None
+    for pattern in (
+        r'"profile_id"\s*:\s*"?(\d{4,14})"?',
+        r'"owner_user_id"\s*:\s*"?(\d{4,14})"?',
+        r'"user_id"\s*:\s*"?(\d{4,14})"?',
+    ):
+        m = re.search(pattern, html)
+        if m:
+            return m.group(1)
+    return None
+
+
 def _resolve_instagram_user_pk(page: Page, username: str) -> str | None:
     """PK numérique du créateur via ``/api/v1/users/web_profile_info/``."""
     u = str(username or "").lstrip("@").strip().lower()
@@ -3156,19 +3184,39 @@ def _resolve_instagram_user_pk(page: Page, username: str) -> str | None:
                   },
                 }
               );
-              if (!r.ok) return null;
+              if (!r.ok) {
+                return { ok: false, status: r.status };
+              }
               const data = await r.json();
               const userObj = data?.data?.user;
               const pk = userObj?.id || userObj?.pk || '';
-              return pk ? String(pk) : null;
+              return { ok: true, status: r.status, pk: pk ? String(pk) : '' };
             }""",
             {"user": u, "appId": _IG_WEB_APP_ID},
         )
-        pk = str(payload or "").strip()
-        return pk if pk.isdigit() else None
     except Exception as e:
         log.debug("pk @%s via web_profile_info : %s", u, e)
         return None
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        status = payload.get("status") if isinstance(payload, dict) else "?"
+        if status == 429:
+            log.warning(
+                "@%s : web_profile_info HTTP 429 (rate-limit Instagram) — "
+                "repli pk via HTML profil.",
+                u,
+            )
+        else:
+            log.info(
+                "@%s : web_profile_info HTTP %s (compte introuvable ou renommé).",
+                u,
+                status,
+            )
+        return None
+    pk = str(payload.get("pk") or "").strip()
+    if not pk.isdigit():
+        log.info("@%s : web_profile_info sans pk (compte introuvable ou renommé).", u)
+        return None
+    return pk
 
 
 def _thumbnail_from_clips_media(media: dict[str, Any]) -> str:
@@ -3205,6 +3253,8 @@ def _reel_from_clips_api_media(
     taken_at = media.get("taken_at")
     return {
         "media_id": code,
+        # pk numérique : requis par l'API commentaires /api/v1/media/{pk}/comments/.
+        "pk": str(media.get("pk") or media.get("id") or "").split("_", 1)[0],
         "thumbnail_url": _thumbnail_from_clips_media(media),
         "view_count": metrics["view_count"],
         "like_count": metrics["like_count"],
@@ -3218,6 +3268,112 @@ def _reel_from_clips_api_media(
         "taken_at": int(taken_at) if isinstance(taken_at, (int, float)) else None,
         "row_source": "api_clips",
     }
+
+
+def fetch_reel_comment_likes(
+    context: BrowserContext,
+    username: str,
+    reels: list[dict[str, Any]],
+    *,
+    max_reels: int = 3,
+    logger: logging.Logger | None = None,
+) -> list[dict[str, Any]]:
+    """Likes des commentaires par reel via l'API ``/api/v1/media/{pk}/comments/``.
+
+    Pour chaque reel disposant d'un ``pk`` numérique, appelle l'endpoint
+    commentaires (GET passif, **immunisé au rate-limit 429** qui frappe
+    ``web_profile_info``) et renvoie **une ligne par commentaire** :
+    ``{"media_id": <code>, "comment_likes": <comment_like_count>}``.
+
+    Source fiable et peu coûteuse pour le scoring « comment-heat », là où la
+    navigation reel-par-reel (``scrape_profile_comments``) échoue souvent à
+    charger la page reel depuis la grille ``/reels/``.
+    """
+    log_cb = logger or log
+    u = (username or "").lstrip("@").strip()
+    targets = [
+        r for r in (reels or []) if str(r.get("pk") or "").strip()
+    ][:max_reels]
+    if not u or not targets:
+        return []
+
+    out: list[dict[str, Any]] = []
+    page = context.new_page()
+    try:
+        try:
+            page.goto(
+                f"{BASE_URL}/{u}/",
+                wait_until="domcontentloaded",
+                timeout=_PROFILE_GOTO_TIMEOUT_MS,
+            )
+            page.wait_for_timeout(1500)
+        except Exception as e:  # noqa: BLE001 — best-effort
+            log_cb.debug("comment-likes @%s : goto profil KO (%s).", u, e)
+            return []
+        csrf = _csrf_token_from_page_context(page)
+        if not csrf:
+            log_cb.debug("comment-likes @%s : csrftoken manquant.", u)
+            return []
+
+        for reel in targets:
+            pk = str(reel.get("pk") or "").strip()
+            media_id = str(reel.get("media_id") or "").strip()
+            if not pk:
+                continue
+            try:
+                raw = page.evaluate(
+                    """async ({ pk, csrf, appId }) => {
+                      const url = 'https://www.instagram.com/api/v1/media/' + pk
+                        + '/comments/?can_support_threading=true&permalink_enabled=false';
+                      const r = await fetch(url, {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: {
+                          'X-IG-App-ID': appId,
+                          'X-Requested-With': 'XMLHttpRequest',
+                          'X-CSRFToken': csrf,
+                        },
+                      });
+                      if (!r.ok) return { ok: false, status: r.status, body: '' };
+                      return { ok: true, status: r.status, body: await r.text() };
+                    }""",
+                    {"pk": pk, "csrf": csrf, "appId": _IG_WEB_APP_ID},
+                )
+            except Exception as e:  # noqa: BLE001 — best-effort par reel
+                log_cb.debug(
+                    "comment-likes @%s reel %s : fetch error (%s).", u, media_id, e
+                )
+                continue
+            if not isinstance(raw, dict) or not raw.get("ok"):
+                status = raw.get("status") if isinstance(raw, dict) else "?"
+                log_cb.info(
+                    "comment-likes @%s reel %s : HTTP %s.", u, media_id, status
+                )
+                polite_sleep()
+                continue
+            try:
+                data = json.loads(str(raw.get("body") or ""))
+            except json.JSONDecodeError:
+                continue
+            comments = data.get("comments")
+            if not isinstance(comments, list):
+                continue
+            for c in comments:
+                if not isinstance(c, dict):
+                    continue
+                out.append(
+                    {
+                        "media_id": media_id,
+                        "comment_likes": int(c.get("comment_like_count") or 0),
+                    }
+                )
+            polite_sleep()
+    finally:
+        try:
+            page.close()
+        except Exception:
+            pass
+    return out
 
 
 def _fetch_creator_clips_from_api(
@@ -3235,9 +3391,13 @@ def _fetch_creator_clips_from_api(
     u = str(username or "").lstrip("@").strip()
     if not u:
         return None
-    pk = _resolve_instagram_user_pk(page, u)
+    # PK legacy depuis le HTML (passif, immunisé au 429) en priorité ;
+    # ``web_profile_info`` (souvent rate-limité) seulement en repli.
+    pk = _legacy_user_pk_from_page(page)
     if not pk:
-        log.debug("@%s : pk introuvable (web_profile_info).", u)
+        pk = _resolve_instagram_user_pk(page, u)
+    if not pk:
+        log.info("@%s : pk introuvable (HTML profil + web_profile_info).", u)
         return None
     csrf = _csrf_token_from_page_context(page)
     if not csrf:
@@ -3467,7 +3627,7 @@ def get_recent_reels(
     """Reels récents : media_ids (DOM) + métriques (interception GraphQL).
 
     Les captions manquantes restent vides ici (pas de visite /reel/{id}/ —
-    trop lent pour le scoring discovery). L'embedder complète si besoin.
+    trop lent pour le scoring discovery).
     """
     page = context.new_page()
     try:

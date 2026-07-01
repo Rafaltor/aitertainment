@@ -46,7 +46,6 @@ class CleanViralPoolTest(unittest.TestCase):
                     "username": "creator_fr",
                     "niches": ["humour"],
                     "t_type": "T2",
-                    "has_vector": True,
                 }
             }
             with patch.object(clean, "build_creator_index", return_value=idx):
@@ -85,7 +84,6 @@ class CleanViralPoolTest(unittest.TestCase):
                     "username": "creator_fr",
                     "niches": ["humour"],
                     "t_type": "T2",
-                    "has_vector": True,
                 }
             }
             with patch.object(clean, "build_creator_index", return_value=idx):

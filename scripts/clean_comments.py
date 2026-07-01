@@ -132,7 +132,6 @@ def clean_viral_pool(
         row["username"] = meta["username"]
         row["niches"] = meta["niches"]
         row["t_type_profile"] = meta.get("t_type_profile")
-        row["needs_embed"] = meta["needs_embed"]
         kept.append(row)
 
     if not dry_run:
